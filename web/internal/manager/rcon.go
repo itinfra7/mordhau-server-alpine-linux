@@ -169,8 +169,8 @@ func (m *Manager) rconLoop(ctx context.Context) {
 			m.setRCONState(true, "connected; listening to all broadcasts")
 			m.addRCONEvent("system", "RCON connected; listen all enabled")
 		} else {
-			m.setRCONState(true, "connected with running-server credentials; Game.ini changes apply after restart")
-			m.addRCONEvent("system", "RCON reconnected with the running server's previous credentials; listen all enabled")
+			m.setRCONState(true, "connected with previous running-server settings; saved changes apply after restart")
+			m.addRCONEvent("system", "RCON reconnected with the running server's previous settings; listen all enabled")
 		}
 
 		err := m.consumeRCON(ctx, connection)
@@ -215,15 +215,7 @@ func activeRCONSettings() (rconSettings, error) {
 	if !ok || password == "" {
 		return rconSettings{}, errors.New("RconPassword is not configured")
 	}
-	portText, ok := iniValue(data, section, "RconPort")
-	if !ok {
-		return rconSettings{}, errors.New("RconPort is not configured")
-	}
-	port, err := strconv.Atoi(portText)
-	if err != nil || port < 1 || port > 65535 {
-		return rconSettings{}, errors.New("RconPort is invalid")
-	}
-	return rconSettings{Password: password, Port: port}, nil
+	return rconSettings{Password: password, Port: savedServerPorts().RCON}, nil
 }
 
 func authenticateRCON(connection net.Conn, password string) error {

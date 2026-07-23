@@ -2,6 +2,36 @@
 
 All notable changes to this repository are documented in this file.
 
+## [1.1.0] - 2026-07-23
+
+### Added
+
+- Optional mod.io API-key and API-path validation with root-only local
+  persistence.
+- MORDHAU mod lookup by URL, name ID, or Resource ID.
+- Current modfile metadata and bounded recursive dependency inspection.
+- Dependency-first, deduplicated Game.ini `Mods=<Resource ID>` management
+  scoped to the MORDHAU game-session section.
+- Configured-mod enable, disable, and remove controls with running-server
+  staging and configuration backups.
+- Persistent initial-map selection passed immediately after
+  `MordhauServer.exe`.
+- Managed game, RCON, beacon, and query launch ports with range, uniqueness,
+  and web-port collision checks.
+- Automatic web RCON use of the saved RCON launch port.
+- Audit events for mod.io settings, mod configuration, initial-map changes,
+  and dedicated-server port changes.
+- Unit tests for mod.io URL and API-path validation, mod-entry scope and
+  ordering, start-map validation, and server-port persistence.
+
+### Changed
+
+- Managed server starts now pass explicit game, RCON, beacon, and query port
+  arguments.
+- The installer initializes default server-port state while preserving
+  existing launch and mod.io settings during updates.
+- Web asset versioning and release documentation now identify version 1.1.0.
+
 ## [1.0.0] - 2026-07-23
 
 ### Added

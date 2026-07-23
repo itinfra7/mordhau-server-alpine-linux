@@ -32,6 +32,13 @@ func (m *Manager) Handler() http.Handler {
 	mux.HandleFunc("/api/config", m.withSession(m.configHandler))
 	mux.HandleFunc("/api/config/mutate", m.withSession(m.configMutationHandler))
 	mux.HandleFunc("/api/config/discard", m.withSession(m.configDiscardHandler))
+	mux.HandleFunc("/api/mods", m.withSession(m.modsHandler))
+	mux.HandleFunc("/api/mods/plan", m.withSession(m.modPlanHandler))
+	mux.HandleFunc("/api/mods/add", m.withSession(m.modAddHandler))
+	mux.HandleFunc("/api/mods/enabled", m.withSession(m.modEnabledHandler))
+	mux.HandleFunc("/api/mods/remove", m.withSession(m.modRemoveHandler))
+	mux.HandleFunc("/api/modio/settings", m.withSession(m.modIOSettingsHandler))
+	mux.HandleFunc("/api/modio/settings/clear", m.withSession(m.modIOSettingsClearHandler))
 	mux.HandleFunc("/api/accounts", m.withSession(m.accountsHandler))
 	mux.HandleFunc("/api/accounts/create", m.withSession(m.accountCreateHandler))
 	mux.HandleFunc("/api/accounts/edit", m.withSession(m.accountEditHandler))
@@ -43,6 +50,8 @@ func (m *Manager) Handler() http.Handler {
 	mux.HandleFunc("/api/services", m.withSession(m.servicesHandler))
 	mux.HandleFunc("/api/services/mode", m.withSession(m.serviceModeHandler))
 	mux.HandleFunc("/api/services/web-port", m.withSession(m.webPortHandler))
+	mux.HandleFunc("/api/services/server-ports", m.withSession(m.serverPortsHandler))
+	mux.HandleFunc("/api/services/start-map", m.withSession(m.startMapHandler))
 	return m.auditMiddleware(m.securityHeaders(m.accessMiddleware(mux)))
 }
 
@@ -428,6 +437,179 @@ func (m *Manager) configDiscardHandler(response http.ResponseWriter, request *ht
 	response.WriteHeader(http.StatusNoContent)
 }
 
+func (m *Manager) modsHandler(response http.ResponseWriter, request *http.Request, _ Session) {
+	if request.Method != http.MethodGet {
+		http.Error(response, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	view, err := m.modManagementView()
+	if err != nil {
+		writeError(response, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(response, http.StatusOK, view)
+}
+
+func (m *Manager) modPlanHandler(response http.ResponseWriter, request *http.Request, session Session) {
+	if request.Method != http.MethodPost || !validCSRF(request, session) {
+		writeError(response, http.StatusForbidden, "invalid request")
+		return
+	}
+	var body struct {
+		Reference string `json:"reference"`
+	}
+	if err := decodeJSON(response, request, &body); err != nil {
+		writeError(response, http.StatusBadRequest, err.Error())
+		return
+	}
+	plan, err := m.modInstallPlan(body.Reference)
+	if err != nil {
+		writeError(response, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(response, http.StatusOK, plan)
+}
+
+func (m *Manager) modAddHandler(response http.ResponseWriter, request *http.Request, session Session) {
+	if request.Method != http.MethodPost || !validCSRF(request, session) {
+		writeError(response, http.StatusForbidden, "invalid request")
+		return
+	}
+	var body struct {
+		Reference string `json:"reference"`
+	}
+	if err := decodeJSON(response, request, &body); err != nil {
+		writeError(response, http.StatusBadRequest, err.Error())
+		return
+	}
+	plan, err := m.modInstallPlan(body.Reference)
+	if err != nil {
+		writeError(response, http.StatusBadRequest, err.Error())
+		return
+	}
+	change, err := m.addConfiguredMods(planModIDs(plan))
+	if err != nil {
+		status := http.StatusBadRequest
+		if errors.Is(err, errLifecycleBusy) {
+			status = http.StatusConflict
+		}
+		writeError(response, status, err.Error())
+		return
+	}
+	m.auditRequestEvent(request, session.Username, "mod_configuration_changed", map[string]string{
+		"action":           "add",
+		"mod_id":           strconv.Itoa(plan.Target.ID),
+		"dependency_count": strconv.Itoa(len(plan.Dependencies)),
+		"added_ids":        formatAuditIDs(change.Added),
+		"reenabled_ids":    formatAuditIDs(change.Reenabled),
+		"changed":          strconv.FormatBool(change.Changed),
+		"staged":           strconv.FormatBool(change.Staged),
+	})
+	writeJSON(response, http.StatusOK, change)
+}
+
+func (m *Manager) modEnabledHandler(response http.ResponseWriter, request *http.Request, session Session) {
+	if request.Method != http.MethodPost || !validCSRF(request, session) {
+		writeError(response, http.StatusForbidden, "invalid request")
+		return
+	}
+	var body struct {
+		ID      int  `json:"id"`
+		Enabled bool `json:"enabled"`
+	}
+	if err := decodeJSON(response, request, &body); err != nil {
+		writeError(response, http.StatusBadRequest, err.Error())
+		return
+	}
+	change, err := m.setConfiguredModEnabled(body.ID, body.Enabled)
+	if err != nil {
+		status := http.StatusBadRequest
+		if errors.Is(err, errLifecycleBusy) {
+			status = http.StatusConflict
+		}
+		writeError(response, status, err.Error())
+		return
+	}
+	m.auditRequestEvent(request, session.Username, "mod_configuration_changed", map[string]string{
+		"action":  "set_enabled",
+		"mod_id":  strconv.Itoa(body.ID),
+		"enabled": strconv.FormatBool(body.Enabled),
+		"staged":  strconv.FormatBool(change.Staged),
+	})
+	writeJSON(response, http.StatusOK, change)
+}
+
+func (m *Manager) modRemoveHandler(response http.ResponseWriter, request *http.Request, session Session) {
+	if request.Method != http.MethodPost || !validCSRF(request, session) {
+		writeError(response, http.StatusForbidden, "invalid request")
+		return
+	}
+	var body struct {
+		ID int `json:"id"`
+	}
+	if err := decodeJSON(response, request, &body); err != nil {
+		writeError(response, http.StatusBadRequest, err.Error())
+		return
+	}
+	change, err := m.removeConfiguredMod(body.ID)
+	if err != nil {
+		status := http.StatusBadRequest
+		if errors.Is(err, errLifecycleBusy) {
+			status = http.StatusConflict
+		}
+		writeError(response, status, err.Error())
+		return
+	}
+	m.auditRequestEvent(request, session.Username, "mod_configuration_changed", map[string]string{
+		"action": "remove",
+		"mod_id": strconv.Itoa(body.ID),
+		"staged": strconv.FormatBool(change.Staged),
+	})
+	writeJSON(response, http.StatusOK, change)
+}
+
+func (m *Manager) modIOSettingsHandler(response http.ResponseWriter, request *http.Request, session Session) {
+	if request.Method != http.MethodPost || !validCSRF(request, session) {
+		writeError(response, http.StatusForbidden, "invalid request")
+		return
+	}
+	var body struct {
+		APIKey  string `json:"api_key"`
+		APIBase string `json:"api_base"`
+	}
+	if err := decodeJSON(response, request, &body); err != nil {
+		writeError(response, http.StatusBadRequest, err.Error())
+		return
+	}
+	settings, err := m.saveModIOSettings(body.APIKey, body.APIBase)
+	if err != nil {
+		writeError(response, http.StatusBadRequest, err.Error())
+		return
+	}
+	m.auditRequestEvent(request, session.Username, "modio_settings_saved", map[string]string{
+		"api_base": settings.APIBase,
+		"game_id":  strconv.Itoa(settings.GameID),
+	})
+	writeJSON(response, http.StatusOK, settings)
+}
+
+func (m *Manager) modIOSettingsClearHandler(
+	response http.ResponseWriter,
+	request *http.Request,
+	session Session,
+) {
+	if request.Method != http.MethodPost || !validCSRF(request, session) {
+		writeError(response, http.StatusForbidden, "invalid request")
+		return
+	}
+	if err := m.clearModIOSettings(); err != nil {
+		writeError(response, http.StatusInternalServerError, err.Error())
+		return
+	}
+	m.auditRequestEvent(request, session.Username, "modio_settings_cleared", nil)
+	response.WriteHeader(http.StatusNoContent)
+}
+
 func (m *Manager) accountsHandler(response http.ResponseWriter, request *http.Request, _ Session) {
 	if request.Method != http.MethodGet {
 		http.Error(response, "method not allowed", http.StatusMethodNotAllowed)
@@ -653,6 +835,61 @@ func (m *Manager) webPortHandler(response http.ResponseWriter, request *http.Req
 		"port": strconv.Itoa(body.Port),
 	})
 	writeJSON(response, http.StatusOK, currentServiceSettings())
+}
+
+func (m *Manager) serverPortsHandler(response http.ResponseWriter, request *http.Request, session Session) {
+	if request.Method != http.MethodPost || !validCSRF(request, session) {
+		writeError(response, http.StatusForbidden, "invalid request")
+		return
+	}
+	var ports ServerPorts
+	if err := decodeJSON(response, request, &ports); err != nil {
+		writeError(response, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := setSavedServerPorts(ports); err != nil {
+		writeError(response, http.StatusBadRequest, err.Error())
+		return
+	}
+	m.auditRequestEvent(request, session.Username, "server_ports_changed", map[string]string{
+		"game":   strconv.Itoa(ports.Game),
+		"rcon":   strconv.Itoa(ports.RCON),
+		"beacon": strconv.Itoa(ports.Beacon),
+		"query":  strconv.Itoa(ports.Query),
+	})
+	writeJSON(response, http.StatusOK, currentServiceSettings())
+}
+
+func (m *Manager) startMapHandler(response http.ResponseWriter, request *http.Request, session Session) {
+	if request.Method != http.MethodPost || !validCSRF(request, session) {
+		writeError(response, http.StatusForbidden, "invalid request")
+		return
+	}
+	var body struct {
+		StartMap string `json:"start_map"`
+	}
+	if err := decodeJSON(response, request, &body); err != nil {
+		writeError(response, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := setSavedStartMap(body.StartMap); err != nil {
+		writeError(response, http.StatusBadRequest, err.Error())
+		return
+	}
+	saved := savedStartMap()
+	m.auditRequestEvent(request, session.Username, "start_map_changed", map[string]string{
+		"configured": strconv.FormatBool(saved != ""),
+		"start_map":  saved,
+	})
+	writeJSON(response, http.StatusOK, currentServiceSettings())
+}
+
+func formatAuditIDs(values []int) string {
+	parts := make([]string, 0, len(values))
+	for _, value := range values {
+		parts = append(parts, strconv.Itoa(value))
+	}
+	return strings.Join(parts, ",")
 }
 
 func stateChangeOriginAllowed(request *http.Request) bool {

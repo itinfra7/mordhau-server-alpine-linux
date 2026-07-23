@@ -40,6 +40,7 @@ type Manager struct {
 	loginAttempts map[string]*loginAttempt
 
 	configMu sync.Mutex
+	modioMu  sync.Mutex
 
 	auditMu   sync.Mutex
 	auditPath string

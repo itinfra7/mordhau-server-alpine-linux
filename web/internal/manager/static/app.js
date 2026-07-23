@@ -5,6 +5,8 @@ const app = {
   username: "",
   snapshot: null,
   config: null,
+  modPlan: null,
+  modPlanReference: "",
   rconSequence: 0,
   rconLines: 0,
 };
@@ -280,6 +282,208 @@ function renderConfig() {
   }
 }
 
+function modDisplayName(item) {
+  return item && item.name ? item.name : `Resource ID ${item ? item.id : "—"}`;
+}
+
+function formatModDate(seconds) {
+  if (!Number.isFinite(seconds) || seconds <= 0) return "";
+  return new Date(seconds * 1000).toLocaleString();
+}
+
+function renderModIOSettings(settings) {
+  const configured = Boolean(settings && settings.api_key_configured);
+  const status = $("#modio-key-status");
+  status.textContent = configured
+    ? `${settings.game_name || "MORDHAU"} · game ${settings.game_id}`
+    : "Not configured";
+  status.classList.toggle("connected", configured);
+  $("#modio-api-base").value = settings && settings.api_base
+    ? settings.api_base
+    : "https://api.mod.io/v1";
+  $("#modio-api-key").placeholder = configured
+    ? "Saved · enter only to replace"
+    : "32-character key";
+  $("#modio-clear").disabled = !configured;
+}
+
+function renderConfiguredMods(data) {
+  renderModIOSettings(data.settings || {});
+  const stage = $("#mods-config-stage");
+  stage.textContent = data.config_staged ? "Staged" : "Active";
+  stage.classList.toggle("staged", Boolean(data.config_staged));
+
+  const apiError = $("#mods-api-error");
+  apiError.classList.toggle("hidden", !data.api_error);
+  apiError.textContent = data.api_error
+    ? `Metadata lookup failed: ${data.api_error}`
+    : "";
+
+  const invalid = $("#mods-invalid-warning");
+  invalid.classList.toggle("hidden", !data.invalid_entries);
+  invalid.textContent = data.invalid_entries
+    ? `${data.invalid_entries} invalid Mods= entr${data.invalid_entries === 1 ? "y was" : "ies were"} found. Use INI configuration to correct it.`
+    : "";
+
+  const list = $("#configured-mods");
+  list.replaceChildren();
+  const mods = Array.isArray(data.mods) ? data.mods : [];
+  if (!mods.length) {
+    const empty = document.createElement("p");
+    empty.className = "hint";
+    empty.textContent = "No Mods= entries are configured in the MORDHAU game session section.";
+    list.append(empty);
+    return;
+  }
+
+  for (const configured of mods) {
+    const metadata = configured.metadata;
+    const row = document.createElement("div");
+    row.className = "mod-row";
+    row.classList.toggle("disabled", !configured.enabled);
+
+    const details = document.createElement("div");
+    details.className = "mod-details";
+    const title = document.createElement("div");
+    title.className = "mod-title";
+    const name = document.createElement("strong");
+    name.textContent = metadata ? modDisplayName(metadata) : `Resource ID ${configured.id}`;
+    const id = document.createElement("span");
+    id.className = "mod-id";
+    id.textContent = `Mods=${configured.id}`;
+    title.append(name, id);
+    details.append(title);
+
+    if (metadata && metadata.summary) {
+      const summary = document.createElement("p");
+      summary.className = "mod-summary";
+      summary.textContent = metadata.summary;
+      summary.title = metadata.summary;
+      details.append(summary);
+    }
+    const meta = document.createElement("div");
+    meta.className = "mod-meta";
+    const fields = [];
+    if (metadata && metadata.modfile && metadata.modfile.version) {
+      fields.push(`version ${metadata.modfile.version}`);
+    }
+    if (metadata && metadata.date_updated) {
+      fields.push(`updated ${formatModDate(metadata.date_updated)}`);
+    }
+    if (configured.occurrences > 1) fields.push(`${configured.occurrences} entries`);
+    fields.push(configured.enabled ? "enabled" : "disabled");
+    meta.textContent = fields.join(" · ");
+    details.append(meta);
+
+    const link = document.createElement("a");
+    link.className = "secondary-link";
+    link.textContent = "mod.io";
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    if (metadata && metadata.name_id) {
+      link.href = `https://mod.io/g/mordhau/m/${encodeURIComponent(metadata.name_id)}`;
+    } else {
+      link.href = `https://mod.io/search/mods/${configured.id}`;
+    }
+
+    const toggle = makeButton(
+      configured.enabled ? "Disable" : "Enable",
+      configured.enabled ? "ghost compact" : "primary compact",
+      async () => {
+        try {
+          const result = await api("/api/mods/enabled", {
+            method: "POST",
+            body: { id: configured.id, enabled: !configured.enabled },
+          });
+          toast(`${configured.id} ${configured.enabled ? "disabled" : "enabled"}${result.staged ? " in staged Game.ini" : ""}.`);
+          await Promise.all([loadMods(), loadConfig()]);
+        } catch (error) {
+          toast(error.message, true);
+        }
+      },
+    );
+    const remove = makeButton("Remove", "danger compact", async () => {
+      if (!confirm(`Remove every Mods=${configured.id} entry? Shared dependencies are not removed automatically.`)) return;
+      try {
+        const result = await api("/api/mods/remove", {
+          method: "POST",
+          body: { id: configured.id },
+        });
+        toast(`Mods=${configured.id} removed${result.staged ? " from staged Game.ini" : ""}.`);
+        await Promise.all([loadMods(), loadConfig()]);
+      } catch (error) {
+        toast(error.message, true);
+      }
+    });
+    row.append(details, link, toggle, remove);
+    list.append(row);
+  }
+}
+
+async function loadMods() {
+  try {
+    const data = await api("/api/mods");
+    renderConfiguredMods(data);
+  } catch (error) {
+    toast(error.message, true);
+  }
+}
+
+function renderModPlan(plan) {
+  const target = $("#mod-plan");
+  target.replaceChildren();
+  target.classList.remove("hidden");
+
+  const heading = document.createElement("h3");
+  heading.textContent = `${modDisplayName(plan.target)} · Mods=${plan.target.id}`;
+  target.append(heading);
+
+  const note = document.createElement("p");
+  note.className = "hint";
+  if (plan.dependencies_checked) {
+    note.textContent = plan.dependencies.length
+      ? `${plan.dependencies.length} recursive dependenc${plan.dependencies.length === 1 ? "y" : "ies"} will be added first.`
+      : "mod.io reports no dependencies for this mod.";
+  } else {
+    note.textContent = "Dependencies were not checked because no API key is configured. Only this numeric Resource ID will be added.";
+  }
+  target.append(note);
+
+  if (plan.dependencies.length) {
+    const list = document.createElement("ul");
+    list.className = "dependency-list";
+    for (const dependency of plan.dependencies) {
+      const item = document.createElement("li");
+      const name = document.createElement("span");
+      name.textContent = modDisplayName(dependency);
+      const id = document.createElement("code");
+      id.textContent = `Mods=${dependency.id}`;
+      item.append(name, id);
+      list.append(item);
+    }
+    target.append(list);
+  }
+  const add = $("#mod-plan-add");
+  add.textContent = plan.dependencies_checked
+    ? "Add mod and dependencies to Game.ini"
+    : "Add this Resource ID only";
+  add.classList.remove("hidden");
+}
+
+async function inspectMod(reference) {
+  const plan = await api("/api/mods/plan", {
+    method: "POST",
+    body: { reference },
+  });
+  if (!plan || !plan.target || !Number.isInteger(plan.target.id)) {
+    throw new Error("mod.io returned an invalid install plan.");
+  }
+  plan.dependencies = Array.isArray(plan.dependencies) ? plan.dependencies : [];
+  app.modPlan = plan;
+  app.modPlanReference = reference;
+  renderModPlan(plan);
+}
+
 async function loadAccounts() {
   try {
     const data = await api("/api/accounts");
@@ -355,6 +559,14 @@ async function loadServices() {
     $("#mordhau-service-mode").value = settings.mordhau_automatic ? "automatic" : "manual";
     $("#web-service-mode").value = settings.web_automatic ? "automatic" : "manual";
     $("#web-service-port").value = settings.web_port;
+    $("#start-map").value = settings.start_map || "";
+    const ports = settings.server_ports && typeof settings.server_ports === "object"
+      ? settings.server_ports
+      : {};
+    $("#game-port").value = Number.isInteger(ports.game) ? ports.game : 7777;
+    $("#rcon-port").value = Number.isInteger(ports.rcon) ? ports.rcon : 7778;
+    $("#beacon-port").value = Number.isInteger(ports.beacon) ? ports.beacon : 15000;
+    $("#query-port").value = Number.isInteger(ports.query) ? ports.query : 27015;
   } catch (error) {
     toast(error.message, true);
   }
@@ -525,6 +737,108 @@ function bindEvents() {
       toast(error.message, true);
     }
   });
+  $("#start-map-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      const settings = await api("/api/services/start-map", {
+        method: "POST",
+        body: { start_map: $("#start-map").value },
+      });
+      $("#start-map").value = settings.start_map || "";
+      toast(settings.start_map
+        ? `Initial map saved: ${settings.start_map}`
+        : "Initial map cleared; the server default will be used.");
+    } catch (error) {
+      toast(error.message, true);
+    }
+  });
+  $("#server-ports-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      await api("/api/services/server-ports", {
+        method: "POST",
+        body: {
+          game: Number($("#game-port").value),
+          rcon: Number($("#rcon-port").value),
+          beacon: Number($("#beacon-port").value),
+          query: Number($("#query-port").value),
+        },
+      });
+      toast("Dedicated server ports saved. Restart the server to apply them.");
+      loadServices();
+    } catch (error) {
+      toast(error.message, true);
+    }
+  });
+  $("#modio-settings-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      const settings = await api("/api/modio/settings", {
+        method: "POST",
+        body: {
+          api_key: $("#modio-api-key").value,
+          api_base: $("#modio-api-base").value,
+        },
+      });
+      $("#modio-api-key").value = "";
+      renderModIOSettings(settings);
+      toast("mod.io API key validated and saved.");
+      await loadMods();
+    } catch (error) {
+      $("#modio-api-key").value = "";
+      toast(error.message, true);
+    }
+  });
+  $("#modio-clear").addEventListener("click", async () => {
+    if (!confirm("Clear the saved mod.io API key? Existing Mods= entries are not changed.")) return;
+    try {
+      await api("/api/modio/settings/clear", { method: "POST" });
+      app.modPlan = null;
+      app.modPlanReference = "";
+      $("#mod-plan").classList.add("hidden");
+      $("#mod-plan-add").classList.add("hidden");
+      toast("Saved mod.io API key cleared.");
+      await loadMods();
+    } catch (error) {
+      toast(error.message, true);
+    }
+  });
+  $("#mod-plan-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const reference = $("#mod-reference").value.trim();
+    try {
+      await inspectMod(reference);
+    } catch (error) {
+      app.modPlan = null;
+      app.modPlanReference = "";
+      $("#mod-plan").classList.add("hidden");
+      $("#mod-plan-add").classList.add("hidden");
+      toast(error.message, true);
+    }
+  });
+  $("#mod-plan-add").addEventListener("click", async () => {
+    if (!app.modPlan || !app.modPlanReference) return;
+    const count = 1 + app.modPlan.dependencies.length;
+    if (!confirm(`Add ${count} Mods= entr${count === 1 ? "y" : "ies"} to Game.ini?`)) return;
+    try {
+      const result = await api("/api/mods/add", {
+        method: "POST",
+        body: { reference: app.modPlanReference },
+      });
+      const changed = result.added.length + result.reenabled.length;
+      toast(changed
+        ? `${changed} mod entr${changed === 1 ? "y" : "ies"} configured${result.staged ? " in staged Game.ini" : ""}.`
+        : "Every mod in this plan is already enabled.");
+      app.modPlan = null;
+      app.modPlanReference = "";
+      $("#mod-plan").classList.add("hidden");
+      $("#mod-plan-add").classList.add("hidden");
+      await Promise.all([loadMods(), loadConfig()]);
+    } catch (error) {
+      toast(error.message, true);
+    }
+  });
+  $("#mods-refresh").addEventListener("click", loadMods);
 }
 
 async function initialize() {
@@ -536,7 +850,7 @@ async function initialize() {
     $("#current-user").textContent = `${me.username} · ${me.current_ip}`;
     const snapshot = await api("/api/snapshot");
     renderSnapshot(snapshot);
-    await Promise.all([loadConfig(), loadAccounts(), loadAccess(), loadServices()]);
+    await Promise.all([loadConfig(), loadMods(), loadAccounts(), loadAccess(), loadServices()]);
     const stream = new EventSource("/api/events");
     stream.addEventListener("snapshot", (event) => {
       try { renderSnapshot(JSON.parse(event.data)); } catch (_) {}

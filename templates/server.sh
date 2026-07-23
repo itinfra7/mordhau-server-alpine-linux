@@ -15,6 +15,8 @@ ARCHIVE_DIR="$ROOT/log"
 PID_FILE="$RUNTIME_DIR/mordhau.pid"
 LOCK_FILE="$STATE_DIR/lifecycle.lock"
 LANGUAGE_FILE="$STATE_DIR/language"
+START_MAP_FILE="$STATE_DIR/start-map"
+SERVER_PORTS_FILE="$STATE_DIR/server-ports"
 CONSOLE_LOG="$RUNTIME_DIR/server-console.log"
 STEAM_RUN_LOG="$RUNTIME_DIR/steamcmd-update.log"
 STEAM_CONSOLE_LOG=/root/steamcmd/logs/console_log.txt
@@ -106,6 +108,99 @@ selected_language() {
     printf '%s\n' "$language"
 }
 
+selected_start_map() {
+    start_map=
+    if [ -f "$START_MAP_FILE" ]; then
+        start_map=$(sed -n '1p' "$START_MAP_FILE" | tr -d '\r\n')
+    fi
+    case "$start_map" in
+        '') ;;
+        -*|*[!abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_./?=:+-]*)
+            printf '%s\n' "Invalid start map in $START_MAP_FILE." >&2
+            return 1
+            ;;
+    esac
+    if [ "${#start_map}" -gt 160 ]; then
+        printf '%s\n' "Invalid start map in $START_MAP_FILE." >&2
+        return 1
+    fi
+    printf '%s\n' "$start_map"
+}
+
+load_server_ports() {
+    game_port=7777
+    rcon_port=7778
+    beacon_port=15000
+    query_port=27015
+    [ -f "$SERVER_PORTS_FILE" ] || return 0
+
+    game_seen=0
+    rcon_seen=0
+    beacon_seen=0
+    query_seen=0
+    while IFS= read -r port_line || [ -n "$port_line" ]; do
+        [ -n "$port_line" ] || continue
+        case "$port_line" in
+            *=*)
+                port_key=${port_line%%=*}
+                port_value=${port_line#*=}
+                ;;
+            *)
+                printf 'Invalid server port setting in %s.\n' "$SERVER_PORTS_FILE" >&2
+                return 1
+                ;;
+        esac
+        case "$port_value" in
+            ''|0|0*|*[!0-9]*)
+                printf 'Invalid %s port in %s.\n' "$port_key" "$SERVER_PORTS_FILE" >&2
+                return 1
+                ;;
+        esac
+        if [ "${#port_value}" -gt 5 ] || [ "$port_value" -gt 65535 ]; then
+            printf 'Invalid %s port in %s.\n' "$port_key" "$SERVER_PORTS_FILE" >&2
+            return 1
+        fi
+        case "$port_key" in
+            game)
+                [ "$game_seen" -eq 0 ] || return 1
+                game_port=$port_value
+                game_seen=1
+                ;;
+            rcon)
+                [ "$rcon_seen" -eq 0 ] || return 1
+                rcon_port=$port_value
+                rcon_seen=1
+                ;;
+            beacon)
+                [ "$beacon_seen" -eq 0 ] || return 1
+                beacon_port=$port_value
+                beacon_seen=1
+                ;;
+            query)
+                [ "$query_seen" -eq 0 ] || return 1
+                query_port=$port_value
+                query_seen=1
+                ;;
+            *)
+                printf 'Unknown server port setting %s in %s.\n' "$port_key" "$SERVER_PORTS_FILE" >&2
+                return 1
+                ;;
+        esac
+    done < "$SERVER_PORTS_FILE"
+
+    if [ "$game_seen" -ne 1 ] || [ "$rcon_seen" -ne 1 ] ||
+       [ "$beacon_seen" -ne 1 ] || [ "$query_seen" -ne 1 ]; then
+        printf 'Incomplete server port settings in %s.\n' "$SERVER_PORTS_FILE" >&2
+        return 1
+    fi
+    if [ "$game_port" = "$rcon_port" ] || [ "$game_port" = "$beacon_port" ] ||
+       [ "$game_port" = "$query_port" ] || [ "$rcon_port" = "$beacon_port" ] ||
+       [ "$rcon_port" = "$query_port" ] || [ "$beacon_port" = "$query_port" ]; then
+        printf 'Server ports in %s must be unique.\n' "$SERVER_PORTS_FILE" >&2
+        return 1
+    fi
+}
+
 update_server() {
     if is_running; then
         printf '%s\n' 'Cannot update while MORDHAU Dedicated Server is running.' >&2
@@ -191,13 +286,30 @@ launch_server() {
     }
 
     language=$(selected_language)
+    start_map=$(selected_start_map)
+    load_server_ports
     archive_log
-    printf 'Starting MORDHAU Dedicated Server with language %s...\n' "$language"
+    if [ -n "$start_map" ]; then
+        printf 'Starting MORDHAU Dedicated Server on %s with language %s (game %s, RCON %s, beacon %s, query %s)...\n' \
+            "$start_map" "$language" "$game_port" "$rcon_port" "$beacon_port" "$query_port"
+    else
+        printf 'Starting MORDHAU Dedicated Server with language %s (game %s, RCON %s, beacon %s, query %s)...\n' \
+            "$language" "$game_port" "$rcon_port" "$beacon_port" "$query_port"
+    fi
     (
         # The long-running Wine process must not inherit the lifecycle lock.
         exec 9>&-
         cd "$ROOT"
-        exec setsid wine "$EXE" "-language=$language" -LocalLogTimes -log
+        if [ -n "$start_map" ]; then
+            exec setsid wine "$EXE" "$start_map" \
+                "-Port=$game_port" "-RconPort=$rcon_port" \
+                "-BeaconPort=$beacon_port" "-QueryPort=$query_port" \
+                "-language=$language" -LocalLogTimes -log
+        fi
+        exec setsid wine "$EXE" \
+            "-Port=$game_port" "-RconPort=$rcon_port" \
+            "-BeaconPort=$beacon_port" "-QueryPort=$query_port" \
+            "-language=$language" -LocalLogTimes -log
     ) >> "$CONSOLE_LOG" 2>&1 </dev/null &
     launched_pid=$!
     printf '%s\n' "$launched_pid" > "$PID_FILE"

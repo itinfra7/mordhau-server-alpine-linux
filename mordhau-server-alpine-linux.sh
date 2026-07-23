@@ -2,7 +2,7 @@
 
 set -eu
 
-PROJECT_VERSION="1.0.0"
+PROJECT_VERSION="1.1.0"
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 MORDHAU_ROOT="/root/mordhau"
 STEAMCMD_ROOT="/root/steamcmd"
@@ -225,6 +225,19 @@ install_runtime_files() {
     printf '%s\n' "$WEB_PORT" > "$port_temp"
     chmod 0600 "$port_temp"
     mv "$port_temp" "$STATE_DIR/web-port"
+
+    if [ ! -e "$STATE_DIR/server-ports" ]; then
+        ports_temp="$STATE_DIR/.server-ports.$$"
+        {
+            printf '%s\n' \
+                'game=7777' \
+                'rcon=7778' \
+                'beacon=15000' \
+                'query=27015'
+        } > "$ports_temp"
+        chmod 0600 "$ports_temp"
+        mv "$ports_temp" "$STATE_DIR/server-ports"
+    fi
 }
 
 install_steamcmd() {

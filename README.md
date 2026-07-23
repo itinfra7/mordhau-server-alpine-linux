@@ -16,6 +16,8 @@ The repository provides:
 - OpenRC service definitions for the game server and web manager
 - An animated Go web manager with live system metrics
 - Structured Game.ini and Engine.ini editing
+- Optional mod.io metadata and recursive dependency management for Game.ini
+- Persistent initial-map and dedicated-server port selection
 - Authenticated RCON event streaming with multilingual decoding
 - Web account and IPv4/IPv6 access-policy management
 - Per-account JSON Lines web access and change auditing
@@ -31,6 +33,8 @@ upstream distribution channels and are not included in this repository.
 - Root privileges
 - Internet access to Alpine package mirrors, SteamCMD, Steam content servers,
   and Go module sources
+- A mod.io API key when URL lookup, metadata, and recursive dependency
+  inspection are required
 
 The installer requires enough free storage for Wine, SteamCMD, Go build data,
 MORDHAU Dedicated Server, and Steam update staging.
@@ -59,11 +63,11 @@ MORDHAU Dedicated Server, and Steam update staging.
 ### Release archive
 
 ```sh
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v1.0.0/mordhau-server-alpine-linux-v1.0.0.tar.gz
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v1.0.0/SHA256SUMS
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v1.1.0/mordhau-server-alpine-linux-v1.1.0.tar.gz
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v1.1.0/SHA256SUMS
 sha256sum -c SHA256SUMS
-tar -xzf mordhau-server-alpine-linux-v1.0.0.tar.gz
-cd mordhau-server-alpine-linux-v1.0.0
+tar -xzf mordhau-server-alpine-linux-v1.1.0.tar.gz
+cd mordhau-server-alpine-linux-v1.1.0
 chmod +x mordhau-server-alpine-linux.sh
 ./mordhau-server-alpine-linux.sh
 ```
@@ -135,7 +139,8 @@ Behavior:
   prefix if required.
 - `restart` stops, validates, applies staged changes, and starts.
 - `update` only runs while the game server is stopped.
-- Every managed launch uses `-language=<code> -LocalLogTimes -log`.
+- Every managed launch uses the selected initial map, game/RCON/beacon/query
+  ports, `-language=<code>`, `-LocalLogTimes`, and `-log`.
 
 Before each managed launch, an existing `Mordhau.log` is moved to:
 
@@ -175,7 +180,11 @@ The web manager provides:
 - Start, stop, restart, and stopped-only update controls
 - Boot startup mode controls for both OpenRC services
 - Persistent web-service port selection
+- Persistent initial-map selection
+- Game, RCON, beacon, and query port selection with range and collision checks
 - Launch-language selection
+- Optional mod.io API-key validation, mod lookup, recursive dependency
+  inspection, and scoped `Mods=<Resource ID>` management
 - Game.ini and Engine.ini section/item creation, editing, and removal
 - Reversible per-entry enable and disable controls
 - Revision checks, active-file backups, and staged edits while the game is
@@ -198,7 +207,8 @@ HTTP access records also contain the direct client IP address, method, path,
 response status, response size, and request duration.
 
 Dedicated events identify login success, login failure, logout, server
-actions and their completion, language changes, Game.ini and Engine.ini
+actions and their completion, language changes, initial-map and port changes,
+mod configuration and mod.io connection changes, Game.ini and Engine.ini
 mutations, pending-configuration removal, account changes, network-policy
 changes, OpenRC boot-mode changes, and saved web-port changes. Requests
 without a valid session use the account name `unauthenticated`.
@@ -226,14 +236,14 @@ The launch selector supports:
 RCON packets are fully framed before text decoding. Valid UTF-8 is preserved;
 language-specific legacy decoding is used only for invalid UTF-8 payloads.
 
-The manager tries the current Game.ini RCON settings first. After each
-successful authentication, it stores the working loopback endpoint and
-credential in `/root/mordhau/.manager/rcon-last.json` with mode `0600`. If
-Game.ini is edited directly while the game is running, the server continues
-using its in-memory credential until restart; the saved working credential
-allows the web manager to reconnect and keep `listen all` active during that
-interval. The next game restart applies the edited value, which then replaces
-the saved reconnect state.
+The manager combines the current Game.ini RCON password with the saved RCON
+launch port. After each successful authentication, it stores the working
+loopback endpoint and credential in `/root/mordhau/.manager/rcon-last.json`
+with mode `0600`. If Game.ini or the saved port is edited while the game is
+running, the server continues using its in-memory settings until restart; the
+saved working settings allow the web manager to reconnect and keep
+`listen all` active during that interval. The next game restart applies the
+edited values and replaces the saved reconnect state.
 
 ## Configuration Management
 
@@ -259,13 +269,61 @@ serializing it as:
 
 MORDHAU ignores that comment at the next start. Re-enabling the entry removes
 the marker and restores the original `Key=Value` line. Ordinary user-authored
-comments are not interpreted as disabled entries. Disabling `RconPassword` or
-`RconPort` intentionally makes the web RCON stream unavailable after the next
-server start until those entries are enabled again.
+comments are not interpreted as disabled entries. Disabling `RconPassword`
+intentionally makes the web RCON stream unavailable after the next server
+start until the entry is enabled again.
 
 The generated files remain the source of truth for the installed MORDHAU
 version. The repository does not install a static gameplay-configuration
 template.
+
+## Mod Management
+
+The Mods panel manages `Mods=<Resource ID>` entries only within:
+
+```text
+[/Script/Mordhau.MordhauGameSession]
+```
+
+A numeric Resource ID can be added without an API key. Configuring a mod.io
+API key also enables MORDHAU mod-page URL and name-ID lookup, current modfile
+metadata, and recursive dependency inspection. Dependencies are deduplicated,
+validated as public live MORDHAU resources, and inserted before the selected
+mod. Existing entries are not duplicated.
+
+The API key and API path are stored in
+`/root/mordhau/.manager/modio.json` with mode `0600`. The key is not returned
+to the browser or written to the audit log. Requests are restricted to HTTPS
+mod.io API hosts, redirects are disabled, and response size and request time
+are bounded.
+
+Disabling a configured mod retains its Resource ID as an inactive INI entry.
+Removing a mod deletes only that ID from Game.ini; dependencies are retained
+because another configured mod may use them. The game server downloads active
+mods during its normal startup process.
+
+## Launch Map and Ports
+
+The dashboard stores an optional initial map and passes it immediately after
+`MordhauServer.exe`. An empty value leaves map selection to MORDHAU.
+
+Managed launches use these default ports:
+
+| Purpose | Default | Launch parameter | Protocol |
+| --- | ---: | --- | --- |
+| Game traffic | 7777 | `-Port=` | UDP |
+| RCON | 7778 | `-RconPort=` | TCP |
+| Beacon | 15000 | `-BeaconPort=` | UDP |
+| Steam query | 27015 | `-QueryPort=` | UDP |
+
+All values must be between 1 and 65535, must be unique, and must differ from
+the saved web-service port. Changes apply at the next managed start or
+restart. The Steam query listener is used when Steam server advertising is
+enabled in MORDHAU configuration.
+
+The selected map and ports are stored with mode `0600` under
+`/root/mordhau/.manager`. The web RCON client automatically follows the saved
+RCON port.
 
 ## OpenRC
 
@@ -306,6 +364,9 @@ Changing a boot mode does not change the current process state.
 - The most specific CIDR rule wins; deny wins an equal-prefix tie except for
   the active emergency exact-address allow.
 - RCON connects to `127.0.0.1` from the web manager.
+- The mod.io API key is never returned through a management endpoint.
+- mod.io requests accept only validated HTTPS API hosts and do not follow
+  redirects.
 - Lifecycle operations accept fixed actions and do not execute user-provided
   shell arguments.
 
@@ -343,14 +404,16 @@ rc-service mordhau-web status
 The Go tests cover random-password constraints, INI preservation, CIDR
 precedence, emergency access, proxy-safe request validation, audit-log
 permissions and secret exclusion, enabled/disabled INI entry round trips,
-RCON credential fallback order, packet framing, and Korean legacy decoding.
+RCON credential fallback order, packet framing, Korean legacy decoding,
+start-map validation, server-port parsing and collision checks, mod.io URL and
+API-path validation, dependency ordering, and scoped mod-entry mutation.
 
 ## Update and Rollback
 
 Run the installer from a newer release to update repository-managed scripts,
 services, and the Go web manager. Existing accounts, access rules, generated
-credentials, INI files, backups, logs, language selection, and boot modes are
-preserved.
+credentials, INI files, backups, logs, language selection, initial map,
+server ports, mod.io settings, and boot modes are preserved.
 
 To roll back management code:
 
@@ -380,5 +443,6 @@ third-party software.
 - MORDHAU and Triternion: https://mordhau.com/
 - MORDHAU Dedicated Server on Steam: https://store.steampowered.com/app/629800/MORDHAU_Dedicated_Server/
 - SteamCMD and Valve: https://developer.valvesoftware.com/wiki/SteamCMD
+- mod.io: https://mod.io/
 - Wine: https://www.winehq.org/
 - Author: itinfra7 (GitHub: https://github.com/itinfra7)

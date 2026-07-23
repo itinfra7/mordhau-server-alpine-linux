@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
   <title>MORDHAU Control</title>
-  <link rel="stylesheet" href="/static/app.css?v=1.0.0">
-  <script src="/static/app.js?v=1.0.0" defer></script>
+  <link rel="stylesheet" href="/static/app.css?v=1.1.0">
+  <script src="/static/app.js?v=1.1.0" defer></script>
 </head>
 <body>
   <div class="ambient ambient-one"></div>
@@ -38,6 +38,7 @@
     <nav class="tabbar" aria-label="Manager sections">
       <button class="tab active" data-panel="dashboard">Dashboard</button>
       <button class="tab" data-panel="configuration">Configuration</button>
+      <button class="tab" data-panel="mods">Mods</button>
       <button class="tab" data-panel="accounts">Accounts</button>
       <button class="tab" data-panel="access">Network access</button>
     </nav>
@@ -138,6 +139,39 @@
               </div>
               <small>Used on the next OpenRC start, bound to 0.0.0.0.</small>
             </form>
+            <form id="start-map-form" class="service-setting start-map-setting">
+              <span>Initial map</span>
+              <div class="field-row">
+                <input id="start-map" placeholder="Optional map name" maxlength="160" autocomplete="off">
+                <button class="secondary compact" type="submit">Save map</button>
+              </div>
+              <small>Passed immediately after MordhauServer.exe on the next start. Leave empty for the server default.</small>
+            </form>
+            <form id="server-ports-form" class="service-setting server-ports-setting">
+              <span>Dedicated server ports</span>
+              <div class="server-port-grid">
+                <label>
+                  <small>Game</small>
+                  <input id="game-port" type="number" min="1" max="65535" required>
+                </label>
+                <label>
+                  <small>RCON</small>
+                  <input id="rcon-port" type="number" min="1" max="65535" required>
+                </label>
+                <label>
+                  <small>Beacon</small>
+                  <input id="beacon-port" type="number" min="1" max="65535" required>
+                </label>
+                <label>
+                  <small>Query</small>
+                  <input id="query-port" type="number" min="1" max="65535" required>
+                </label>
+              </div>
+              <div class="server-port-actions">
+                <small>Applied on the next server start or restart. All four ports must be unique and must not use the web service port.</small>
+                <button class="secondary compact" type="submit">Save ports</button>
+              </div>
+            </form>
           </div>
         </article>
       </div>
@@ -166,6 +200,87 @@
         </form>
         <div id="config-sections" class="config-sections"></div>
       </article>
+    </section>
+
+    <section id="panel-mods" class="panel">
+      <div class="mod-grid">
+        <article class="card">
+          <div class="card-heading wrap">
+            <div>
+              <p class="eyebrow">MOD.IO API</p>
+              <h2>Read-only API connection</h2>
+            </div>
+            <span id="modio-key-status" class="connection-pill">Not configured</span>
+          </div>
+          <p class="hint">
+            The API key is optional and stored only on this server with mode <code>0600</code>.
+            It is never returned to the browser after saving. A key enables URL lookup, metadata,
+            and recursive dependency inspection.
+          </p>
+          <form id="modio-settings-form" class="modio-settings-form">
+            <label>
+              <span>API key</span>
+              <input id="modio-api-key" type="password" minlength="32" maxlength="32"
+                     pattern="[A-Za-z0-9]{32}" autocomplete="new-password"
+                     placeholder="32-character key">
+            </label>
+            <label>
+              <span>API path</span>
+              <input id="modio-api-base" type="url" required autocomplete="off"
+                     value="https://api.mod.io/v1">
+            </label>
+            <div class="control-row">
+              <button class="primary" type="submit">Validate and save</button>
+              <button id="modio-clear" class="danger" type="button">Clear saved key</button>
+            </div>
+          </form>
+          <p class="hint">
+            Copy both values from
+            <a href="https://mod.io/me/access" target="_blank" rel="noopener noreferrer">mod.io API access</a>.
+            If this page is reached over an untrusted network, use HTTPS before submitting a key.
+          </p>
+        </article>
+
+        <article class="card">
+          <div class="card-heading wrap">
+            <div>
+              <p class="eyebrow">INSTALL PLAN</p>
+              <h2>Add a mod and its dependencies</h2>
+            </div>
+            <span id="mods-config-stage" class="stage-pill">Active</span>
+          </div>
+          <form id="mod-plan-form" class="mod-plan-form">
+            <input id="mod-reference" required autocomplete="off"
+                   placeholder="mod.io URL, name ID, or numeric Resource ID">
+            <button class="secondary" type="submit">Inspect</button>
+          </form>
+          <div id="mod-plan" class="mod-plan hidden"></div>
+          <button id="mod-plan-add" class="primary hidden" type="button">Add plan to Game.ini</button>
+          <p class="hint">
+            Dependencies are inserted before the selected mod as individual <code>Mods=&lt;ID&gt;</code>
+            entries. Existing IDs are not duplicated. Changes made while the game server is running
+            are staged for the next start or restart.
+          </p>
+        </article>
+
+        <article class="card configured-mods-card">
+          <div class="card-heading wrap">
+            <div>
+              <p class="eyebrow">GAME.INI</p>
+              <h2>Configured mods</h2>
+            </div>
+            <button id="mods-refresh" class="ghost compact" type="button">Refresh metadata</button>
+          </div>
+          <div id="mods-api-error" class="policy-note hidden"></div>
+          <p id="mods-invalid-warning" class="hint hidden"></p>
+          <div id="configured-mods" class="mod-list"></div>
+          <p class="hint">
+            Disable keeps an entry visible but prevents it from being applied at the next start.
+            Remove deletes only that Resource ID; dependencies are not removed automatically because
+            another configured mod may share them.
+          </p>
+        </article>
+      </div>
     </section>
 
     <section id="panel-accounts" class="panel">

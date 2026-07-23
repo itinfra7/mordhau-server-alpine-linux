@@ -3,6 +3,7 @@ package manager
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
@@ -397,4 +398,322 @@ func TestConfigAuditDetailsExcludeValuesAndRevisions(t *testing.T) {
 	if !strings.Contains(string(encoded), `"enabled":"false"`) {
 		t.Fatal("entry enable/disable state was not included in audit details")
 	}
+}
+
+func TestModIOAPIBaseValidation(t *testing.T) {
+	accepted := map[string]string{
+		"":                                defaultModIOAPIBase,
+		"https://api.mod.io/v1/":          defaultModIOAPIBase,
+		"https://u-123.modapi.io/v1":      "https://u-123.modapi.io/v1",
+		"https://g-example.modapi.io/v1/": "https://g-example.modapi.io/v1",
+	}
+	for input, wanted := range accepted {
+		got, err := normalizeModIOAPIBase(input)
+		if err != nil {
+			t.Fatalf("normalizeModIOAPIBase(%q): %v", input, err)
+		}
+		if got != wanted {
+			t.Fatalf("normalizeModIOAPIBase(%q) = %q, want %q", input, got, wanted)
+		}
+	}
+
+	rejected := []string{
+		"http://api.mod.io/v1",
+		"https://mod.io/v1",
+		"https://example.com/v1",
+		"https://api.mod.io:443/v1",
+		"https://user@api.mod.io/v1",
+		"https://api.mod.io/v1?x=1",
+		"https://api.mod.io/v1#fragment",
+		"https://api.mod.io/v1/games",
+	}
+	for _, input := range rejected {
+		if _, err := normalizeModIOAPIBase(input); err == nil {
+			t.Fatalf("normalizeModIOAPIBase(%q) unexpectedly succeeded", input)
+		}
+	}
+}
+
+func TestModIOAPIKeyValidation(t *testing.T) {
+	if !validModIOAPIKey(strings.Repeat("aB3c", 8)) {
+		t.Fatal("valid 32-character alphanumeric API key was rejected")
+	}
+	for _, value := range []string{
+		strings.Repeat("a", 31),
+		strings.Repeat("a", 33),
+		strings.Repeat("a", 31) + "-",
+		strings.Repeat("a", 31) + "\n",
+	} {
+		if validModIOAPIKey(value) {
+			t.Fatalf("invalid API key shape was accepted: length=%d", len(value))
+		}
+	}
+}
+
+func TestParseModReference(t *testing.T) {
+	tests := []struct {
+		reference string
+		id        int
+		slug      string
+	}{
+		{reference: "1234567", id: 1234567},
+		{reference: "example-mod", slug: "example-mod"},
+		{reference: "https://mod.io/g/mordhau/m/example-mod", slug: "example-mod"},
+		{reference: "https://www.mod.io/g/mordhau/m/example-mod", slug: "example-mod"},
+		{reference: "https://mordhau.mod.io/example-mod", slug: "example-mod"},
+	}
+	for _, test := range tests {
+		id, slug, err := parseModReference(test.reference)
+		if err != nil {
+			t.Fatalf("parseModReference(%q): %v", test.reference, err)
+		}
+		if id != test.id || slug != test.slug {
+			t.Fatalf("parseModReference(%q) = (%d, %q), want (%d, %q)",
+				test.reference, id, slug, test.id, test.slug)
+		}
+	}
+
+	rejected := []string{
+		"",
+		"https://example.com/g/mordhau/m/example-mod",
+		"http://mod.io/g/mordhau/m/example-mod",
+		"https://mod.io/g/skaterxl/m/example-mod",
+		"https://mod.io/g/mordhau/m/example-mod/extra",
+		"Not A Slug",
+	}
+	for _, reference := range rejected {
+		if _, _, err := parseModReference(reference); err == nil {
+			t.Fatalf("parseModReference(%q) unexpectedly succeeded", reference)
+		}
+	}
+}
+
+func TestConfiguredModsParsingIsScopedAndNullSafe(t *testing.T) {
+	data := []byte("[" + modIOGameSessionSection + "]\r\n" +
+		"Mods=10\r\n" +
+		disabledEntryPrefix + "Mods=20\r\n" +
+		"Mods=10\r\n" +
+		"Mods=invalid\r\n" +
+		"[Other]\r\n" +
+		"Mods=999\r\n")
+	mods, invalid := configuredModsFromData(data)
+	if invalid != 1 {
+		t.Fatalf("invalid entry count = %d, want 1", invalid)
+	}
+	if len(mods) != 2 {
+		t.Fatalf("configured mod count = %d, want 2", len(mods))
+	}
+	if mods[0].ID != 10 || !mods[0].Enabled || mods[0].Occurrences != 2 {
+		t.Fatalf("first configured mod parsed incorrectly: %+v", mods[0])
+	}
+	if mods[1].ID != 20 || mods[1].Enabled || mods[1].Occurrences != 1 {
+		t.Fatalf("second configured mod parsed incorrectly: %+v", mods[1])
+	}
+
+	empty, invalid := configuredModsFromData([]byte("[Other]\nMods=999\n"))
+	if empty == nil || len(empty) != 0 || invalid != 0 {
+		t.Fatalf("missing game-session section did not produce an empty array: %#v, %d", empty, invalid)
+	}
+}
+
+func TestModDocumentMutationsPreserveScopeAndOrdering(t *testing.T) {
+	original := []byte("[" + modIOGameSessionSection + "]\r\n" +
+		"Mods=10\r\n" +
+		disabledEntryPrefix + "Mods=20\r\n" +
+		"[Other]\r\n" +
+		"Mods=999\r\n")
+	document := parseIni(original)
+
+	change, err := addModsToDocument(&document, []int{10, 20, 30})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !change.Changed || !slicesEqual(change.Added, []int{30}) ||
+		!slicesEqual(change.Reenabled, []int{20}) {
+		t.Fatalf("unexpected add result: %+v", change)
+	}
+	result := string(document.bytes())
+	wantedOrder := "Mods=10\r\nMods=20\r\nMods=30\r\n[Other]\r\nMods=999"
+	if !strings.Contains(result, wantedOrder) {
+		t.Fatalf("mod lines were not added in dependency-first order or scope:\n%s", result)
+	}
+
+	change, err = setModEnabledInDocument(&document, 10, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !change.Changed ||
+		!strings.Contains(string(document.bytes()), disabledEntryPrefix+"Mods=10") {
+		t.Fatal("configured mod was not disabled")
+	}
+
+	change, err = removeModFromDocument(&document, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result = string(document.bytes())
+	if !change.Changed || strings.Contains(result, "Mods=20") {
+		t.Fatal("configured mod was not removed")
+	}
+	if !strings.Contains(result, "[Other]\r\nMods=999") {
+		t.Fatal("a Mods entry in another section was changed")
+	}
+}
+
+func TestPlanModIDsAreDependenciesFirstAndDeduplicated(t *testing.T) {
+	plan := ModInstallPlan{
+		Target: ModIOItem{ID: 30},
+		Dependencies: []ModIOItem{
+			{ID: 10},
+			{ID: 20},
+			{ID: 10},
+			{ID: 0},
+			{ID: 30},
+		},
+	}
+	if got := planModIDs(plan); !slicesEqual(got, []int{10, 20, 30}) {
+		t.Fatalf("planModIDs() = %v, want [10 20 30]", got)
+	}
+}
+
+func TestStartMapValidation(t *testing.T) {
+	for _, value := range []string{
+		"",
+		"DREAD_Crypt",
+		"/Game/Mordhau/Maps/Test?game=/Script/Mordhau.MordhauGameMode",
+		"Map.Name-1+Variant:Two",
+	} {
+		if err := validateStartMap(value); err != nil {
+			t.Fatalf("validateStartMap(%q): %v", value, err)
+		}
+	}
+	for _, value := range []string{
+		"-log",
+		"Map Name",
+		"Map;command",
+		"Map\nName",
+		strings.Repeat("a", 161),
+	} {
+		if err := validateStartMap(value); err == nil {
+			t.Fatalf("validateStartMap(%q) unexpectedly succeeded", value)
+		}
+	}
+}
+
+func TestServerPortsRoundTripAndValidation(t *testing.T) {
+	ports := ServerPorts{
+		Game:   7777,
+		RCON:   7778,
+		Beacon: 15000,
+		Query:  27015,
+	}
+	parsed, err := parseServerPorts(formatServerPorts(ports))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed != ports {
+		t.Fatalf("parsed server ports = %+v, want %+v", parsed, ports)
+	}
+	if err := validateServerPortsForWeb(ports, 8080); err != nil {
+		t.Fatalf("default server ports were rejected: %v", err)
+	}
+
+	duplicate := ports
+	duplicate.Query = duplicate.Game
+	if err := validateServerPorts(duplicate); err == nil {
+		t.Fatal("duplicate server ports were accepted")
+	}
+
+	outOfRange := ports
+	outOfRange.RCON = 65536
+	if err := validateServerPorts(outOfRange); err == nil {
+		t.Fatal("out-of-range server port was accepted")
+	}
+
+	if err := validateServerPortsForWeb(ports, ports.Beacon); err == nil {
+		t.Fatal("server port matching the web service port was accepted")
+	}
+}
+
+func TestServerPortsFileRejectsIncompleteOrUnknownSettings(t *testing.T) {
+	for _, data := range []string{
+		"game=7777\nrcon=7778\nbeacon=15000\n",
+		"game=7777\nrcon=7778\nbeacon=15000\nquery=27015\nextra=1\n",
+		"game=7777\ngame=7779\nrcon=7778\nbeacon=15000\nquery=27015\n",
+		"game=invalid\nrcon=7778\nbeacon=15000\nquery=27015\n",
+	} {
+		if _, err := parseServerPorts([]byte(data)); err == nil {
+			t.Fatalf("invalid server ports file was accepted: %q", data)
+		}
+	}
+}
+
+func TestPublicModIOSettingsNeverExposeAPIKey(t *testing.T) {
+	secret := strings.Repeat("aB3c", 8)
+	view := publicModIOSettings(&modIOSettingsFile{
+		Version:  1,
+		APIKey:   secret,
+		APIBase:  defaultModIOAPIBase,
+		GameID:   11,
+		GameName: "MORDHAU",
+	})
+	encoded, err := json.Marshal(view)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), secret) || strings.Contains(string(encoded), `"api_key":`) {
+		t.Fatal("mod.io API key was exposed in public settings JSON")
+	}
+	if !strings.Contains(string(encoded), `"api_key_configured":true`) {
+		t.Fatal("public settings did not report that an API key is configured")
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (function roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return function(request)
+}
+
+func TestModIOErrorsDoNotLeakAPIKey(t *testing.T) {
+	secret := strings.Repeat("aB3c", 8)
+	originalClient := modIOHTTPClient
+	defer func() {
+		modIOHTTPClient = originalClient
+	}()
+	modIOHTTPClient = &http.Client{
+		Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			if request.URL.Query().Get("api_key") != secret {
+				t.Fatal("API key was not sent to mod.io")
+			}
+			return &http.Response{
+				StatusCode: http.StatusUnauthorized,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader("rejected key " + secret)),
+				Request:    request,
+			}, nil
+		}),
+	}
+	err := modIOGet(modIOSettingsFile{
+		APIKey:  secret,
+		APIBase: defaultModIOAPIBase,
+	}, "games", nil, &modIOCollection[modIOGame]{})
+	if err == nil {
+		t.Fatal("unauthorized mod.io response unexpectedly succeeded")
+	}
+	if strings.Contains(err.Error(), secret) {
+		t.Fatal("mod.io API key leaked through an error")
+	}
+}
+
+func slicesEqual(left, right []int) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
 }
