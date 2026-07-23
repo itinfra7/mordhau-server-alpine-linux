@@ -1,4 +1,4 @@
-# MORDHAU Server Alpine Linux v1.1.0
+# MORDHAU Server Alpine Linux v1.1.1
 
 This release extends the Alpine Linux management stack for the Windows
 MORDHAU Dedicated Server with mod.io-assisted configuration and managed launch
@@ -30,10 +30,13 @@ settings.
 - Root-only per-account JSON Lines logging for web access, authentication,
   server actions, port and map changes, mod configuration, and administrative
   changes
-- RCON `listen all` event streaming with multilingual decoding
+- RCON `listen allon` event streaming with multilingual decoding
 - RCON reconnection across direct Game.ini password changes while the game is
   running
 - Automatic web RCON use of the saved RCON launch port
+- Server acknowledgement required before the web manager reports the
+  all-broadcast subscription as active
+- Broadcast-option help responses omitted from the live RCON event view
 
 ## Installation
 

@@ -2,6 +2,17 @@
 
 All notable changes to this repository are documented in this file.
 
+## [1.1.1] - 2026-07-23
+
+### Fixed
+
+- Use the current `listen allon` RCON syntax for subscribing to every
+  broadcast channel.
+- Require the server's all-broadcast success response before reporting the
+  RCON stream as connected.
+- Suppress the broadcast-option help response from the live RCON event view.
+- Add tests for the subscription packet, acknowledgement, and output filter.
+
 ## [1.1.0] - 2026-07-23
 
 ### Added
@@ -62,8 +73,9 @@ All notable changes to this repository are documented in this file.
 - Reversible per-entry INI enable/disable controls using an explicit
   server-ignored comment marker.
 - Launch-language selection.
-- Source RCON framing, authentication, automatic `listen all`, reconnection,
-  live-credential-change fallback, and multilingual output decoding.
+- Source RCON framing, authentication, automatic broadcast subscription,
+  reconnection, live-credential-change fallback, and multilingual output
+  decoding.
 - Unit tests for passwords, INI preservation, network-rule precedence, and
   multilingual RCON handling.
 

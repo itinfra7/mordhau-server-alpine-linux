@@ -27,6 +27,11 @@ const (
 	rconExecCommand   = 2
 	rconAuthResponse  = 2
 	rconAuth          = 3
+
+	rconListenAllCommand     = "listen allon"
+	rconListenAllSuccess     = "Now listening to all broadcast channels"
+	rconInvalidBroadcast     = "Invalid broadcast option!"
+	rconBroadcastOptionsHelp = "Valid options include allon, alloff, chat, login, matchstate, killfeed, scorefeed, custom, and punishment"
 )
 
 type rconPacket struct {
@@ -86,6 +91,24 @@ func (m *Manager) addRCONEvent(kind, text string) {
 	m.rconMu.Unlock()
 }
 
+func filteredRCONLines(text string) []string {
+	lines := make([]string, 0)
+	for _, line := range strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n") {
+		line = strings.TrimSpace(strings.ReplaceAll(line, "\x00", ""))
+		if line == "" || line == rconBroadcastOptionsHelp {
+			continue
+		}
+		lines = append(lines, line)
+	}
+	return lines
+}
+
+func (m *Manager) addRCONText(text string) {
+	for _, line := range filteredRCONLines(text) {
+		m.addRCONEvent("rcon", line)
+	}
+}
+
 func (m *Manager) rconLoop(ctx context.Context) {
 	for {
 		if ctx.Err() != nil {
@@ -135,11 +158,7 @@ func (m *Manager) rconLoop(ctx context.Context) {
 
 			err = authenticateRCON(candidateConnection, candidate.Password)
 			if err == nil {
-				err = writeRCONPacket(candidateConnection, rconPacket{
-					ID:   102,
-					Type: rconExecCommand,
-					Body: []byte("listen all"),
-				})
+				err = m.enableAllRCONBroadcasts(candidateConnection)
 			}
 			if err != nil {
 				_ = candidateConnection.Close()
@@ -152,7 +171,7 @@ func (m *Manager) rconLoop(ctx context.Context) {
 		}
 
 		if connection == nil {
-			m.setRCONState(false, "RCON unavailable or authentication failed; retrying")
+			m.setRCONState(false, "RCON unavailable, authentication failed, or broadcast subscription failed; retrying")
 			if !waitContext(ctx, 5*time.Second) {
 				return
 			}
@@ -167,10 +186,10 @@ func (m *Manager) rconLoop(ctx context.Context) {
 			sameRCONSettings(connectedSettings, *currentSettings)
 		if usingCurrent {
 			m.setRCONState(true, "connected; listening to all broadcasts")
-			m.addRCONEvent("system", "RCON connected; listen all enabled")
+			m.addRCONEvent("system", "RCON connected; all broadcasts enabled")
 		} else {
 			m.setRCONState(true, "connected with previous running-server settings; saved changes apply after restart")
-			m.addRCONEvent("system", "RCON reconnected with the running server's previous settings; listen all enabled")
+			m.addRCONEvent("system", "RCON reconnected with the running server's previous settings; all broadcasts enabled")
 		}
 
 		err := m.consumeRCON(ctx, connection)
@@ -244,6 +263,44 @@ func authenticateRCON(connection net.Conn, password string) error {
 	return errors.New("RCON did not return an authentication response")
 }
 
+func (m *Manager) enableAllRCONBroadcasts(connection net.Conn) error {
+	if err := connection.SetDeadline(time.Now().Add(8 * time.Second)); err != nil {
+		return err
+	}
+	if err := writeRCONPacket(connection, rconPacket{
+		ID:   102,
+		Type: rconExecCommand,
+		Body: []byte(rconListenAllCommand),
+	}); err != nil {
+		return err
+	}
+	for attempts := 0; attempts < 8; attempts++ {
+		packet, err := readRCONPacket(connection)
+		if err != nil {
+			return err
+		}
+		if packet.Type != rconResponseValue && len(packet.Body) == 0 {
+			continue
+		}
+		enabled := false
+		text := decodeRCON(packet.Body, m.currentLanguage())
+		for _, line := range filteredRCONLines(text) {
+			switch line {
+			case rconListenAllSuccess:
+				enabled = true
+			case rconInvalidBroadcast:
+				return errors.New("RCON rejected the all-broadcast subscription command")
+			default:
+				m.addRCONEvent("rcon", line)
+			}
+		}
+		if enabled {
+			return connection.SetDeadline(time.Time{})
+		}
+	}
+	return errors.New("RCON did not confirm the all-broadcast subscription")
+}
+
 func waitContext(ctx context.Context, duration time.Duration) bool {
 	timer := time.NewTimer(duration)
 	defer timer.Stop()
@@ -271,9 +328,7 @@ func (m *Manager) consumeRCON(ctx context.Context, connection net.Conn) error {
 			continue
 		}
 		text := decodeRCON(packet.Body, m.currentLanguage())
-		for _, line := range strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n") {
-			m.addRCONEvent("rcon", line)
-		}
+		m.addRCONText(text)
 	}
 }
 

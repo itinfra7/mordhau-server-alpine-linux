@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
@@ -195,6 +196,54 @@ func TestRCONKoreanFallbackProducesUTF8(t *testing.T) {
 	decoded := decodeRCON([]byte(encoded), "ko")
 	if decoded != source || !utf8.ValidString(decoded) {
 		t.Fatalf("Korean fallback decode = %q", decoded)
+	}
+}
+
+func TestRCONAllBroadcastSubscriptionUsesCurrentSyntax(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+
+	serverResult := make(chan string, 1)
+	go func() {
+		defer server.Close()
+		packet, err := readRCONPacket(server)
+		if err != nil {
+			serverResult <- err.Error()
+			return
+		}
+		if packet.ID != 102 || packet.Type != rconExecCommand ||
+			string(packet.Body) != rconListenAllCommand {
+			serverResult <- "unexpected all-broadcast subscription packet"
+			return
+		}
+		if err := writeRCONPacket(server, rconPacket{
+			ID:   packet.ID,
+			Type: rconResponseValue,
+			Body: []byte(rconListenAllSuccess),
+		}); err != nil {
+			serverResult <- err.Error()
+			return
+		}
+		serverResult <- ""
+	}()
+
+	manager := &Manager{}
+	if err := manager.enableAllRCONBroadcasts(client); err != nil {
+		t.Fatal(err)
+	}
+	if result := <-serverResult; result != "" {
+		t.Fatal(result)
+	}
+}
+
+func TestRCONBroadcastOptionsHelpIsHidden(t *testing.T) {
+	lines := filteredRCONLines(
+		"Chat: retained\r\n" +
+			rconBroadcastOptionsHelp + "\r\n" +
+			rconInvalidBroadcast + "\r\n",
+	)
+	if len(lines) != 2 || lines[0] != "Chat: retained" || lines[1] != rconInvalidBroadcast {
+		t.Fatalf("unexpected visible RCON lines: %#v", lines)
 	}
 }
 

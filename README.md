@@ -63,11 +63,11 @@ MORDHAU Dedicated Server, and Steam update staging.
 ### Release archive
 
 ```sh
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v1.1.0/mordhau-server-alpine-linux-v1.1.0.tar.gz
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v1.1.0/SHA256SUMS
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v1.1.1/mordhau-server-alpine-linux-v1.1.1.tar.gz
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v1.1.1/SHA256SUMS
 sha256sum -c SHA256SUMS
-tar -xzf mordhau-server-alpine-linux-v1.1.0.tar.gz
-cd mordhau-server-alpine-linux-v1.1.0
+tar -xzf mordhau-server-alpine-linux-v1.1.1.tar.gz
+cd mordhau-server-alpine-linux-v1.1.1
 chmod +x mordhau-server-alpine-linux.sh
 ./mordhau-server-alpine-linux.sh
 ```
@@ -189,8 +189,8 @@ The web manager provides:
 - Reversible per-entry enable and disable controls
 - Revision checks, active-file backups, and staged edits while the game is
   running
-- RCON authentication, automatic `listen all`, reconnection across live
-  Game.ini credential changes, and live events
+- RCON authentication, acknowledged `listen allon` subscription, reconnection
+  across live Game.ini credential changes, and live events
 - Root-only web access and administrative change audit logging
 
 ## Web Audit Log
@@ -242,7 +242,7 @@ loopback endpoint and credential in `/root/mordhau/.manager/rcon-last.json`
 with mode `0600`. If Game.ini or the saved port is edited while the game is
 running, the server continues using its in-memory settings until restart; the
 saved working settings allow the web manager to reconnect and keep
-`listen all` active during that interval. The next game restart applies the
+`listen allon` active during that interval. The next game restart applies the
 edited values and replaces the saved reconnect state.
 
 ## Configuration Management
@@ -405,8 +405,9 @@ The Go tests cover random-password constraints, INI preservation, CIDR
 precedence, emergency access, proxy-safe request validation, audit-log
 permissions and secret exclusion, enabled/disabled INI entry round trips,
 RCON credential fallback order, packet framing, Korean legacy decoding,
-start-map validation, server-port parsing and collision checks, mod.io URL and
-API-path validation, dependency ordering, and scoped mod-entry mutation.
+current all-broadcast subscription syntax and response filtering, start-map
+validation, server-port parsing and collision checks, mod.io URL and API-path
+validation, dependency ordering, and scoped mod-entry mutation.
 
 ## Update and Rollback
 
