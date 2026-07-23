@@ -10,6 +10,7 @@ const (
 	pendingDir        = stateDir + "/pending"
 	backupDir         = stateDir + "/backups"
 	configDir         = rootDir + "/Mordhau/Saved/Config/WindowsServer"
+	gameLogPath       = rootDir + "/Mordhau/Saved/Logs/Mordhau.log"
 	accountsPath      = stateDir + "/accounts.json"
 	sessionsPath      = stateDir + "/sessions.json"
 	accessPath        = stateDir + "/access.json"

@@ -199,11 +199,127 @@ func TestRCONKoreanFallbackProducesUTF8(t *testing.T) {
 	}
 }
 
+func TestMordhauChatLogLinePreservesUnicode(t *testing.T) {
+	line := `[2026.07.23-20.23.14:871][328]LogGameMode: Display: (ALL) Name, WithComma, 0123456789ABCDEF: "한국어 — Русский — 简体中文"`
+	chat, ok := parseMordhauChatLogLine(line)
+	if !ok {
+		t.Fatal("valid MORDHAU chat log line was rejected")
+	}
+	expected := "Chat: 0123456789ABCDEF, Name, WithComma, (ALL) 한국어 — Русский — 简体中文"
+	if chat != expected {
+		t.Fatalf("chat log conversion = %q", chat)
+	}
+}
+
+func TestChatLogFollowerReadsFileCreatedAfterStartup(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "Mordhau.log")
+	follower := &chatLogFollower{path: path}
+	chats, err := follower.readNewChats()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chats) != 0 {
+		t.Fatalf("missing log returned chats: %#v", chats)
+	}
+
+	line := `[2026.07.23-20.00.00:000][1]LogGameMode: Display: (ALL) Player, 1: "첫 메시지"` + "\n"
+	if err := os.WriteFile(path, []byte(line), 0600); err != nil {
+		t.Fatal(err)
+	}
+	chats, err = follower.readNewChats()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chats) != 1 || chats[0] != "Chat: 1, Player, (ALL) 첫 메시지" {
+		t.Fatalf("newly created log chats = %#v", chats)
+	}
+}
+
+func TestChatLogFollowerStartsAtEndAndFollowsRotation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "Mordhau.log")
+	oldLine := `[2026.07.23-20.00.00:000][1]LogGameMode: Display: (ALL) Old, 1: "old"` + "\n"
+	if err := os.WriteFile(path, []byte(oldLine), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	follower := &chatLogFollower{path: path}
+	chats, err := follower.readNewChats()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chats) != 0 {
+		t.Fatalf("initial historical chats were replayed: %#v", chats)
+	}
+
+	newLine := `[2026.07.23-20.00.01:000][2]LogGameMode: Display: (TEAM) Player, 2: "새 메시지"`
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.WriteString(newLine); err != nil {
+		_ = file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	chats, err = follower.readNewChats()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chats) != 0 {
+		t.Fatalf("partial log line was emitted: %#v", chats)
+	}
+
+	file, err = os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.WriteString("\n"); err != nil {
+		_ = file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	chats, err = follower.readNewChats()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chats) != 1 || chats[0] != "Chat: 2, Player, (TEAM) 새 메시지" {
+		t.Fatalf("new chat lines = %#v", chats)
+	}
+
+	if err := os.Rename(path, path+".previous"); err != nil {
+		t.Fatal(err)
+	}
+	rotatedLine := `[2026.07.23-20.00.02:000][3]LogGameMode: Display: (ALL) Player, 2: "회전 후 메시지"` + "\n"
+	if err := os.WriteFile(path, []byte(rotatedLine), 0600); err != nil {
+		t.Fatal(err)
+	}
+	chats, err = follower.readNewChats()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chats) != 1 || chats[0] != "Chat: 2, Player, (ALL) 회전 후 메시지" {
+		t.Fatalf("rotated-log chats = %#v", chats)
+	}
+}
+
+func TestRCONChatUsesUnicodeLogSource(t *testing.T) {
+	manager := &Manager{}
+	manager.addRCONText("Chat: 2, Player, (ALL) ??\r\nKillfeed: retained\r\n")
+	if len(manager.rconEvents) != 1 || manager.rconEvents[0].Text != "Killfeed: retained" {
+		t.Fatalf("unexpected direct RCON events: %#v", manager.rconEvents)
+	}
+}
+
 func TestRCONAllBroadcastSubscriptionUsesCurrentSyntax(t *testing.T) {
 	client, server := net.Pipe()
 	defer client.Close()
 
 	serverResult := make(chan string, 1)
+	serverRelease := make(chan struct{})
 	go func() {
 		defer server.Close()
 		packet, err := readRCONPacket(server)
@@ -225,10 +341,13 @@ func TestRCONAllBroadcastSubscriptionUsesCurrentSyntax(t *testing.T) {
 			return
 		}
 		serverResult <- ""
+		<-serverRelease
 	}()
 
 	manager := &Manager{}
-	if err := manager.enableAllRCONBroadcasts(client); err != nil {
+	err := manager.enableAllRCONBroadcasts(client)
+	close(serverRelease)
+	if err != nil {
 		t.Fatal(err)
 	}
 	if result := <-serverResult; result != "" {

@@ -105,6 +105,9 @@ func filteredRCONLines(text string) []string {
 
 func (m *Manager) addRCONText(text string) {
 	for _, line := range filteredRCONLines(text) {
+		if isRCONChatLine(line) {
+			continue
+		}
 		m.addRCONEvent("rcon", line)
 	}
 }
@@ -291,7 +294,9 @@ func (m *Manager) enableAllRCONBroadcasts(connection net.Conn) error {
 			case rconInvalidBroadcast:
 				return errors.New("RCON rejected the all-broadcast subscription command")
 			default:
-				m.addRCONEvent("rcon", line)
+				if !isRCONChatLine(line) {
+					m.addRCONEvent("rcon", line)
+				}
 			}
 		}
 		if enabled {

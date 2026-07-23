@@ -2,6 +2,24 @@
 
 All notable changes to this repository are documented in this file.
 
+## [1.1.2] - 2026-07-23
+
+### Fixed
+
+- Follow MORDHAU's UTF-8 game log for player-chat events so non-ASCII chat
+  remains intact when the server's RCON broadcast has already replaced it
+  with question marks.
+- Suppress the corresponding lossy RCON chat record while retaining all other
+  subscribed RCON event channels.
+- Follow log truncation and launch-time rotation without replaying historical
+  chat when the web manager starts.
+
+### Changed
+
+- Document the RCON and UTF-8 chat-log event sources.
+- Add tests for Unicode chat parsing, partial writes, log rotation, and lossy
+  RCON chat suppression.
+
 ## [1.1.1] - 2026-07-23
 
 ### Fixed

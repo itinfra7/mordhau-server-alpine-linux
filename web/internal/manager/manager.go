@@ -91,6 +91,7 @@ func (m *Manager) StartBackground(ctx context.Context) {
 	m.auditActorEvent("system", "local", "web_manager_started", nil)
 	go m.metricsLoop(ctx)
 	go m.rconLoop(ctx)
+	go m.chatLogLoop(ctx)
 	go m.cleanupLoop(ctx)
 	go func() {
 		<-ctx.Done()

@@ -1,8 +1,7 @@
-# MORDHAU Server Alpine Linux v1.1.1
+# MORDHAU Server Alpine Linux v1.1.2
 
-This release extends the Alpine Linux management stack for the Windows
-MORDHAU Dedicated Server with mod.io-assisted configuration and managed launch
-settings.
+This release preserves non-ASCII player chat in the live event view by
+combining authenticated RCON events with MORDHAU's UTF-8 game log.
 
 ## Included
 
@@ -17,6 +16,12 @@ settings.
 - Reversible per-entry enable/disable controls that preserve keys, values,
   ordering, and ordinary comments
 - Persistent launch-language and initial-map selection
+- Korean CP949, Russian CP1251, Simplified Chinese CP936, and Traditional
+  Chinese CP950 RCON decoding paths
+- UTF-8 player-chat following across partial log writes and managed log
+  rotation
+- Lossy direct RCON chat suppression while all other subscribed RCON event
+  channels remain active
 - Managed game, RCON, beacon, and query launch ports
 - Optional mod.io API-key validation, MORDHAU mod lookup, metadata, and
   recursive dependency inspection
