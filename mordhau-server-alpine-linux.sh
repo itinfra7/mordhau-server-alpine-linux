@@ -2,7 +2,7 @@
 
 set -eu
 
-PROJECT_VERSION="1.1.2"
+PROJECT_VERSION="1.2.0"
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 MORDHAU_ROOT="/root/mordhau"
 STEAMCMD_ROOT="/root/steamcmd"
@@ -38,7 +38,8 @@ usage() {
 Usage: ./mordhau-server-alpine-linux.sh [options]
 
 Installs or updates the Windows MORDHAU Dedicated Server, SteamCMD, the Go
-management web application, and OpenRC service definitions on Alpine Linux.
+management web application, the server-only Unicode Bridge, and OpenRC service
+definitions on Alpine Linux.
 
 Options:
   --web-port PORT   Persist the web service port (default: existing value or 8080)
@@ -114,6 +115,10 @@ require_environment() {
         "$SCRIPT_DIR/templates/openrc/mordhau-server" \
         "$SCRIPT_DIR/templates/openrc/mordhau-web" \
         "$SCRIPT_DIR/steamcmd/mordhau-update.txt" \
+        "$SCRIPT_DIR/unicode-bridge/install.sh" \
+        "$SCRIPT_DIR/unicode-bridge/dist/SHA256SUMS" \
+        "$SCRIPT_DIR/unicode-bridge/dist/MordhauUnicodeBridge/MordhauUnicodeBridge.uplugin" \
+        "$SCRIPT_DIR/unicode-bridge/dist/MordhauUnicodeBridge/Content/Paks/MordhauUnicodeBridge-WindowsServer.pak" \
         "$SCRIPT_DIR/web/go.mod"; do
         [ -f "$required" ] || die "release bundle is incomplete: missing $required"
     done
@@ -142,7 +147,7 @@ ensure_packages() {
         wine
     update-ca-certificates >/dev/null 2>&1 || true
 
-    for command_name in flock go rc-service rc-update setsid timeout unzip wget wine wineserver; do
+    for command_name in awk flock go rc-service rc-update setsid sha256sum timeout unzip wget wine wineserver; do
         command -v "$command_name" >/dev/null 2>&1 ||
             die "required command is unavailable after package installation: $command_name"
     done
@@ -289,6 +294,11 @@ run_initial_generation() {
     [ -f "$engine_ini" ] || die "initial run did not generate Engine.ini"
 }
 
+install_unicode_bridge() {
+    log "Installing the server-only Unicode Bridge..."
+    "$SCRIPT_DIR/unicode-bridge/install.sh" --mordhau-root "$MORDHAU_ROOT"
+}
+
 build_web_manager() {
     log "Testing and building the Go web manager..."
     (
@@ -340,6 +350,7 @@ main() {
     install_steamcmd
     install_mordhau
     run_initial_generation
+    install_unicode_bridge
     build_web_manager
     configure_services
 

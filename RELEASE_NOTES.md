@@ -1,12 +1,15 @@
-# MORDHAU Server Alpine Linux v1.1.2
+# MORDHAU Server Alpine Linux v1.2.0
 
-This release preserves non-ASCII player chat in the live event view by
-combining authenticated RCON events with MORDHAU's UTF-8 game log.
+This release adds a bundled server-only Unicode Bridge for acknowledged
+outbound multilingual messages from the authenticated web manager.
 
 ## Included
 
 - Windows SteamCMD installation and App ID `629800` validation
 - Dedicated Wine prefix and generated WindowsServer configuration
+- Editable MORDHAU Unicode Bridge Blueprint source and cooked WindowsServer PAK
+- Verified, idempotent bridge installation and active/staged Game.ini
+  server-actor registration
 - POSIX shell start, stop, restart, update, and status control
 - OpenRC services with manual or automatic boot modes
 - Log archival based on the source `Mordhau.log` modification time
@@ -20,6 +23,13 @@ combining authenticated RCON events with MORDHAU's UTF-8 game log.
   Chinese CP950 RCON decoding paths
 - UTF-8 player-chat following across partial log writes and managed log
   rotation
+- Root-only transient UTF-8 message files with exact-pattern startup cleanup
+- Random 24-digit ASCII token transport for outbound messages
+- Server-side UTF-8 file loading through a nonreplicated actor and MORDHAU's
+  reflected per-player `ClientReceiveMessage` reliable client RPC
+- Bridge acknowledgement required before the web manager reports a Unicode
+  message as sent
+- No bridge entry in Game.ini `Mods=` and no client plugin download
 - Lossy direct RCON chat suppression while all other subscribed RCON event
   channels remain active
 - Managed game, RCON, beacon, and query launch ports
@@ -42,6 +52,9 @@ combining authenticated RCON events with MORDHAU's UTF-8 game log.
 - Server acknowledgement required before the web manager reports the
   all-broadcast subscription as active
 - Broadcast-option help responses omitted from the live RCON event view
+- Per-account Unicode-message audit events that exclude message text
+- Bridge rebuild tooling, cooked-artifact checksums, and installation
+  integration tests
 
 ## Installation
 

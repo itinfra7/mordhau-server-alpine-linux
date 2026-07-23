@@ -111,6 +111,8 @@ function renderSnapshot(snapshot) {
 
   $("#rcon-status").textContent = snapshot.rcon_status;
   $("#rcon-status").classList.toggle("connected", snapshot.rcon_connected);
+  $("#rcon-message-submit").disabled = operation.running || !snapshot.server_running;
+  $("#rcon-message").disabled = operation.running || !snapshot.server_running;
   appendRconEvents(snapshot.rcon_events || []);
 }
 
@@ -146,6 +148,27 @@ async function serverAction(action) {
     toast(`${action} operation accepted.`);
   } catch (error) {
     toast(error.message, true);
+  }
+}
+
+async function sendUnicodeMessage(event) {
+  event.preventDefault();
+  const input = $("#rcon-message");
+  const submit = $("#rcon-message-submit");
+  submit.disabled = true;
+  try {
+    await api("/api/rcon/message", {
+      method: "POST",
+      body: { message: input.value },
+    });
+    input.value = "";
+    input.focus();
+    toast("Unicode server message sent.");
+  } catch (error) {
+    toast(error.message, true);
+  } finally {
+    const snapshot = app.snapshot;
+    submit.disabled = !snapshot || snapshot.operation.running || !snapshot.server_running;
   }
 }
 
@@ -647,6 +670,7 @@ function bindEvents() {
   }));
   $$("[data-server-action]").forEach((button) =>
     button.addEventListener("click", () => serverAction(button.dataset.serverAction)));
+  $("#rcon-message-form").addEventListener("submit", sendUnicodeMessage);
 
   $("#language-select").addEventListener("change", async (event) => {
     try {

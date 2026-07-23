@@ -52,13 +52,23 @@ type loginAttempt struct {
 }
 
 func New() (*Manager, error) {
-	for _, dir := range []string{stateDir, runtimeDir, pendingDir, backupDir, logDir} {
+	for _, dir := range []string{
+		stateDir,
+		runtimeDir,
+		pendingDir,
+		backupDir,
+		logDir,
+		unicodeBridgeSpoolDir,
+	} {
 		if err := os.MkdirAll(dir, 0700); err != nil {
 			return nil, err
 		}
 		if err := os.Chmod(dir, 0700); err != nil {
 			return nil, err
 		}
+	}
+	if err := cleanupUnicodeBridgeSpoolAt(unicodeBridgeSpoolDir); err != nil {
+		return nil, err
 	}
 
 	m := &Manager{

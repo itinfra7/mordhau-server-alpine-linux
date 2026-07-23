@@ -9,9 +9,11 @@ import (
 	"io"
 	"net"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"golang.org/x/text/encoding"
@@ -30,9 +32,23 @@ const (
 
 	rconListenAllCommand     = "listen allon"
 	rconListenAllSuccess     = "Now listening to all broadcast channels"
+	rconListenCustomCommand  = "listen custom"
+	rconListenCustomSuccess  = "Now listening to custom broadcasts"
 	rconInvalidBroadcast     = "Invalid broadcast option!"
 	rconBroadcastOptionsHelp = "Valid options include allon, alloff, chat, login, matchstate, killfeed, scorefeed, custom, and punishment"
+
+	unicodeBridgePayloadPrefix = "unicode.say "
+	unicodeBridgeCommandPrefix = "string " + unicodeBridgePayloadPrefix
+	unicodeBridgeAcknowledged  = "unicode.say ok"
+	unicodeBridgeFilePrefix    = "mordhau-unicode-bridge-"
+	unicodeBridgeFileExtension = ".utf8"
+	unicodeBridgeTokenLength   = 24
+	unicodeBridgeSpoolDir      = rootDir + "/Mordhau/Saved/PlayerFiles"
+	unicodeMessageMaxRunes     = 512
+	unicodeMessageMaxBytes     = 2048
 )
+
+var errInvalidUnicodeMessage = errors.New("invalid Unicode server message")
 
 type rconPacket struct {
 	ID   int32
@@ -238,6 +254,246 @@ func activeRCONSettings() (rconSettings, error) {
 		return rconSettings{}, errors.New("RconPassword is not configured")
 	}
 	return rconSettings{Password: password, Port: savedServerPorts().RCON}, nil
+}
+
+func validateUnicodeMessage(message string) error {
+	if !utf8.ValidString(message) {
+		return fmt.Errorf("%w: message is not valid UTF-8", errInvalidUnicodeMessage)
+	}
+	if strings.TrimSpace(message) == "" {
+		return fmt.Errorf("%w: message cannot be empty", errInvalidUnicodeMessage)
+	}
+	if len(message) > unicodeMessageMaxBytes {
+		return fmt.Errorf(
+			"%w: message exceeds %d UTF-8 bytes",
+			errInvalidUnicodeMessage,
+			unicodeMessageMaxBytes,
+		)
+	}
+	if utf8.RuneCountInString(message) > unicodeMessageMaxRunes {
+		return fmt.Errorf(
+			"%w: message exceeds %d characters",
+			errInvalidUnicodeMessage,
+			unicodeMessageMaxRunes,
+		)
+	}
+	for _, character := range message {
+		if unicode.IsControl(character) {
+			return fmt.Errorf(
+				"%w: control characters are not allowed",
+				errInvalidUnicodeMessage,
+			)
+		}
+	}
+	return nil
+}
+
+func validUnicodeBridgeToken(token string) bool {
+	if len(token) != unicodeBridgeTokenLength {
+		return false
+	}
+	for _, character := range token {
+		if character < '0' || character > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func unicodeRCONCommand(token string) ([]byte, error) {
+	if !validUnicodeBridgeToken(token) {
+		return nil, errors.New("invalid Unicode bridge file token")
+	}
+	return []byte(unicodeBridgeCommandPrefix + token), nil
+}
+
+func unicodeBridgeFilename(token string) (string, error) {
+	if !validUnicodeBridgeToken(token) {
+		return "", errors.New("invalid Unicode bridge file token")
+	}
+	return unicodeBridgeFilePrefix + token + unicodeBridgeFileExtension, nil
+}
+
+func isManagedUnicodeBridgeFilename(name string) bool {
+	if !strings.HasPrefix(name, unicodeBridgeFilePrefix) ||
+		!strings.HasSuffix(name, unicodeBridgeFileExtension) {
+		return false
+	}
+	token := strings.TrimSuffix(
+		strings.TrimPrefix(name, unicodeBridgeFilePrefix),
+		unicodeBridgeFileExtension,
+	)
+	return validUnicodeBridgeToken(token)
+}
+
+func cleanupUnicodeBridgeSpoolAt(directory string) error {
+	entries, err := os.ReadDir(directory)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read Unicode bridge spool directory: %w", err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !isManagedUnicodeBridgeFilename(entry.Name()) {
+			continue
+		}
+		if err := os.Remove(filepath.Join(directory, entry.Name())); err != nil &&
+			!errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("remove stale Unicode bridge spool file: %w", err)
+		}
+	}
+	return nil
+}
+
+func stageUnicodeMessageAt(directory, message string) (string, string, error) {
+	if err := validateUnicodeMessage(message); err != nil {
+		return "", "", err
+	}
+	if err := os.MkdirAll(directory, 0700); err != nil {
+		return "", "", fmt.Errorf("create Unicode bridge spool directory: %w", err)
+	}
+	if err := os.Chmod(directory, 0700); err != nil {
+		return "", "", fmt.Errorf("secure Unicode bridge spool directory: %w", err)
+	}
+
+	for attempt := 0; attempt < 8; attempt++ {
+		token, err := randomString("0123456789", unicodeBridgeTokenLength)
+		if err != nil {
+			return "", "", fmt.Errorf("generate Unicode bridge file token: %w", err)
+		}
+		name, err := unicodeBridgeFilename(token)
+		if err != nil {
+			return "", "", err
+		}
+		path := filepath.Join(directory, name)
+		if _, err := os.Lstat(path); err == nil {
+			continue
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return "", "", fmt.Errorf("check Unicode bridge spool file: %w", err)
+		}
+		if err := writeFileAtomic(path, []byte(message), 0600); err != nil {
+			return "", "", fmt.Errorf("stage Unicode bridge message: %w", err)
+		}
+		return token, path, nil
+	}
+	return "", "", errors.New("could not allocate a unique Unicode bridge file token")
+}
+
+func currentRCONCandidates() []rconSettings {
+	current, currentErr := activeRCONSettings()
+	var currentSettings *rconSettings
+	if currentErr == nil {
+		currentSettings = &current
+	}
+
+	cached, cachedErr := loadLastRCONSettings()
+	if cachedErr != nil {
+		cached = nil
+	}
+	return rconCandidates(currentSettings, cached)
+}
+
+func executeRCONCommand(connection net.Conn, password string, command []byte) error {
+	if err := authenticateRCON(connection, password); err != nil {
+		return err
+	}
+	if err := enableCustomRCONBroadcasts(connection); err != nil {
+		return err
+	}
+	if err := connection.SetDeadline(time.Now().Add(8 * time.Second)); err != nil {
+		return err
+	}
+	if err := writeRCONPacket(connection, rconPacket{
+		ID:   103,
+		Type: rconExecCommand,
+		Body: command,
+	}); err != nil {
+		return err
+	}
+	for attempts := 0; attempts < 8; attempts++ {
+		packet, err := readRCONPacket(connection)
+		if err != nil {
+			return err
+		}
+		if bytes.Contains(packet.Body, []byte(unicodeBridgeAcknowledged)) {
+			return connection.SetDeadline(time.Time{})
+		}
+	}
+	return errors.New("the Unicode server bridge did not acknowledge the message")
+}
+
+func enableCustomRCONBroadcasts(connection net.Conn) error {
+	if err := connection.SetDeadline(time.Now().Add(8 * time.Second)); err != nil {
+		return err
+	}
+	if err := writeRCONPacket(connection, rconPacket{
+		ID:   102,
+		Type: rconExecCommand,
+		Body: []byte(rconListenCustomCommand),
+	}); err != nil {
+		return err
+	}
+	for attempts := 0; attempts < 8; attempts++ {
+		packet, err := readRCONPacket(connection)
+		if err != nil {
+			return err
+		}
+		for _, line := range filteredRCONLines(string(packet.Body)) {
+			switch line {
+			case rconListenCustomSuccess:
+				return connection.SetDeadline(time.Time{})
+			case rconInvalidBroadcast:
+				return errors.New("RCON rejected the custom-broadcast subscription command")
+			}
+		}
+	}
+	return errors.New("RCON did not confirm the custom-broadcast subscription")
+}
+
+func (m *Manager) sendUnicodeRCONMessage(message string) error {
+	token, stagedPath, err := stageUnicodeMessageAt(unicodeBridgeSpoolDir, message)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = os.Remove(stagedPath)
+	}()
+	command, err := unicodeRCONCommand(token)
+	if err != nil {
+		return err
+	}
+	if !serverRunning() {
+		return errors.New("the dedicated server is not running")
+	}
+
+	candidates := currentRCONCandidates()
+	if len(candidates) == 0 {
+		return errors.New("RCON settings are unavailable")
+	}
+
+	var lastErr error
+	for _, candidate := range candidates {
+		address := net.JoinHostPort("127.0.0.1", strconv.Itoa(candidate.Port))
+		connection, err := net.DialTimeout("tcp", address, 5*time.Second)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		err = executeRCONCommand(connection, candidate.Password, command)
+		_ = connection.Close()
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		_ = saveLastRCONSettings(candidate)
+		return nil
+	}
+
+	if lastErr == nil {
+		lastErr = errors.New("no RCON connection candidate succeeded")
+	}
+	return fmt.Errorf("send Unicode message over RCON: %w", lastErr)
 }
 
 func authenticateRCON(connection net.Conn, password string) error {

@@ -19,6 +19,7 @@ The repository provides:
 - Optional mod.io metadata and recursive dependency management for Game.ini
 - Persistent initial-map and dedicated-server port selection
 - Authenticated RCON event streaming with UTF-8 player-chat integration
+- A server-only Unicode Bridge for acknowledged outbound multilingual messages
 - Web account and IPv4/IPv6 access-policy management
 - Per-account JSON Lines web access and change auditing
 
@@ -53,6 +54,11 @@ MORDHAU Dedicated Server, and Steam update staging.
   SteamCMD runscript for Windows App ID `629800`.
 - `web/`
   Go source, embedded frontend assets, and tests.
+- `unicode-bridge/`
+  Editable Blueprint source, cooked WindowsServer PAK, build tooling, integrity
+  manifest, and standalone installer for the server-only Unicode Bridge.
+- `tests/`
+  Shell integration tests for repository-managed installation behavior.
 - `CHANGELOG.md` and `RELEASE_NOTES.md`
   Version history and release-specific technical summary.
 - `LICENSE`
@@ -63,11 +69,11 @@ MORDHAU Dedicated Server, and Steam update staging.
 ### Release archive
 
 ```sh
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v1.1.2/mordhau-server-alpine-linux-v1.1.2.tar.gz
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v1.1.2/SHA256SUMS
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v1.2.0/mordhau-server-alpine-linux-v1.2.0.tar.gz
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v1.2.0/SHA256SUMS
 sha256sum -c SHA256SUMS
-tar -xzf mordhau-server-alpine-linux-v1.1.2.tar.gz
-cd mordhau-server-alpine-linux-v1.1.2
+tar -xzf mordhau-server-alpine-linux-v1.2.0.tar.gz
+cd mordhau-server-alpine-linux-v1.2.0
 chmod +x mordhau-server-alpine-linux.sh
 ./mordhau-server-alpine-linux.sh
 ```
@@ -107,9 +113,11 @@ The installer performs these operations:
 5. Generates an eight-character mixed-case alphanumeric RCON password and
    enables RCON on port `7778` through the generated
    `/Script/Mordhau.MordhauGameSession` section.
-6. Builds and installs the Go web manager.
-7. Creates the initial web account and persistent security state.
-8. Installs both OpenRC service definitions.
+6. Verifies and installs the cooked server-only Unicode Bridge, then registers
+   its nonreplicated server actor in active and staged Game.ini files.
+7. Builds and installs the Go web manager.
+8. Creates the initial web account and persistent security state.
+9. Installs both OpenRC service definitions.
 
 The initial web credentials are written with mode `0600` to:
 
@@ -191,6 +199,8 @@ The web manager provides:
   running
 - RCON authentication, acknowledged `listen allon` subscription, reconnection
   across live Game.ini credential changes, and live events
+- A Unicode server-message form with a root-only UTF-8 spool, ASCII token RCON
+  transport, and acknowledgement before success is reported
 - Root-only web access and administrative change audit logging
 
 ## Web Audit Log
@@ -209,14 +219,16 @@ response status, response size, and request duration.
 Dedicated events identify login success, login failure, logout, server
 actions and their completion, language changes, initial-map and port changes,
 mod configuration and mod.io connection changes, Game.ini and Engine.ini
-mutations, pending-configuration removal, account changes, network-policy
-changes, OpenRC boot-mode changes, and saved web-port changes. Requests
-without a valid session use the account name `unauthenticated`.
+mutations, pending-configuration removal, Unicode server-message sends,
+account changes, network-policy changes, OpenRC boot-mode changes, and saved
+web-port changes. Requests without a valid session use the account name
+`unauthenticated`.
 
 Passwords, request bodies, session cookies, CSRF tokens, RCON credentials,
 configuration values, and configuration revisions are not written to the
 audit log. Configuration events identify the file, operation, section, and
-key without recording its value.
+key without recording its value. Unicode server-message audit events record
+only UTF-8 byte and character counts, not message text.
 
 ## Languages
 
@@ -253,6 +265,37 @@ running, the server continues using its in-memory settings until restart; the
 saved working settings allow the web manager to reconnect and keep
 `listen allon` active during that interval. The next game restart applies the
 edited values and replaces the saved reconnect state.
+
+Outbound text from the Live RCON panel uses the bundled MORDHAU Unicode
+Bridge. The manager validates UTF-8, rejects control characters, limits each
+message to 512 Unicode characters and 2,048 UTF-8 bytes, and writes it to a
+mode-`0600` transient file under
+`/root/mordhau/Mordhau/Saved/PlayerFiles`. The filename contains a random
+24-digit token. Only the ASCII command `string unicode.say <token>` passes
+through MORDHAU's RCON parser. The server actor validates the numeric token,
+loads the corresponding UTF-8 file, and broadcasts the text to every connected
+`MordhauPlayerController` by invoking the reflected `ClientReceiveMessage`
+reliable client RPC through
+`MordhauUtilityLibrary.CallFunctionByNameWithArgs`. The web request succeeds
+only after the actor finishes the controller loop and returns `unicode.say ok`
+on the `custom` RCON broadcast channel.
+
+The spool directory uses mode `0700`. The manager removes each message file
+after the send attempt and removes stale files matching the managed
+24-digit-token filename format when the web service starts. Unrelated files
+under `Saved/PlayerFiles` are not removed.
+
+The bridge is installed under:
+
+```text
+/root/mordhau/Mordhau/Content/CustomPaks/MordhauUnicodeBridge-WindowsServer.pak
+```
+
+It is registered through `SpawnServerActorsOnMapLoad` and is not added to
+Game.ini `Mods=` entries. Its actor is nonreplicated and disables client
+network loading, so connected players do not download the bridge. Editable
+Blueprint source, the cooked WindowsServer PAK, build instructions, and the
+standalone installer are documented in `unicode-bridge/README.md`.
 
 ## Configuration Management
 
@@ -373,6 +416,13 @@ Changing a boot mode does not change the current process state.
 - The most specific CIDR rule wins; deny wins an equal-prefix tie except for
   the active emergency exact-address allow.
 - RCON connects to `127.0.0.1` from the web manager.
+- Unicode message files and their spool directory are root-only. RCON carries
+  only a numeric token; the bridge constructs a fixed filename prefix and
+  extension and does not accept a path from the command.
+- The Unicode Bridge command still requires authenticated RCON. An RCON client
+  without local access to a corresponding spool file cannot supply message
+  text through the token command. The RCON port and credential must remain
+  restricted.
 - The mod.io API key is never returned through a management endpoint.
 - mod.io requests accept only validated HTTPS API hosts and do not follow
   redirects.
@@ -401,6 +451,10 @@ sh -n templates/server.sh
 sh -n templates/webserver.sh
 sh -n templates/openrc/mordhau-server
 sh -n templates/openrc/mordhau-web
+sh -n unicode-bridge/install.sh
+sh -n unicode-bridge/build-windows-server.sh
+sh -n tests/test-unicode-bridge-install.sh
+./tests/test-unicode-bridge-install.sh
 ```
 
 Installed-service checks:
@@ -416,15 +470,22 @@ permissions and secret exclusion, enabled/disabled INI entry round trips,
 RCON credential fallback order, packet framing, Korean legacy decoding,
 current all-broadcast subscription syntax and response filtering, UTF-8 chat
 log parsing, partial writes, log rotation, lossy RCON chat suppression,
-start-map validation, server-port parsing and collision checks, mod.io URL and
-API-path validation, dependency ordering, and scoped mod-entry mutation.
+ASCII-only Unicode token commands, UTF-8 message staging, spool permissions and
+stale-file cleanup, bridge acknowledgements, input validation, start-map
+validation, server-port parsing and collision checks, mod.io URL and API-path
+validation, dependency ordering, and scoped mod-entry mutation. The shell
+integration test covers PAK installation, active and staged Game.ini
+registration, existing server-actor preservation, backup creation, and
+idempotent reinstallation.
 
 ## Update and Rollback
 
 Run the installer from a newer release to update repository-managed scripts,
-services, and the Go web manager. Existing accounts, access rules, generated
-credentials, INI files, backups, logs, language selection, initial map,
-server ports, mod.io settings, and boot modes are preserved.
+services, the Unicode Bridge, and the Go web manager. The bundled PAK replaces
+the repository-managed bridge version, and the required server-actor entry is
+added without duplicating existing entries. Existing accounts, access rules,
+generated credentials, INI files, backups, logs, language selection, initial
+map, server ports, mod.io settings, and boot modes are preserved.
 
 To roll back management code:
 

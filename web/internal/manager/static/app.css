@@ -273,6 +273,14 @@ input:focus, select:focus { border-color: rgba(233, 79, 81, .65); box-shadow: 0 
 @keyframes spin { to { transform: rotate(360deg); } }
 
 .connection-pill.connected { color: #9ceac2; border-color: rgba(85, 217, 152, .25); background: rgba(85, 217, 152, .08); }
+.rcon-send-form {
+  display: grid;
+  gap: .45rem;
+  margin: 1rem 0;
+}
+.rcon-send-form .control-row { flex-wrap: nowrap; }
+.rcon-send-form input { flex: 1; min-width: 0; }
+.rcon-send-form small { color: var(--muted); }
 .console {
   height: 24rem;
   padding: .8rem;
@@ -287,6 +295,7 @@ input:focus, select:focus { border-color: rgba(233, 79, 81, .65); box-shadow: 0 
 .console-line { display: grid; grid-template-columns: 5.5rem 1fr; gap: .65rem; padding: .12rem 0; }
 .console-time { color: #606a79; }
 .console-line.system .console-text { color: #e3bd80; }
+.console-line.outbound .console-text { color: #9ceac2; }
 
 .inline-form, .account-create, .rule-create { display: flex; align-items: end; gap: .55rem; margin: 1rem 0; }
 .inline-form input { width: min(28rem, 65vw); }
@@ -475,6 +484,7 @@ input:focus, select:focus { border-color: rgba(233, 79, 81, .65); box-shadow: 0 
   .server-port-grid { grid-template-columns: 1fr 1fr; }
   .server-port-actions { align-items: stretch; flex-direction: column; }
   .console { height: 20rem; }
+  .rcon-send-form .control-row { align-items: stretch; flex-direction: column; }
   .inline-form, .rule-create { align-items: stretch; flex-direction: column; }
   .inline-form input { width: 100%; }
 }

@@ -2,6 +2,42 @@
 
 All notable changes to this repository are documented in this file.
 
+## [1.2.0] - 2026-07-24
+
+### Added
+
+- Bundled MORDHAU Unicode Bridge with its editable Blueprint source, cooked
+  WindowsServer PAK, integrity manifest, rebuild tooling, and standalone
+  installer.
+- Automatic Unicode Bridge installation and update from the main Alpine Linux
+  installer.
+- Idempotent active and staged Game.ini server-actor registration with
+  configuration backups and preservation of unrelated server actors.
+- Authenticated web endpoint and Live RCON form for outbound multilingual
+  server messages.
+- Root-only transient UTF-8 message staging, random 24-digit ASCII token
+  transport over RCON, reflected per-player `ClientReceiveMessage` reliable
+  RPC delivery, and bridge acknowledgement after the controller loop
+  completes.
+- Exact-pattern cleanup for stale Unicode Bridge spool files while preserving
+  unrelated `Saved/PlayerFiles` content.
+- Per-account Unicode-message audit events containing character and UTF-8 byte
+  counts without storing message text.
+- Unit tests for token commands, UTF-8 staging, spool permissions and cleanup,
+  input validation, RCON authentication, and bridge acknowledgement.
+- Shell integration tests for PAK installation, INI registration, backups, and
+  idempotent updates.
+
+### Security
+
+- Keep the bridge server-only by using a nonreplicated actor with client
+  network loading disabled and by excluding it from Game.ini `Mods=` entries.
+- Keep message content out of the RCON parser, constrain bridge filenames to a
+  fixed prefix and extension with numeric tokens, and use root-only spool
+  permissions.
+- Require an authenticated RCON connection for bridge token commands and
+  retain the web manager's session, CSRF, and network-access controls.
+
 ## [1.1.2] - 2026-07-23
 
 ### Fixed

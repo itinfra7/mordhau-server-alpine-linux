@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 //go:embed static/*
@@ -28,6 +29,7 @@ func (m *Manager) Handler() http.Handler {
 	mux.HandleFunc("/api/snapshot", m.withSession(m.snapshotHandler))
 	mux.HandleFunc("/api/events", m.withSession(m.eventsHandler))
 	mux.HandleFunc("/api/server/action", m.withSession(m.serverActionHandler))
+	mux.HandleFunc("/api/rcon/message", m.withSession(m.rconMessageHandler))
 	mux.HandleFunc("/api/language", m.withSession(m.languageHandler))
 	mux.HandleFunc("/api/config", m.withSession(m.configHandler))
 	mux.HandleFunc("/api/config/mutate", m.withSession(m.configMutationHandler))
@@ -351,6 +353,43 @@ func (m *Manager) serverActionHandler(response http.ResponseWriter, request *htt
 		"action": body.Action,
 	})
 	writeJSON(response, http.StatusAccepted, map[string]string{"status": "accepted"})
+}
+
+func (m *Manager) rconMessageHandler(
+	response http.ResponseWriter,
+	request *http.Request,
+	session Session,
+) {
+	if request.Method != http.MethodPost {
+		http.Error(response, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !validCSRF(request, session) {
+		writeError(response, http.StatusForbidden, "invalid CSRF token")
+		return
+	}
+	var body struct {
+		Message string `json:"message"`
+	}
+	if err := decodeJSON(response, request, &body); err != nil {
+		writeError(response, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := m.sendUnicodeRCONMessage(body.Message); err != nil {
+		status := http.StatusConflict
+		if errors.Is(err, errInvalidUnicodeMessage) {
+			status = http.StatusBadRequest
+		}
+		writeError(response, status, err.Error())
+		return
+	}
+
+	m.addRCONEvent("outbound", session.Username+": "+body.Message)
+	m.auditRequestEvent(request, session.Username, "unicode_server_message_sent", map[string]string{
+		"characters": strconv.Itoa(utf8.RuneCountInString(body.Message)),
+		"utf8_bytes": strconv.Itoa(len(body.Message)),
+	})
+	writeJSON(response, http.StatusOK, map[string]string{"status": "sent"})
 }
 
 func (m *Manager) languageHandler(response http.ResponseWriter, request *http.Request, session Session) {

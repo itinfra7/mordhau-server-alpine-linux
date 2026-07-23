@@ -3,6 +3,7 @@ package manager
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -184,6 +185,200 @@ func TestRCONPacketFramingPreservesUTF8(t *testing.T) {
 	}
 	if packet.ID != 7 || packet.Type != rconResponseValue || string(packet.Body) != text {
 		t.Fatal("RCON packet framing changed multilingual UTF-8 data")
+	}
+}
+
+func TestUnicodeRCONCommandUsesASCIIFileToken(t *testing.T) {
+	token := "012345678901234567890123"
+	command, err := unicodeRCONCommand(token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, value := range command {
+		if value > 0x7f {
+			t.Fatalf("RCON command contains non-ASCII byte 0x%02x", value)
+		}
+	}
+	if !bytes.HasPrefix(command, []byte(unicodeBridgeCommandPrefix)) {
+		t.Fatalf("unexpected Unicode bridge command: %q", command)
+	}
+	if !bytes.HasPrefix(command, []byte("string unicode.say ")) {
+		t.Fatalf("command does not use MORDHAU's string extension point: %q", command)
+	}
+	payload := command[len(unicodeBridgeCommandPrefix):]
+	if string(payload) != token {
+		t.Fatalf("Unicode bridge token = %q", payload)
+	}
+}
+
+func TestUnicodeMessageStagingPreservesUTF8AndPermissions(t *testing.T) {
+	directory := filepath.Join(t.TempDir(), "PlayerFiles")
+	message := "한국어 — Русский — 简体中文 — Français — 😀"
+	token, path, err := stageUnicodeMessageAt(directory, message)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !validUnicodeBridgeToken(token) {
+		t.Fatalf("invalid staged token %q", token)
+	}
+	expectedPath := filepath.Join(
+		directory,
+		unicodeBridgeFilePrefix+token+unicodeBridgeFileExtension,
+	)
+	if path != expectedPath {
+		t.Fatalf("staged path = %q, want %q", path, expectedPath)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != message || !utf8.Valid(data) {
+		t.Fatalf("staged UTF-8 message = %q", data)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0600 {
+		t.Fatalf("staged file mode = %04o", info.Mode().Perm())
+	}
+	directoryInfo, err := os.Stat(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if directoryInfo.Mode().Perm() != 0700 {
+		t.Fatalf("spool directory mode = %04o", directoryInfo.Mode().Perm())
+	}
+}
+
+func TestUnicodeBridgeSpoolCleanupIsStrict(t *testing.T) {
+	directory := t.TempDir()
+	staleName := unicodeBridgeFilePrefix +
+		"012345678901234567890123" +
+		unicodeBridgeFileExtension
+	preservedNames := []string{
+		"unrelated-player-file.txt",
+		unicodeBridgeFilePrefix + "123" + unicodeBridgeFileExtension,
+		unicodeBridgeFilePrefix + "01234567890123456789012x" + unicodeBridgeFileExtension,
+		"." + staleName + ".tmp",
+	}
+	if err := os.WriteFile(filepath.Join(directory, staleName), []byte("stale"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range preservedNames {
+		if err := os.WriteFile(filepath.Join(directory, name), []byte("keep"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	managedDirectory := filepath.Join(
+		directory,
+		unicodeBridgeFilePrefix+"987654321098765432109876"+unicodeBridgeFileExtension,
+	)
+	if err := os.Mkdir(managedDirectory, 0700); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := cleanupUnicodeBridgeSpoolAt(directory); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(directory, staleName)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("stale managed file was not removed: %v", err)
+	}
+	for _, name := range preservedNames {
+		if _, err := os.Stat(filepath.Join(directory, name)); err != nil {
+			t.Fatalf("preserved file %q: %v", name, err)
+		}
+	}
+	if info, err := os.Stat(managedDirectory); err != nil || !info.IsDir() {
+		t.Fatalf("managed-looking directory was removed: %v", err)
+	}
+}
+
+func TestUnicodeMessageValidationRejectsInvalidInput(t *testing.T) {
+	for _, message := range []string{
+		"",
+		"   ",
+		"line one\nline two",
+		string([]byte{0xff}),
+		strings.Repeat("a", unicodeMessageMaxRunes+1),
+		strings.Repeat("한", unicodeMessageMaxBytes/3+1),
+	} {
+		if err := validateUnicodeMessage(message); !errors.Is(err, errInvalidUnicodeMessage) {
+			t.Fatalf("validateUnicodeMessage(%q) error = %v", message, err)
+		}
+	}
+}
+
+func TestExecuteRCONCommandAuthenticatesAndSendsASCII(t *testing.T) {
+	command, err := unicodeRCONCommand("012345678901234567890123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, server := net.Pipe()
+	defer client.Close()
+
+	serverResult := make(chan string, 1)
+	go func() {
+		defer server.Close()
+		auth, err := readRCONPacket(server)
+		if err != nil {
+			serverResult <- err.Error()
+			return
+		}
+		if auth.ID != 101 || auth.Type != rconAuth || string(auth.Body) != "SecretRcon9" {
+			serverResult <- "unexpected authentication packet"
+			return
+		}
+		if err := writeRCONPacket(server, rconPacket{
+			ID:   auth.ID,
+			Type: rconAuthResponse,
+		}); err != nil {
+			serverResult <- err.Error()
+			return
+		}
+		listen, err := readRCONPacket(server)
+		if err != nil {
+			serverResult <- err.Error()
+			return
+		}
+		if listen.ID != 102 || listen.Type != rconExecCommand ||
+			string(listen.Body) != rconListenCustomCommand {
+			serverResult <- "unexpected custom-broadcast subscription packet"
+			return
+		}
+		if err := writeRCONPacket(server, rconPacket{
+			ID:   listen.ID,
+			Type: rconResponseValue,
+			Body: []byte(rconListenCustomSuccess),
+		}); err != nil {
+			serverResult <- err.Error()
+			return
+		}
+		exec, err := readRCONPacket(server)
+		if err != nil {
+			serverResult <- err.Error()
+			return
+		}
+		if exec.ID != 103 || exec.Type != rconExecCommand || !bytes.Equal(exec.Body, command) {
+			serverResult <- "unexpected Unicode bridge execution packet"
+			return
+		}
+		if err := writeRCONPacket(server, rconPacket{
+			ID:   exec.ID,
+			Type: rconResponseValue,
+			Body: []byte("Custom: " + unicodeBridgeAcknowledged),
+		}); err != nil {
+			serverResult <- err.Error()
+			return
+		}
+		serverResult <- ""
+	}()
+
+	if err := executeRCONCommand(client, "SecretRcon9", command); err != nil {
+		t.Fatal(err)
+	}
+	if result := <-serverResult; result != "" {
+		t.Fatal(result)
 	}
 }
 

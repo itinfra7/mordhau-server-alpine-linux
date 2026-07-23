@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
   <title>MORDHAU Control</title>
-  <link rel="stylesheet" href="/static/app.css?v=1.1.2">
-  <script src="/static/app.js?v=1.1.2" defer></script>
+  <link rel="stylesheet" href="/static/app.css?v=1.2.0">
+  <script src="/static/app.js?v=1.2.0" defer></script>
 </head>
 <body>
   <div class="ambient ambient-one"></div>
@@ -48,7 +48,7 @@
         <article class="metric-card">
           <div class="metric-head"><span>CPU</span><strong id="cpu-value">—</strong></div>
           <div class="meter"><span id="cpu-meter"></span></div>
-          <p>Container CPU utilization</p>
+          <p>System CPU utilization</p>
         </article>
         <article class="metric-card">
           <div class="metric-head"><span>Memory</span><strong id="memory-value">—</strong></div>
@@ -105,6 +105,24 @@
             <span id="rcon-status" class="connection-pill">Waiting</span>
           </div>
           <p class="hint">Authenticated <code>listen allon</code> events with player chat followed from the UTF-8 game log.</p>
+          <form id="rcon-message-form" class="rcon-send-form">
+            <label for="rcon-message">Unicode server message</label>
+            <div class="control-row">
+              <input
+                id="rcon-message"
+                type="text"
+                maxlength="512"
+                autocomplete="off"
+                placeholder="한국어 · Русский · 简体中文 · Français"
+                required
+              >
+              <button id="rcon-message-submit" class="primary" type="submit">Send</button>
+            </div>
+            <small>
+              Sent through the local server-only Unicode bridge. Connected players use the built-in
+              message path and do not download a client mod.
+            </small>
+          </form>
           <div id="rcon-console" class="console" aria-live="polite"></div>
         </article>
 
