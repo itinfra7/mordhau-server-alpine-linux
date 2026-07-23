@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>MORDHAU Control</title>
+  <link rel="stylesheet" href="/static/app.css?v=1.0.0">
+  <script src="/static/app.js?v=1.0.0" defer></script>
+</head>
+<body>
+  <div class="ambient ambient-one"></div>
+  <div class="ambient ambient-two"></div>
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark small" aria-hidden="true">M</div>
+      <div>
+        <p class="eyebrow">DEDICATED SERVER</p>
+        <h1>MORDHAU Control</h1>
+      </div>
+    </div>
+    <div class="top-actions">
+      <div class="server-pill">
+        <span id="server-dot" class="status-dot"></span>
+        <span id="server-label">Loading</span>
+      </div>
+      <span id="current-user" class="user-chip"></span>
+      <button id="logout-button" class="ghost compact">Sign out</button>
+    </div>
+  </header>
+
+  <div id="pending-banner" class="pending-banner hidden" role="status">
+    <strong>Configuration staged.</strong>
+    Game.ini or Engine.ini was edited while the server was running. It will be applied on the next start or restart.
+  </div>
+
+  <main class="app-shell">
+    <nav class="tabbar" aria-label="Manager sections">
+      <button class="tab active" data-panel="dashboard">Dashboard</button>
+      <button class="tab" data-panel="configuration">Configuration</button>
+      <button class="tab" data-panel="accounts">Accounts</button>
+      <button class="tab" data-panel="access">Network access</button>
+    </nav>
+
+    <section id="panel-dashboard" class="panel active">
+      <div class="metric-grid">
+        <article class="metric-card">
+          <div class="metric-head"><span>CPU</span><strong id="cpu-value">—</strong></div>
+          <div class="meter"><span id="cpu-meter"></span></div>
+          <p>Container CPU utilization</p>
+        </article>
+        <article class="metric-card">
+          <div class="metric-head"><span>Memory</span><strong id="memory-value">—</strong></div>
+          <div class="meter violet"><span id="memory-meter"></span></div>
+          <p id="memory-detail">—</p>
+        </article>
+        <article class="metric-card">
+          <div class="metric-head"><span>Swap</span><strong id="swap-value">—</strong></div>
+          <div class="meter amber"><span id="swap-meter"></span></div>
+          <p id="swap-detail">—</p>
+        </article>
+        <article class="metric-card">
+          <div class="metric-head"><span>MORDHAU filesystem</span><strong id="disk-value">—</strong></div>
+          <div class="meter cyan"><span id="disk-meter"></span></div>
+          <p id="disk-detail">—</p>
+        </article>
+      </div>
+
+      <div class="dashboard-grid">
+        <article class="card server-control">
+          <div class="card-heading">
+            <div>
+              <p class="eyebrow">LIFECYCLE</p>
+              <h2>Server control</h2>
+            </div>
+            <span id="server-pid" class="muted">PID —</span>
+          </div>
+          <div class="control-row">
+            <button class="primary" data-server-action="start">Start</button>
+            <button class="danger" data-server-action="stop">Stop</button>
+            <button class="secondary" data-server-action="restart">Restart</button>
+            <button class="ghost" data-server-action="update">Update only</button>
+          </div>
+          <div class="field-row language-row">
+            <label for="language-select">Launch language</label>
+            <select id="language-select"></select>
+            <span class="hint">Applied at the next start.</span>
+          </div>
+          <div class="operation-box">
+            <div>
+              <span id="operation-spinner" class="spinner hidden"></span>
+              <strong id="operation-title">No lifecycle operation yet</strong>
+            </div>
+            <pre id="operation-output">Output from the latest operation will appear here.</pre>
+          </div>
+        </article>
+
+        <article class="card rcon-card">
+          <div class="card-heading">
+            <div>
+              <p class="eyebrow">LIVE RCON</p>
+              <h2>Server events</h2>
+            </div>
+            <span id="rcon-status" class="connection-pill">Waiting</span>
+          </div>
+          <p class="hint">Authenticated RCON stream using <code>listen all</code>. Packets are fully framed before Unicode decoding.</p>
+          <div id="rcon-console" class="console" aria-live="polite"></div>
+        </article>
+
+        <article class="card service-card">
+          <div class="card-heading">
+            <div>
+              <p class="eyebrow">OPENRC</p>
+              <h2>Boot startup mode</h2>
+            </div>
+            <span class="hint">Changing a mode does not start or stop the current process.</span>
+          </div>
+          <div class="service-grid">
+            <label class="service-setting">
+              <span>MORDHAU Dedicated Server</span>
+              <select id="mordhau-service-mode">
+                <option value="manual">Manual · do not start at boot</option>
+                <option value="automatic">Automatic · start at boot</option>
+              </select>
+            </label>
+            <label class="service-setting">
+              <span>Management web server</span>
+              <select id="web-service-mode">
+                <option value="manual">Manual · do not start at boot</option>
+                <option value="automatic">Automatic · start at boot</option>
+              </select>
+            </label>
+            <form id="web-port-form" class="service-setting port-setting">
+              <span>Web service boot port</span>
+              <div class="field-row">
+                <input id="web-service-port" type="number" min="1" max="65535" required>
+                <button class="secondary compact" type="submit">Save port</button>
+              </div>
+              <small>Used on the next OpenRC start, bound to 0.0.0.0.</small>
+            </form>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section id="panel-configuration" class="panel">
+      <article class="card">
+        <div class="card-heading wrap">
+          <div>
+            <p class="eyebrow">WINDOWSSERVER</p>
+            <h2>INI configuration</h2>
+          </div>
+          <div class="control-row tight">
+            <select id="config-file" aria-label="Configuration file">
+              <option value="Game.ini">Game.ini</option>
+              <option value="Engine.ini">Engine.ini</option>
+            </select>
+            <span id="config-stage" class="stage-pill">Active</span>
+            <button id="discard-config" class="ghost compact">Discard staged changes</button>
+          </div>
+        </div>
+        <p class="hint">Duplicate keys, order, comments, and unrelated lines are retained. Disabled entries remain editable but are ignored at the next server start. Each mutation is revision-checked and active-file edits are backed up.</p>
+        <form id="add-section-form" class="inline-form">
+          <input id="new-section-name" placeholder="New section name" required>
+          <button class="secondary compact" type="submit">Add section</button>
+        </form>
+        <div id="config-sections" class="config-sections"></div>
+      </article>
+    </section>
+
+    <section id="panel-accounts" class="panel">
+      <article class="card">
+        <div class="card-heading">
+          <div>
+            <p class="eyebrow">AUTHENTICATION</p>
+            <h2>Web accounts</h2>
+          </div>
+        </div>
+        <p class="hint">Passwords require 8–128 characters with lowercase, uppercase, and a digit. Editing credentials invalidates that account’s sessions. The last account cannot be deleted.</p>
+        <form id="new-account-form" class="account-create">
+          <label><span>Username</span><input id="new-account-name" required pattern="[a-z0-9][a-z0-9_-]{2,31}" autocomplete="off"></label>
+          <label><span>Password</span><input id="new-account-password" type="password" required minlength="8" autocomplete="new-password"></label>
+          <button class="primary" type="submit">Create account</button>
+        </form>
+        <div id="account-list" class="list-stack"></div>
+      </article>
+    </section>
+
+    <section id="panel-access" class="panel">
+      <article class="card">
+        <div class="card-heading wrap">
+          <div>
+            <p class="eyebrow">IPv4 · IPv6</p>
+            <h2>Network access policy</h2>
+          </div>
+          <div class="field-row">
+            <label for="base-policy">Default</label>
+            <select id="base-policy">
+              <option value="all_allow">Allow all</option>
+              <option value="all_deny">Deny all</option>
+            </select>
+          </div>
+        </div>
+        <div class="policy-note">
+          <strong>Rule precedence:</strong> the longest matching prefix wins; deny wins a same-prefix tie. When “Deny all” is selected, the current client receives a 30-minute exact-address emergency allow rule that temporarily overrides conflicts and expires automatically.
+        </div>
+        <p id="current-ip" class="hint"></p>
+        <form id="new-rule-form" class="rule-create">
+          <select id="new-rule-action"><option value="allow">Allow</option><option value="deny">Deny</option></select>
+          <input id="new-rule-network" placeholder="203.0.113.4 or 2001:db8::/48" required>
+          <button class="primary compact" type="submit">Add rule</button>
+        </form>
+        <div id="access-rules" class="list-stack"></div>
+      </article>
+    </section>
+  </main>
+
+  <div id="toast-stack" class="toast-stack" aria-live="polite"></div>
+</body>
+</html>

@@ -1,0 +1,30 @@
+#!/sbin/openrc-run
+
+name="mordhau-server"
+description="MORDHAU Dedicated Server through Wine"
+
+depend() {
+    need net
+    after firewall
+}
+
+start() {
+    ebegin "Starting MORDHAU Dedicated Server"
+    /root/mordhau/server.sh start
+    eend $?
+}
+
+stop() {
+    ebegin "Stopping MORDHAU Dedicated Server"
+    /root/mordhau/server.sh stop
+    eend $?
+}
+
+status() {
+    if /root/mordhau/server.sh status >/dev/null 2>&1; then
+        einfo "status: started"
+        return 0
+    fi
+    einfo "status: stopped"
+    return 3
+}

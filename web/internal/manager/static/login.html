@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Sign in · MORDHAU Control</title>
+  <link rel="stylesheet" href="/static/app.css?v=1.0.0">
+</head>
+<body class="login-body">
+  <main class="login-shell">
+    <section class="login-card">
+      <div class="brand-mark" aria-hidden="true">M</div>
+      <p class="eyebrow">DEDICATED SERVER</p>
+      <h1>MORDHAU Control</h1>
+      <p class="muted">Authenticate to manage this server.</p>
+      <p class="form-error" role="alert">{{ERROR}}</p>
+      <form action="/login" method="post" class="login-form">
+        <label>
+          <span>Username</span>
+          <input name="username" type="text" required autocomplete="username" maxlength="32" autofocus>
+        </label>
+        <label>
+          <span>Password</span>
+          <input name="password" type="password" required autocomplete="current-password" maxlength="128">
+        </label>
+        <label class="remember-row">
+          <input name="remember" type="checkbox">
+          <span>Keep me signed in for 30 days</span>
+        </label>
+        <button type="submit" class="primary wide">Sign in</button>
+      </form>
+    </section>
+    <p class="login-foot">Network access is evaluated before authentication.</p>
+  </main>
+</body>
+</html>

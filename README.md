@@ -1,0 +1,384 @@
+# MORDHAU Server Alpine Linux
+
+This repository installs and manages the Windows build of MORDHAU Dedicated
+Server on Alpine Linux through Wine. It includes SteamCMD update automation,
+OpenRC services, and an authenticated Go web manager.
+
+## Repository Scope
+
+The repository provides:
+
+- Windows SteamCMD installation under `/root/steamcmd`
+- Windows MORDHAU Dedicated Server installation under `/root/mordhau`
+- A dedicated Wine prefix at `/root/mordhau/.wine`
+- SteamCMD validation before every server start or restart
+- POSIX shell lifecycle control
+- OpenRC service definitions for the game server and web manager
+- An animated Go web manager with live system metrics
+- Structured Game.ini and Engine.ini editing
+- Authenticated RCON event streaming with multilingual decoding
+- Web account and IPv4/IPv6 access-policy management
+- Per-account JSON Lines web access and change auditing
+
+MORDHAU, SteamCMD, Wine, and their assets are downloaded from their respective
+upstream distribution channels and are not included in this repository.
+
+## Supported Environment
+
+- Alpine Linux 3.24
+- x86_64 architecture
+- OpenRC
+- Root privileges
+- Internet access to Alpine package mirrors, SteamCMD, Steam content servers,
+  and Go module sources
+
+The installer requires enough free storage for Wine, SteamCMD, Go build data,
+MORDHAU Dedicated Server, and Steam update staging.
+
+## Repository Layout
+
+- `mordhau-server-alpine-linux.sh`
+  Idempotent installer and management-code updater.
+- `templates/server.sh`
+  MORDHAU update, start, stop, restart, and status controller.
+- `templates/webserver.sh`
+  Foreground web-manager launcher with persistent port selection.
+- `templates/openrc/`
+  OpenRC service definitions.
+- `steamcmd/mordhau-update.txt`
+  SteamCMD runscript for Windows App ID `629800`.
+- `web/`
+  Go source, embedded frontend assets, and tests.
+- `CHANGELOG.md` and `RELEASE_NOTES.md`
+  Version history and release-specific technical summary.
+- `LICENSE`
+  MIT terms for repository-authored source.
+
+## Installation
+
+### Release archive
+
+```sh
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v1.0.0/mordhau-server-alpine-linux-v1.0.0.tar.gz
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v1.0.0/SHA256SUMS
+sha256sum -c SHA256SUMS
+tar -xzf mordhau-server-alpine-linux-v1.0.0.tar.gz
+cd mordhau-server-alpine-linux-v1.0.0
+chmod +x mordhau-server-alpine-linux.sh
+./mordhau-server-alpine-linux.sh
+```
+
+### Repository checkout
+
+```sh
+git clone https://github.com/itinfra7/mordhau-server-alpine-linux.git
+cd mordhau-server-alpine-linux
+chmod +x mordhau-server-alpine-linux.sh
+./mordhau-server-alpine-linux.sh
+```
+
+Installer options:
+
+```text
+--web-port PORT   Persist the web service port
+--start-web       Start the web manager after installation
+--start-server    Start MORDHAU Dedicated Server after installation
+--enable-web      Enable web-manager boot startup and start it
+--enable-server   Enable game-server boot startup and start it
+```
+
+By default, both OpenRC services are installed in manual mode and remain
+stopped. Existing boot-start settings and running states are preserved during
+management-code updates.
+
+## First Installation
+
+The installer performs these operations:
+
+1. Installs Alpine packages required by Wine, SteamCMD, Go, and OpenRC.
+2. Downloads and self-updates Windows SteamCMD.
+3. Installs or validates MORDHAU Dedicated Server App ID `629800`.
+4. Runs the server without game options for five seconds when generated
+   WindowsServer configuration files do not exist.
+5. Generates an eight-character mixed-case alphanumeric RCON password and
+   enables RCON on port `7778` through the generated
+   `/Script/Mordhau.MordhauGameSession` section.
+6. Builds and installs the Go web manager.
+7. Creates the initial web account and persistent security state.
+8. Installs both OpenRC service definitions.
+
+The initial web credentials are written with mode `0600` to:
+
+```text
+/root/mordhau/default_web_account.txt
+```
+
+The generated username contains four lowercase letters or digits. The
+generated password contains eight characters with lowercase, uppercase, and
+numeric characters.
+
+## Server Control
+
+```sh
+/root/mordhau/server.sh start
+/root/mordhau/server.sh stop
+/root/mordhau/server.sh restart
+/root/mordhau/server.sh update
+/root/mordhau/server.sh status
+```
+
+Behavior:
+
+- `start` validates the Steam installation, applies staged INI changes,
+  archives the previous log, and starts the server.
+- `stop` performs graceful termination and then stops the dedicated Wine
+  prefix if required.
+- `restart` stops, validates, applies staged changes, and starts.
+- `update` only runs while the game server is stopped.
+- Every managed launch uses `-language=<code> -LocalLogTimes -log`.
+
+Before each managed launch, an existing `Mordhau.log` is moved to:
+
+```text
+/root/mordhau/log/Mordhau_<yyyy-mm-dd_hh-mm-ss>.log
+```
+
+The timestamp is derived from the log file's final modification time. Existing
+archives are never overwritten.
+
+## Web Manager
+
+Start in the foreground:
+
+```sh
+/root/mordhau/webserver.sh --port 8080
+```
+
+Start through OpenRC using the saved port:
+
+```sh
+rc-service mordhau-web start
+```
+
+The listener is IPv4 `0.0.0.0:<port>`.
+
+The web manager provides:
+
+- Login with optional 30-day persistent authentication
+- Argon2id password hashing and CSRF-protected state changes
+- Account creation, editing, and deletion
+- Last-account deletion prevention
+- IPv4 and IPv6 address/CIDR allow and deny rules
+- Selectable `all allow` or `all deny` base policy
+- A 30-minute exact-address emergency allow when switching to `all deny`
+- Live CPU, memory, swap, and MORDHAU-filesystem utilization
+- Start, stop, restart, and stopped-only update controls
+- Boot startup mode controls for both OpenRC services
+- Persistent web-service port selection
+- Launch-language selection
+- Game.ini and Engine.ini section/item creation, editing, and removal
+- Reversible per-entry enable and disable controls
+- Revision checks, active-file backups, and staged edits while the game is
+  running
+- RCON authentication, automatic `listen all`, reconnection across live
+  Game.ini credential changes, and live events
+- Root-only web access and administrative change audit logging
+
+## Web Audit Log
+
+The web manager writes a dedicated JSON Lines audit log to:
+
+```text
+/root/mordhau/log/mordhau-web.log
+```
+
+The file is created with mode `0600`. Every record contains a local RFC 3339
+timestamp with second precision, an event name, and the responsible account.
+HTTP access records also contain the direct client IP address, method, path,
+response status, response size, and request duration.
+
+Dedicated events identify login success, login failure, logout, server
+actions and their completion, language changes, Game.ini and Engine.ini
+mutations, pending-configuration removal, account changes, network-policy
+changes, OpenRC boot-mode changes, and saved web-port changes. Requests
+without a valid session use the account name `unauthenticated`.
+
+Passwords, request bodies, session cookies, CSRF tokens, RCON credentials,
+configuration values, and configuration revisions are not written to the
+audit log. Configuration events identify the file, operation, section, and
+key without recording its value.
+
+## Languages
+
+The launch selector supports:
+
+- English (`en`)
+- German (`de`)
+- Spanish (`es`)
+- Simplified Chinese (`zh-Hans`)
+- French (`fr`)
+- Italian (`it`)
+- Portuguese (`pt`)
+- Russian (`ru`)
+- Korean (`ko`)
+- Traditional Chinese (`zh-Hant`)
+
+RCON packets are fully framed before text decoding. Valid UTF-8 is preserved;
+language-specific legacy decoding is used only for invalid UTF-8 payloads.
+
+The manager tries the current Game.ini RCON settings first. After each
+successful authentication, it stores the working loopback endpoint and
+credential in `/root/mordhau/.manager/rcon-last.json` with mode `0600`. If
+Game.ini is edited directly while the game is running, the server continues
+using its in-memory credential until restart; the saved working credential
+allows the web manager to reconnect and keep `listen all` active during that
+interval. The next game restart applies the edited value, which then replaces
+the saved reconnect state.
+
+## Configuration Management
+
+The web manager edits the server-generated files:
+
+```text
+/root/mordhau/Mordhau/Saved/Config/WindowsServer/Game.ini
+/root/mordhau/Mordhau/Saved/Config/WindowsServer/Engine.ini
+```
+
+The editor preserves duplicate keys, ordering, comments, and unrelated lines.
+Edits made while the server is running are written to
+`/root/mordhau/.manager/pending` and applied by the next managed start or
+restart. Direct edits made while stopped are backed up under
+`/root/mordhau/.manager/backups`.
+
+Disabling an entry retains its key, value, order, and editability while
+serializing it as:
+
+```text
+; MORDHAU_MANAGER_DISABLED: Key=Value
+```
+
+MORDHAU ignores that comment at the next start. Re-enabling the entry removes
+the marker and restores the original `Key=Value` line. Ordinary user-authored
+comments are not interpreted as disabled entries. Disabling `RconPassword` or
+`RconPort` intentionally makes the web RCON stream unavailable after the next
+server start until those entries are enabled again.
+
+The generated files remain the source of truth for the installed MORDHAU
+version. The repository does not install a static gameplay-configuration
+template.
+
+## OpenRC
+
+Service names:
+
+```text
+mordhau-server
+mordhau-web
+```
+
+Manual and automatic boot modes can be selected in the web manager. Equivalent
+commands are:
+
+```sh
+rc-update add mordhau-server default
+rc-update del mordhau-server default
+rc-update add mordhau-web default
+rc-update del mordhau-web default
+```
+
+Changing a boot mode does not change the current process state.
+
+## Security Model
+
+- The web manager runs as root because it controls Wine processes, OpenRC, and
+  root-owned configuration files.
+- State files, sessions, generated credentials, the last working RCON
+  reconnect credential, pending configuration, and the web audit log use
+  root-only permissions.
+- Session tokens are stored as SHA-256 digests.
+- Login attempts are rate-limited.
+- CSRF tokens and same-site HTTP-only cookies protect authenticated changes.
+- Browser requests explicitly marked as cross-site by Fetch Metadata are
+  rejected without comparing the public URL to an internally rewritten Host
+  header.
+- Access rules use the direct TCP peer address and do not trust forwarding
+  headers.
+- The most specific CIDR rule wins; deny wins an equal-prefix tie except for
+  the active emergency exact-address allow.
+- RCON connects to `127.0.0.1` from the web manager.
+- Lifecycle operations accept fixed actions and do not execute user-provided
+  shell arguments.
+
+The built-in listener serves HTTP. Use a trusted network or a TLS reverse
+proxy, and configure network access rules before exposing the web port.
+Restrict external access to the MORDHAU RCON port with the host firewall.
+
+## Testing
+
+Repository tests:
+
+```sh
+cd web
+go test ./...
+go vet ./...
+```
+
+Shell validation:
+
+```sh
+sh -n mordhau-server-alpine-linux.sh
+sh -n templates/server.sh
+sh -n templates/webserver.sh
+sh -n templates/openrc/mordhau-server
+sh -n templates/openrc/mordhau-web
+```
+
+Installed-service checks:
+
+```sh
+rc-service mordhau-server status
+rc-service mordhau-web status
+```
+
+The Go tests cover random-password constraints, INI preservation, CIDR
+precedence, emergency access, proxy-safe request validation, audit-log
+permissions and secret exclusion, enabled/disabled INI entry round trips,
+RCON credential fallback order, packet framing, and Korean legacy decoding.
+
+## Update and Rollback
+
+Run the installer from a newer release to update repository-managed scripts,
+services, and the Go web manager. Existing accounts, access rules, generated
+credentials, INI files, backups, logs, language selection, and boot modes are
+preserved.
+
+To roll back management code:
+
+1. Download the required earlier repository release.
+2. Stop `mordhau-web` and `mordhau-server`.
+3. Run that release's installer.
+4. Restore an INI backup from `/root/mordhau/.manager/backups` when a
+   configuration rollback is also required.
+
+Removing the OpenRC boot registrations:
+
+```sh
+rc-update del mordhau-server default
+rc-update del mordhau-web default
+```
+
+MORDHAU files and manager state are not removed by those commands.
+
+## License
+
+Repository-authored source is licensed under the MIT License. See `LICENSE`.
+This license does not grant rights to MORDHAU, SteamCMD, Wine, or other
+third-party software.
+
+## Credits
+
+- MORDHAU and Triternion: https://mordhau.com/
+- MORDHAU Dedicated Server on Steam: https://store.steampowered.com/app/629800/MORDHAU_Dedicated_Server/
+- SteamCMD and Valve: https://developer.valvesoftware.com/wiki/SteamCMD
+- Wine: https://www.winehq.org/
+- Author: itinfra7 (GitHub: https://github.com/itinfra7)
