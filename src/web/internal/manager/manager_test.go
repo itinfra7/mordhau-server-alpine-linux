@@ -210,18 +210,18 @@ func TestAccessRulePrecedenceAndEmergency(t *testing.T) {
 }
 
 func TestNormalizeInclusiveIPv4Ranges(t *testing.T) {
-	const canonical = "203.226.192.0-203.226.252.255"
+	const canonical = "10.64.192.0-10.64.252.255"
 	expectedPrefixes := []string{
-		"203.226.192.0/19",
-		"203.226.224.0/20",
-		"203.226.240.0/21",
-		"203.226.248.0/22",
-		"203.226.252.0/24",
+		"10.64.192.0/19",
+		"10.64.224.0/20",
+		"10.64.240.0/21",
+		"10.64.248.0/22",
+		"10.64.252.0/24",
 	}
 	for _, input := range []string{
-		"203.226.192.0~203.226.252.255",
-		"203.226.192.0-203.226.252.255",
-		" 203.226.192.0 - 203.226.252.255 ",
+		"10.64.192.0~10.64.252.255",
+		"10.64.192.0-10.64.252.255",
+		" 10.64.192.0 - 10.64.252.255 ",
 	} {
 		network, err := normalizeAccessNetwork(input)
 		if err != nil {
@@ -367,7 +367,7 @@ func TestIPv4RangeCIDRsCoverOnlyTheInclusiveRange(t *testing.T) {
 		{"0.0.0.0", "255.255.255.255"},
 		{"0.0.0.1", "0.0.1.2"},
 		{"192.0.2.3", "192.0.2.130"},
-		{"203.226.192.0", "203.226.252.255"},
+		{"10.64.192.0", "10.64.252.255"},
 		{"255.255.254.253", "255.255.255.255"},
 	} {
 		start := ipv4Value(netip.MustParseAddr(test.start))
@@ -401,18 +401,18 @@ func TestInclusiveIPv4RangeBoundariesAndPrecedence(t *testing.T) {
 	config := AccessConfig{
 		BasePolicy: "all_deny",
 		Rules: []AccessRule{
-			{Action: "allow", Network: "203.226.192.0~203.226.252.255"},
+			{Action: "allow", Network: "10.64.192.0~10.64.252.255"},
 		},
 	}
 	for _, test := range []struct {
 		ip      string
 		allowed bool
 	}{
-		{"203.226.191.255", false},
-		{"203.226.192.0", true},
-		{"203.226.224.1", true},
-		{"203.226.252.255", true},
-		{"203.226.253.0", false},
+		{"10.64.191.255", false},
+		{"10.64.192.0", true},
+		{"10.64.224.1", true},
+		{"10.64.252.255", true},
+		{"10.64.253.0", false},
 		{"2001:db8::1", false},
 	} {
 		if got := accessAllowed(netip.MustParseAddr(test.ip), config, now); got != test.allowed {
@@ -421,19 +421,19 @@ func TestInclusiveIPv4RangeBoundariesAndPrecedence(t *testing.T) {
 	}
 
 	config.Rules = append(config.Rules,
-		AccessRule{Action: "deny", Network: "203.226.250.0/24"},
+		AccessRule{Action: "deny", Network: "10.64.250.0/24"},
 	)
-	if accessAllowed(netip.MustParseAddr("203.226.250.40"), config, now) {
+	if accessAllowed(netip.MustParseAddr("10.64.250.40"), config, now) {
 		t.Fatal("a more-specific deny did not override the inclusive allow range")
 	}
-	if !accessAllowed(netip.MustParseAddr("203.226.251.40"), config, now) {
+	if !accessAllowed(netip.MustParseAddr("10.64.251.40"), config, now) {
 		t.Fatal("the more-specific deny affected an address outside its prefix")
 	}
 
 	config.Rules = append(config.Rules,
-		AccessRule{Action: "allow", Network: "203.226.250.0-203.226.250.255"},
+		AccessRule{Action: "allow", Network: "10.64.250.0-10.64.250.255"},
 	)
-	if accessAllowed(netip.MustParseAddr("203.226.250.40"), config, now) {
+	if accessAllowed(netip.MustParseAddr("10.64.250.40"), config, now) {
 		t.Fatal("deny did not win an equal-prefix tie against an IPv4 range")
 	}
 }
@@ -1709,7 +1709,7 @@ func TestDashboardThemeAndMessageMarkup(t *testing.T) {
 	for _, expected := range []string{
 		`id="theme-toggle"`,
 		`content="width=device-width, initial-scale=1, viewport-fit=cover"`,
-		`src="/static/theme.js?v=1.8.1"`,
+		`src="/static/theme.js?v=1.8.2"`,
 		`<label for="rcon-message">Send Message</label>`,
 		`id="mods-refresh-minutes"`,
 		`min="1" max="10080"`,
@@ -1740,7 +1740,7 @@ func TestDashboardThemeAndMessageMarkup(t *testing.T) {
 		t.Fatal(err)
 	}
 	loginSource := string(loginData)
-	if !strings.Contains(loginSource, `src="/static/theme.js?v=1.8.1"`) {
+	if !strings.Contains(loginSource, `src="/static/theme.js?v=1.8.2"`) {
 		t.Fatal("login page does not initialize the persisted theme")
 	}
 	if !strings.Contains(loginSource, `viewport-fit=cover`) {

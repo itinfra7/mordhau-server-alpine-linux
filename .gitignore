@@ -1,4 +1,4 @@
 /dist/
 *.tar.gz
 *.sha256
-/mordhau-web
+/src/web/mordhau-web

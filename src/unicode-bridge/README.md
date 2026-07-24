@@ -66,7 +66,7 @@ Install the official MORDHAU Editor and provide the directory containing
 `Mordhau/MordhauSDK.uproject` and `InstalledBuild/Windows`:
 
 ```sh
-./unicode-bridge/build-windows-server.sh \
+./src/unicode-bridge/build-windows-server.sh \
   --editor-root /path/to/MORDHAUEditor \
   --wine-prefix /path/to/editor-wineprefix
 ```
@@ -81,10 +81,10 @@ expected mounted files, and refreshes `dist/SHA256SUMS`.
 Stop the dedicated server, then run:
 
 ```sh
-./unicode-bridge/install.sh --mordhau-root /root/mordhau
+./src/unicode-bridge/install.sh --mordhau-root /root/mordhau
 ```
 
-The main `mordhau-server-alpine-linux.sh` installer performs this operation
-automatically. Existing configuration is preserved, changed INI files are
-backed up under `.manager/backups`, and repeated installation does not add
-duplicate server-actor entries.
+The main `src/mordhau-server-alpine-linux.sh` installer performs this
+operation automatically. Existing configuration is preserved, changed INI
+files are backed up under `.manager/backups`, and repeated installation does
+not add duplicate server-actor entries.

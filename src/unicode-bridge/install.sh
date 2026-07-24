@@ -15,7 +15,7 @@ STATE_TEMP=""
 
 usage() {
     cat <<'EOF'
-Usage: ./unicode-bridge/install.sh --mordhau-root PATH
+Usage: ./src/unicode-bridge/install.sh --mordhau-root PATH
 
 Installs or updates the cooked MORDHAU Unicode Bridge and registers its
 nonreplicated server actor in active and staged Game.ini files.

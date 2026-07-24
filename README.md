@@ -49,23 +49,23 @@ MORDHAU Dedicated Server, and Steam update staging.
 
 ## Repository Layout
 
-- `mordhau-server-alpine-linux.sh`
+- `src/mordhau-server-alpine-linux.sh`
   Idempotent installer and management-code updater.
-- `templates/server.sh`
+- `src/templates/server.sh`
   MORDHAU update, start, stop, restart, and status controller.
-- `templates/webserver.sh`
+- `src/templates/webserver.sh`
   Foreground web-manager launcher with persistent port and trusted-proxy
   selection.
-- `templates/openrc/`
+- `src/templates/openrc/`
   OpenRC service definitions.
-- `steamcmd/mordhau-update.txt`
+- `src/steamcmd/mordhau-update.txt`
   SteamCMD runscript for Windows App ID `629800`.
-- `web/`
+- `src/web/`
   Go source, embedded frontend assets, and tests.
-- `unicode-bridge/`
+- `src/unicode-bridge/`
   Editable Blueprint source, cooked WindowsServer PAK, build tooling, integrity
   manifest, and standalone installer for the server-only Unicode Bridge.
-- `tests/`
+- `src/tests/`
   Shell integration tests for repository-managed installation behavior.
 - `CHANGELOG.md` and `RELEASE_NOTES.md`
   Version history and release-specific technical summary.
@@ -77,13 +77,13 @@ MORDHAU Dedicated Server, and Steam update staging.
 ### Release archive
 
 ```sh
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v1.8.1/mordhau-server-alpine-linux-v1.8.1.tar.gz
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v1.8.1/SHA256SUMS
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v1.8.2/mordhau-server-alpine-linux-v1.8.2.tar.gz
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v1.8.2/SHA256SUMS
 sha256sum -c SHA256SUMS
-tar -xzf mordhau-server-alpine-linux-v1.8.1.tar.gz
-cd mordhau-server-alpine-linux-v1.8.1
-chmod +x mordhau-server-alpine-linux.sh
-./mordhau-server-alpine-linux.sh
+tar -xzf mordhau-server-alpine-linux-v1.8.2.tar.gz
+cd mordhau-server-alpine-linux-v1.8.2
+chmod +x src/mordhau-server-alpine-linux.sh
+./src/mordhau-server-alpine-linux.sh
 ```
 
 ### Repository checkout
@@ -91,8 +91,8 @@ chmod +x mordhau-server-alpine-linux.sh
 ```sh
 git clone https://github.com/itinfra7/mordhau-server-alpine-linux.git
 cd mordhau-server-alpine-linux
-chmod +x mordhau-server-alpine-linux.sh
-./mordhau-server-alpine-linux.sh
+chmod +x src/mordhau-server-alpine-linux.sh
+./src/mordhau-server-alpine-linux.sh
 ```
 
 Installer options:
@@ -432,7 +432,7 @@ It is registered through `SpawnServerActorsOnMapLoad` and is not added to
 Game.ini `Mods=` entries. Its actor is nonreplicated and disables client
 network loading, so connected players do not download the bridge. Editable
 Blueprint source, the cooked WindowsServer PAK, build instructions, and the
-standalone installer are documented in `unicode-bridge/README.md`.
+standalone installer are documented in `src/unicode-bridge/README.md`.
 
 ## Configuration Management
 
@@ -604,7 +604,7 @@ Restrict external access to the MORDHAU RCON port with the host firewall.
 Repository tests:
 
 ```sh
-cd web
+cd src/web
 go test ./...
 go vet ./...
 ```
@@ -612,15 +612,15 @@ go vet ./...
 Shell validation:
 
 ```sh
-sh -n mordhau-server-alpine-linux.sh
-sh -n templates/server.sh
-sh -n templates/webserver.sh
-sh -n templates/openrc/mordhau-server
-sh -n templates/openrc/mordhau-web
-sh -n unicode-bridge/install.sh
-sh -n unicode-bridge/build-windows-server.sh
-sh -n tests/test-unicode-bridge-install.sh
-./tests/test-unicode-bridge-install.sh
+sh -n src/mordhau-server-alpine-linux.sh
+sh -n src/templates/server.sh
+sh -n src/templates/webserver.sh
+sh -n src/templates/openrc/mordhau-server
+sh -n src/templates/openrc/mordhau-web
+sh -n src/unicode-bridge/install.sh
+sh -n src/unicode-bridge/build-windows-server.sh
+sh -n src/tests/test-unicode-bridge-install.sh
+./src/tests/test-unicode-bridge-install.sh
 ```
 
 Installed-service checks:
@@ -689,13 +689,14 @@ MORDHAU files and manager state are not removed by those commands.
 ## License
 
 Repository-authored source is licensed under the MIT License. See `LICENSE`.
-This license does not grant rights to MORDHAU, SteamCMD, Wine, or other
-third-party software.
+This license does not grant rights to MORDHAU, SteamCMD, Wine, Unreal Engine,
+or other third-party software.
 
 ## Credits
 
 - MORDHAU and Triternion: https://mordhau.com/
 - MORDHAU Dedicated Server on Steam: https://store.steampowered.com/app/629800/MORDHAU_Dedicated_Server/
+- Unreal Engine and Epic Games: https://www.unrealengine.com/
 - SteamCMD and Valve: https://developer.valvesoftware.com/wiki/SteamCMD
 - mod.io: https://mod.io/
 - Wine: https://www.winehq.org/

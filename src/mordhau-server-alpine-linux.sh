@@ -2,7 +2,7 @@
 
 set -eu
 
-PROJECT_VERSION="1.8.1"
+PROJECT_VERSION="1.8.2"
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 MORDHAU_ROOT="/root/mordhau"
 STEAMCMD_ROOT="/root/steamcmd"
@@ -35,7 +35,7 @@ die() {
 
 usage() {
     cat <<'EOF'
-Usage: ./mordhau-server-alpine-linux.sh [options]
+Usage: ./src/mordhau-server-alpine-linux.sh [options]
 
 Installs or updates the Windows MORDHAU Dedicated Server, SteamCMD, the Go
 management web application, the server-only Unicode Bridge, and OpenRC service

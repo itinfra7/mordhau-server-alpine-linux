@@ -1,6 +1,6 @@
 * text=auto eol=lf
 *.sh text eol=lf
-templates/openrc/* text eol=lf
+src/templates/openrc/* text eol=lf
 *.pak binary
 *.uasset binary
 *.uplugin text eol=lf

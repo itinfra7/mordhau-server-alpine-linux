@@ -1,9 +1,9 @@
-# MORDHAU Server Alpine Linux v1.8.1
+# MORDHAU Server Alpine Linux v1.8.2
 
-This release changes shared OS resource sampling to a one-minute interval and
-includes strict trusted reverse-proxy client-IP resolution while preserving
-direct HTTP access, network-rule comments, responsive layouts, persistent
-dashboard state, and RCON idle keepalives.
+This release provides a consolidated source tree, one-minute shared OS resource
+sampling, and strict trusted reverse-proxy client-IP resolution while
+preserving direct HTTP access, network-rule comments, responsive layouts,
+persistent dashboard state, and RCON idle keepalives.
 
 ## Included
 
@@ -122,8 +122,8 @@ dashboard state, and RCON idle keepalives.
 Extract the release archive and run:
 
 ```sh
-chmod +x mordhau-server-alpine-linux.sh
-./mordhau-server-alpine-linux.sh
+chmod +x src/mordhau-server-alpine-linux.sh
+./src/mordhau-server-alpine-linux.sh
 ```
 
 Both services remain in manual mode and stopped by default. See `README.md`

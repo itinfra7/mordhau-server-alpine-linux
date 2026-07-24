@@ -11,7 +11,7 @@ BUILD_TEMP=""
 
 usage() {
     cat <<'EOF'
-Usage: ./unicode-bridge/build-windows-server.sh --editor-root PATH --wine-prefix PATH
+Usage: ./src/unicode-bridge/build-windows-server.sh --editor-root PATH --wine-prefix PATH
 
 Cooks the Blueprint source with the official MORDHAU Editor for WindowsServer
 and rebuilds the distributable PAK. The command runs the Windows editor tools

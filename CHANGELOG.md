@@ -2,6 +2,17 @@
 
 All notable changes to this repository are documented in this file.
 
+## [1.8.2] - 2026-07-24
+
+### Changed
+
+- Consolidate installer, service templates, SteamCMD input, Go manager,
+  Unicode Bridge, and integration tests under `src/`.
+- Keep generated release archives and checksums outside the tracked source
+  tree for publication as versioned GitHub Release assets.
+- Credit Unreal Engine and Epic Games for the editor and packaging technology
+  used to build the server-only Unicode Bridge.
+
 ## [1.8.1] - 2026-07-24
 
 ### Changed
