@@ -5,9 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="light dark">
   <title>MORDHAU Control</title>
-  <script src="/static/theme.js?v=1.8.4-dev"></script>
-  <link rel="stylesheet" href="/static/app.css?v=1.8.4-dev">
-  <script src="/static/app.js?v=1.8.4-dev" defer></script>
+  <script src="/static/theme.js?v=1.8.5-dev"></script>
+  <link rel="stylesheet" href="/static/app.css?v=1.8.5-dev">
+  <script src="/static/app.js?v=1.8.5-dev" defer></script>
 </head>
 <body>
   <div class="ambient ambient-one"></div>
@@ -282,6 +282,13 @@
               <button id="modio-clear" class="danger" type="button">Clear saved key</button>
             </div>
           </form>
+          <label class="mod-restart-setting" for="mods-restart-on-update">
+            <input id="mods-restart-on-update" type="checkbox" disabled>
+            <span>Server auto-restart on mod update</span>
+          </label>
+          <p id="mods-restart-on-update-hint" class="hint">
+            Save a valid API key to enable this option. It is off by default.
+          </p>
           <p class="hint">
             Copy both values from
             <a href="https://mod.io/me/access" target="_blank" rel="noopener noreferrer">mod.io API access</a>.
@@ -322,12 +329,12 @@
               <label class="mod-refresh-setting" for="mods-refresh-minutes">
                 <span>Auto-refresh</span>
                 <input id="mods-refresh-minutes" type="number" min="1" max="10080"
-                       step="1" value="60" inputmode="numeric">
+                       step="1" value="5" inputmode="numeric">
                 <span>min</span>
               </label>
               <button id="mods-refresh" class="ghost compact" type="button">Refresh now</button>
               <span id="mods-refresh-status" class="mod-refresh-status">
-                Server interval: 60 min · waiting for refresh state
+                Server interval: 5 min · waiting for refresh state
               </span>
             </div>
           </div>

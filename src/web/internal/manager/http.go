@@ -355,11 +355,7 @@ func (m *Manager) serverActionHandler(response http.ResponseWriter, request *htt
 		writeError(response, http.StatusBadRequest, err.Error())
 		return
 	}
-	startOperation := m.startOperation
-	if m.operationStart != nil {
-		startOperation = m.operationStart
-	}
-	if err := startOperation(
+	if err := m.requestOperation(
 		body.Action,
 		session.Username,
 		auditClientIP(request),
@@ -659,19 +655,31 @@ func (m *Manager) modRefreshSettingsHandler(
 		return
 	}
 	var body struct {
-		Minutes int `json:"minutes"`
+		Minutes         *int  `json:"minutes"`
+		RestartOnUpdate *bool `json:"restart_on_update"`
 	}
 	if err := decodeJSON(response, request, &body); err != nil {
 		writeError(response, http.StatusBadRequest, err.Error())
 		return
 	}
-	view, err := m.setModRefreshInterval(body.Minutes)
+	view, err := m.setModRefreshSettings(body.Minutes, body.RestartOnUpdate)
 	if err != nil {
 		writeError(response, http.StatusBadRequest, err.Error())
 		return
 	}
-	m.auditRequestEvent(request, session.Username, "mod_refresh_interval_changed",
-		map[string]string{"minutes": strconv.Itoa(body.Minutes)})
+	details := make(map[string]string)
+	if body.Minutes != nil {
+		details["minutes"] = strconv.Itoa(*body.Minutes)
+	}
+	if body.RestartOnUpdate != nil {
+		details["restart_on_update"] = strconv.FormatBool(*body.RestartOnUpdate)
+	}
+	m.auditRequestEvent(
+		request,
+		session.Username,
+		"mod_refresh_settings_changed",
+		details,
+	)
 	writeJSON(response, http.StatusOK, view)
 }
 
@@ -829,6 +837,11 @@ func (m *Manager) modIOSettingsClearHandler(
 ) {
 	if request.Method != http.MethodPost || !validCSRF(request, session) {
 		writeError(response, http.StatusForbidden, "invalid request")
+		return
+	}
+	disabled := false
+	if _, err := m.setModRefreshSettings(nil, &disabled); err != nil {
+		writeError(response, http.StatusInternalServerError, err.Error())
 		return
 	}
 	if err := m.clearModIOSettings(); err != nil {

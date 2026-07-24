@@ -20,6 +20,8 @@ The repository provides:
   enable/disable state
 - Optional mod.io metadata, recursive dependency status, and dependency
   management for Game.ini
+- Optional active-mod update detection with an in-game restart countdown and
+  managed automatic restart
 - Persistent initial-map and dedicated-server port selection
 - Authenticated RCON event streaming with UTF-8 player-chat integration
 - Authenticated administrative RCON command execution with retained responses
@@ -213,7 +215,9 @@ The web manager provides:
   status, unresolved-dependency warnings, and scoped `Mods=<Resource ID>`
   management
 - Server-wide cached mod metadata auto-refresh from 1 to 10,080 minutes,
-  defaulting to 60 minutes
+  defaulting to 5 minutes for new state
+- Optional automatic restart when an enabled mod publishes a new modfile,
+  with persistent 10-, 5-, 4-, 3-, 2-, and 1-minute player notices
 - Game.ini and Engine.ini section/item creation, editing, and removal
 - Reversible per-item and whole-section enable and disable controls
 - Revision checks, active-file backups, and staged edits while the game is
@@ -318,11 +322,12 @@ duration.
 Dedicated events identify login success, login failure, logout, server
 actions and their completion, language changes, initial-map and port changes,
 mod configuration, mod.io connection changes, manual metadata refreshes,
-server-wide refresh-interval changes, Game.ini and Engine.ini mutations,
-pending-configuration removal, Unicode server-message sends, administrative
-RCON command success or failure, account changes, network-policy changes,
-OpenRC boot-mode changes, and saved web-port changes. Requests without a valid
-session use the account name `unauthenticated`.
+server-wide refresh-setting changes, active-mod update detection, restart
+countdown notices, automatic restart requests, Game.ini and Engine.ini
+mutations, pending-configuration removal, Unicode server-message sends,
+administrative RCON command success or failure, account changes,
+network-policy changes, OpenRC boot-mode changes, and saved web-port changes.
+Requests without a valid session use the account name `unauthenticated`.
 
 Passwords, request bodies, session cookies, CSRF tokens, RCON credentials,
 configuration values, and configuration revisions are not written to the
@@ -522,11 +527,12 @@ shows a warning when a required dependency is disabled or absent. Disabled
 mods retain dependency information without producing unresolved-dependency
 warnings.
 
-The server refreshes the configured-mod cache every 60 minutes by default.
-The interval can be set from 1 to 10,080 whole minutes and is shared by every
-administrator. The server performs one metadata/dependency refresh regardless
-of how many browsers are connected. Concurrent manual requests join the same
-in-progress refresh instead of starting additional mod.io requests.
+The server refreshes the configured-mod cache every 5 minutes by default for
+newly created state. A previously selected interval is preserved during
+upgrades. The interval can be set from 1 to 10,080 whole minutes and is shared
+by every administrator. The server performs one metadata/dependency refresh
+regardless of how many browsers are connected. Concurrent manual requests join
+the same in-progress refresh instead of starting additional mod.io requests.
 
 After a successful refresh, the full interval starts again from that success
 time. A failed attempt retains the previous successful timestamp and uses a
@@ -538,6 +544,34 @@ Completed refreshes and interval changes increment a shared revision sent over
 the existing authenticated event stream. Connected administrator pages then
 read the server cache and update without another mod.io lookup. The interval
 is stored in `/root/mordhau/.manager/mod-refresh.json` with mode `0600`.
+
+After a valid API key is saved, the Mods page can enable automatic server
+restart on active-mod updates. The option is disabled by default. A successful
+metadata refresh compares each enabled mod's current mod.io `modfile.id` with
+the preceding successful baseline. The first successful lookup establishes
+the baseline without scheduling a restart. Newly enabled and disabled mods do
+not create a false update event.
+
+When a new modfile is detected while the dedicated server is running, the
+manager keeps the current game-process identity and schedules one restart ten
+minutes later. It immediately sends an English 10-minute notice through the
+Unicode Bridge, then sends 5-, 4-, 3-, 2-, and 1-minute notices at the
+corresponding points. At the deadline it announces the restart and invokes the
+managed `restart` action, which validates the Steam installation and lets
+MORDHAU obtain active mod updates during startup. Additional active-mod
+updates join the existing countdown without postponing it.
+
+The baseline and pending countdown are stored with mode `0600` in:
+
+```text
+/root/mordhau/.manager/mod-update-state.json
+```
+
+Restarting only the web service resumes a valid countdown. Disabling the
+option, clearing the API key, stopping or replacing the game process, or
+starting another lifecycle operation cancels the pending automatic restart.
+An update discovered while the game server is stopped updates the baseline
+without scheduling an unnecessary restart.
 
 The API key and API path are stored in
 `/root/mordhau/.manager/modio.json` with mode `0600`. The key is not returned

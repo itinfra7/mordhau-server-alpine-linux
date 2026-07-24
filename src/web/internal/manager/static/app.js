@@ -467,8 +467,9 @@ function formatBrowserDate(value) {
 }
 
 function renderModRefresh(refresh) {
-  const minutes = validModRefreshMinutes(refresh && refresh.interval_minutes) || 60;
+  const minutes = validModRefreshMinutes(refresh && refresh.interval_minutes) || 5;
   $("#mods-refresh-minutes").value = String(minutes);
+  $("#mods-restart-on-update").checked = Boolean(refresh && refresh.restart_on_update);
 
   const status = $("#mods-refresh-status");
   const lastSuccess = formatBrowserDate(refresh && refresh.last_success_at);
@@ -484,6 +485,15 @@ function renderModRefresh(refresh) {
     parts.push(`${failed ? "Next retry" : "Next refresh"}: ${nextRefresh}`);
   }
   if (failed) parts.push(`Last attempt failed: ${refresh.last_error}`);
+  if (refresh && refresh.restart_scheduled && refresh.restart_at) {
+    const restartAt = formatBrowserDate(refresh.restart_at);
+    const modIDs = Array.isArray(refresh.restart_mod_ids)
+      ? refresh.restart_mod_ids.join(", ")
+      : "";
+    parts.push(
+      `Update restart scheduled: ${restartAt || refresh.restart_at}${modIDs ? ` · mods ${modIDs}` : ""}`,
+    );
+  }
   status.textContent = parts.join(" · ");
   status.classList.toggle("error", failed);
 }
@@ -502,6 +512,12 @@ function renderModIOSettings(settings) {
     ? "Saved · enter only to replace"
     : "32-character key";
   $("#modio-clear").disabled = !configured;
+  const restart = $("#mods-restart-on-update");
+  restart.disabled = !configured;
+  if (!configured) restart.checked = false;
+  $("#mods-restart-on-update-hint").textContent = configured
+    ? "When an active mod publishes a new modfile, players receive a 10-minute countdown before a managed restart."
+    : "Save a valid API key to enable this option. It is off by default.";
 }
 
 function appendConfiguredModDependencies(details, configured, configuredByID) {
@@ -1206,6 +1222,23 @@ function bindEvents() {
       });
       renderConfiguredMods(data);
       toast(`Server-wide mod refresh interval set to ${minutes} minute${minutes === 1 ? "" : "s"}.`);
+    } catch (error) {
+      await loadMods();
+      toast(error.message, true);
+    }
+  });
+  $("#mods-restart-on-update").addEventListener("change", async (event) => {
+    const enabled = event.target.checked;
+    event.target.disabled = true;
+    try {
+      const data = await api("/api/mods/refresh/settings", {
+        method: "POST",
+        body: { restart_on_update: enabled },
+      });
+      renderConfiguredMods(data);
+      toast(enabled
+        ? "Automatic server restart on active mod update enabled."
+        : "Automatic server restart on mod update disabled.");
     } catch (error) {
       await loadMods();
       toast(error.message, true);

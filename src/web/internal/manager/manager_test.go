@@ -2134,13 +2134,14 @@ func TestDashboardThemeAndMessageMarkup(t *testing.T) {
 	for _, expected := range []string{
 		`id="theme-toggle"`,
 		`content="width=device-width, initial-scale=1, viewport-fit=cover"`,
-		`src="/static/theme.js?v=1.8.4-dev"`,
+		`src="/static/theme.js?v=1.8.5-dev"`,
 		`<label for="rcon-message">Send Message</label>`,
 		`<label for="rcon-command">Execute RCON Command</label>`,
 		`id="rcon-command-submit"`,
 		`id="mods-refresh-minutes"`,
 		`min="1" max="10080"`,
-		`value="60"`,
+		`value="5"`,
+		`id="mods-restart-on-update"`,
 		`placeholder="10.0.0.4 | 10.0.0.0/24 | 10.0.0.4-10.0.0.9"`,
 		`id="new-rule-comment"`,
 		`maxlength="160"`,
@@ -2167,7 +2168,7 @@ func TestDashboardThemeAndMessageMarkup(t *testing.T) {
 		t.Fatal(err)
 	}
 	loginSource := string(loginData)
-	if !strings.Contains(loginSource, `src="/static/theme.js?v=1.8.4-dev"`) {
+	if !strings.Contains(loginSource, `src="/static/theme.js?v=1.8.5-dev"`) {
 		t.Fatal("login page does not initialize the persisted theme")
 	}
 	if !strings.Contains(loginSource, `viewport-fit=cover`) {
@@ -2193,6 +2194,7 @@ func TestDashboardThemeAndMessageMarkup(t *testing.T) {
 		`/api/rcon/history`,
 		`/api/rcon/command`,
 		`Last successful refresh:`,
+		`restart_on_update: enabled`,
 		`resolvedOptions().timeZone`,
 		`comment: comment.value`,
 		`typeof rule.comment === "string"`,

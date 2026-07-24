@@ -10,6 +10,21 @@ All notable changes to this repository are documented in this file.
   panel with immediate, retained command and response events.
 - Add bounded multi-packet response collection with selected-language legacy
   decoding, explicit no-output and truncation records, and mobile controls.
+- Add an API-key-gated, default-off automatic restart setting for enabled
+  mod.io modfile updates.
+- Persist active-mod modfile baselines and pending restart countdowns across
+  web-service restarts.
+- Announce automatic restarts in-game at 10, 5, 4, 3, 2, and 1 minutes before
+  invoking the managed restart action at the ten-minute deadline.
+
+### Changed
+
+- Default newly created server-wide mod metadata refresh state to five minutes
+  while preserving an existing saved interval during settings migration.
+- Merge additional active-mod updates into an existing countdown without
+  postponing its restart deadline.
+- Cancel a pending automatic restart when its setting or API key is removed,
+  the game process changes, or another lifecycle action begins.
 
 ### Security
 

@@ -18,6 +18,7 @@ import (
 const (
 	modIOSettingsPath       = stateDir + "/modio.json"
 	modRefreshSettingsPath  = stateDir + "/mod-refresh.json"
+	modUpdateStatePath      = stateDir + "/mod-update-state.json"
 	modIOGameNameID         = "mordhau"
 	modIOGameSessionSection = "/Script/Mordhau.MordhauGameSession"
 	defaultModIOAPIBase     = "https://api.mod.io/v1"
@@ -159,9 +160,16 @@ func validModIOAPIKey(value string) bool {
 	return true
 }
 
-func loadModIOSettingsFile() (modIOSettingsFile, error) {
+func (m *Manager) modIOSettingsFilePath() string {
+	if m.modIOSettingsFile != "" {
+		return m.modIOSettingsFile
+	}
+	return modIOSettingsPath
+}
+
+func loadModIOSettingsFile(path string) (modIOSettingsFile, error) {
 	var settings modIOSettingsFile
-	if err := readJSON(modIOSettingsPath, &settings); err != nil {
+	if err := readJSON(path, &settings); err != nil {
 		return modIOSettingsFile{}, err
 	}
 	if settings.Version != 1 || !validModIOAPIKey(settings.APIKey) || settings.GameID < 1 {
@@ -172,7 +180,7 @@ func loadModIOSettingsFile() (modIOSettingsFile, error) {
 		return modIOSettingsFile{}, errors.New("stored mod.io API path is invalid")
 	}
 	settings.APIBase = apiBase
-	if err := os.Chmod(modIOSettingsPath, 0600); err != nil {
+	if err := os.Chmod(path, 0600); err != nil {
 		return modIOSettingsFile{}, err
 	}
 	return settings, nil
@@ -193,7 +201,7 @@ func publicModIOSettings(settings *modIOSettingsFile) ModIOSettingsView {
 func (m *Manager) modIOSettings() (*modIOSettingsFile, error) {
 	m.modioMu.Lock()
 	defer m.modioMu.Unlock()
-	settings, err := loadModIOSettingsFile()
+	settings, err := loadModIOSettingsFile(m.modIOSettingsFilePath())
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}
@@ -209,7 +217,7 @@ func (m *Manager) saveModIOSettings(apiKey, apiBase string) (ModIOSettingsView, 
 
 	apiKey = strings.TrimSpace(apiKey)
 	if apiKey == "" {
-		existing, err := loadModIOSettingsFile()
+		existing, err := loadModIOSettingsFile(m.modIOSettingsFilePath())
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) {
 				return ModIOSettingsView{}, errors.New("enter a mod.io API key")
@@ -240,7 +248,7 @@ func (m *Manager) saveModIOSettings(apiKey, apiBase string) (ModIOSettingsView, 
 	candidate.GameID = game.ID
 	candidate.GameName = game.Name
 	candidate.SavedAt = time.Now()
-	if err := writeJSONAtomic(modIOSettingsPath, candidate, 0600); err != nil {
+	if err := writeJSONAtomic(m.modIOSettingsFilePath(), candidate, 0600); err != nil {
 		return ModIOSettingsView{}, err
 	}
 	return publicModIOSettings(&candidate), nil
@@ -249,7 +257,7 @@ func (m *Manager) saveModIOSettings(apiKey, apiBase string) (ModIOSettingsView, 
 func (m *Manager) clearModIOSettings() error {
 	m.modioMu.Lock()
 	defer m.modioMu.Unlock()
-	if err := os.Remove(modIOSettingsPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+	if err := os.Remove(m.modIOSettingsFilePath()); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
 	return nil

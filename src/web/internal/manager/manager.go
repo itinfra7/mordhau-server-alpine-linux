@@ -64,6 +64,14 @@ type Manager struct {
 	modLastError           string
 	modRefreshWake         chan struct{}
 	modManagementViewBuild func() (ModManagementView, error)
+	modIOSettingsFile      string
+	modRefreshSettingsFile string
+	modUpdateStateFile     string
+	modUpdateState         modUpdateStateFile
+	modUpdateStateLoaded   bool
+	modRestartWake         chan struct{}
+	modServerProcess       func() (int, bool)
+	modRestartMessageSend  func(string) error
 
 	auditMu   sync.Mutex
 	auditPath string
@@ -101,6 +109,7 @@ func New(trustedProxies ...netip.Prefix) (*Manager, error) {
 		operationPath:  operationStatePath,
 		rconLogPath:    rconEventLogPath,
 		modRefreshWake: make(chan struct{}, 1),
+		modRestartWake: make(chan struct{}, 1),
 	}
 	for _, prefix := range trustedProxies {
 		canonical, err := canonicalTrustedProxyPrefix(prefix)
@@ -139,6 +148,9 @@ func New(trustedProxies ...netip.Prefix) (*Manager, error) {
 	if err := m.loadOrCreateModRefreshSettings(); err != nil {
 		return nil, err
 	}
+	if err := m.loadOrCreateModUpdateState(); err != nil {
+		return nil, err
+	}
 	return m, nil
 }
 
@@ -149,6 +161,7 @@ func (m *Manager) StartBackground(ctx context.Context) {
 	go m.chatLogLoop(ctx)
 	go m.cleanupLoop(ctx)
 	go m.modRefreshLoop(ctx)
+	go m.modRestartLoop(ctx)
 	go func() {
 		<-ctx.Done()
 		m.auditActorEvent("system", "local", "web_manager_stopping", nil)

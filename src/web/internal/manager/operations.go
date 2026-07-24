@@ -10,6 +10,13 @@ import (
 	"time"
 )
 
+func (m *Manager) requestOperation(action, username, clientIP, peerIP string) error {
+	if m.operationStart != nil {
+		return m.operationStart(action, username, clientIP, peerIP)
+	}
+	return m.startOperation(action, username, clientIP, peerIP)
+}
+
 func (m *Manager) startOperation(action, username, clientIP, peerIP string) error {
 	switch action {
 	case "start", "stop", "restart", "update":
@@ -42,6 +49,7 @@ func (m *Manager) startOperation(action, username, clientIP, peerIP string) erro
 		return fmt.Errorf("save lifecycle operation state: %w", err)
 	}
 	m.mu.Unlock()
+	m.signalModRestartLoop()
 	m.addRCONEvent("system", "Server operation started: "+action)
 
 	go func() {
