@@ -14,8 +14,8 @@ The repository provides:
 - SteamCMD validation before every server start or restart
 - POSIX shell lifecycle control
 - OpenRC service definitions for the game server and web manager
-- An animated Go web manager with live system metrics and persistent
-  light/dark themes
+- An animated responsive Go web manager with live system metrics and
+  persistent light/dark themes
 - Structured Game.ini and Engine.ini editing
 - Optional mod.io metadata, recursive dependency status, and dependency
   management for Game.ini
@@ -39,6 +39,7 @@ upstream distribution channels and are not included in this repository.
   and Go module sources
 - A mod.io API key when URL lookup, metadata, and recursive dependency
   inspection are required
+- A modern desktop or mobile browser
 
 The installer requires enough free storage for Wine, SteamCMD, Go build data,
 MORDHAU Dedicated Server, and Steam update staging.
@@ -72,11 +73,11 @@ MORDHAU Dedicated Server, and Steam update staging.
 ### Release archive
 
 ```sh
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v1.4.0/mordhau-server-alpine-linux-v1.4.0.tar.gz
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v1.4.0/SHA256SUMS
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v1.5.0/mordhau-server-alpine-linux-v1.5.0.tar.gz
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v1.5.0/SHA256SUMS
 sha256sum -c SHA256SUMS
-tar -xzf mordhau-server-alpine-linux-v1.4.0.tar.gz
-cd mordhau-server-alpine-linux-v1.4.0
+tar -xzf mordhau-server-alpine-linux-v1.5.0.tar.gz
+cd mordhau-server-alpine-linux-v1.5.0
 chmod +x mordhau-server-alpine-linux.sh
 ./mordhau-server-alpine-linux.sh
 ```
@@ -189,6 +190,8 @@ The web manager provides:
 - A 30-minute exact-address emergency allow when switching to `all deny`
 - Live CPU, memory, swap, and MORDHAU-filesystem utilization
 - A default light theme with a persistent light/dark toggle
+- Responsive phone, tablet, and desktop layouts with notched-display safe
+  areas and touch-sized controls
 - Start, stop, restart, and stopped-only update controls
 - Persistent latest lifecycle action, requester, result, timestamps, and output
 - Boot startup mode controls for both OpenRC services
@@ -212,6 +215,20 @@ The web manager provides:
 - A Send Message form with a root-only UTF-8 spool, ASCII token RCON
   transport, and acknowledgement before success is reported
 - Root-only web access and administrative change audit logging
+
+## Mobile Layout
+
+The dashboard and login page use the same authenticated endpoints on desktop
+and mobile browsers. At widths of 720 pixels and below, controls use
+touch-sized targets, technical inputs use a 16-pixel font, and multi-column
+forms reflow without page-level horizontal scrolling. The header retains
+server and account status, while the section tabs remain horizontally
+scrollable.
+
+At phone widths, INI rows, account and network-rule actions, mod controls,
+dependency details, port fields, and Live RCON records stack vertically.
+Long technical values wrap within their cards. Viewport safe-area insets are
+applied for notched displays and standalone browser windows.
 
 ## Web Audit Log
 
@@ -541,8 +558,10 @@ The shell integration test covers PAK installation, active and staged Game.ini
 registration, existing server-actor preservation, backup creation, and
 idempotent reinstallation. Static asset tests verify the default-light theme
 initializer, persistent theme, server-managed mod-refresh controls,
-browser-time-zone timestamps, initial RCON history loading, and the Live RCON
-message form.
+browser-time-zone timestamps, initial RCON history loading, the Live RCON
+message form, mobile viewport metadata, touch targets, input sizing, safe-area
+handling, narrow-screen control reflow, and mobile visibility of server and
+account status.
 
 ## Update and Rollback
 

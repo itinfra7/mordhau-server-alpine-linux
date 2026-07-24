@@ -1,7 +1,7 @@
-# MORDHAU Server Alpine Linux v1.4.0
+# MORDHAU Server Alpine Linux v1.5.0
 
-This release moves mod metadata scheduling and caching to the server so every
-administrator shares one interval and one set of mod.io API requests.
+This release adds complete responsive management layouts for mobile browsers
+while retaining shared server-side metadata and persistent dashboard state.
 
 ## Included
 
@@ -15,6 +15,15 @@ administrator shares one interval and one set of mod.io API requests.
 - Log archival based on the source `Mordhau.log` modification time
 - Authenticated Go web manager bound to IPv4 `0.0.0.0`
 - Default-light responsive interface with a persistent light/dark toggle
+- Phone-width dashboard and login reflow for lifecycle controls, service
+  settings, INI editing, Mods, accounts, network rules, and Live RCON
+- Notched-display safe areas, 44-pixel touch targets, and 16-pixel mobile
+  inputs that avoid automatic Safari input zoom
+- Compact mobile header that retains server and authenticated-account status
+- Long-value wrapping for operation output, RCON events, dependencies, mod
+  summaries, statuses, and notifications
+- Mobile keyboard hints that disable unwanted autocapitalization and spell
+  checking for technical fields
 - Live CPU, memory, swap, and server-filesystem metrics
 - Persistent latest lifecycle action, requester, result, timestamps, and
   command output

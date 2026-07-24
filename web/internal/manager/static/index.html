@@ -2,12 +2,12 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="light dark">
   <title>MORDHAU Control</title>
-  <script src="/static/theme.js?v=1.4.0"></script>
-  <link rel="stylesheet" href="/static/app.css?v=1.4.0">
-  <script src="/static/app.js?v=1.4.0" defer></script>
+  <script src="/static/theme.js?v=1.5.0"></script>
+  <link rel="stylesheet" href="/static/app.css?v=1.5.0">
+  <script src="/static/app.js?v=1.5.0" defer></script>
 </head>
 <body>
   <div class="ambient ambient-one"></div>
@@ -119,6 +119,7 @@
                 type="text"
                 maxlength="512"
                 autocomplete="off"
+                enterkeyhint="send"
                 required
               >
               <button id="rcon-message-submit" class="primary" type="submit">Send</button>
@@ -165,7 +166,8 @@
             <form id="start-map-form" class="service-setting start-map-setting">
               <span>Initial map</span>
               <div class="field-row">
-                <input id="start-map" placeholder="Optional map name" maxlength="160" autocomplete="off">
+                <input id="start-map" placeholder="Optional map name" maxlength="160"
+                       autocomplete="off" autocapitalize="none" spellcheck="false">
                 <button class="secondary compact" type="submit">Save map</button>
               </div>
               <small>Passed immediately after MordhauServer.exe on the next start. Leave empty for the server default.</small>
@@ -218,7 +220,8 @@
         </div>
         <p class="hint">Duplicate keys, order, comments, and unrelated lines are retained. Disabled entries remain editable but are ignored at the next server start. Each mutation is revision-checked and active-file edits are backed up.</p>
         <form id="add-section-form" class="inline-form">
-          <input id="new-section-name" placeholder="New section name" required>
+          <input id="new-section-name" placeholder="New section name" required
+                 autocapitalize="none" spellcheck="false">
           <button class="secondary compact" type="submit">Add section</button>
         </form>
         <div id="config-sections" class="config-sections"></div>
@@ -250,6 +253,7 @@
             <label>
               <span>API path</span>
               <input id="modio-api-base" type="url" required autocomplete="off"
+                     autocapitalize="none" spellcheck="false"
                      value="https://api.mod.io/v1">
             </label>
             <div class="control-row">
@@ -274,6 +278,7 @@
           </div>
           <form id="mod-plan-form" class="mod-plan-form">
             <input id="mod-reference" required autocomplete="off"
+                   autocapitalize="none" spellcheck="false"
                    placeholder="mod.io URL, name ID, or numeric Resource ID">
             <button class="secondary" type="submit">Inspect</button>
           </form>
@@ -327,7 +332,7 @@
         </div>
         <p class="hint">Passwords require 8–128 characters with lowercase, uppercase, and a digit. Editing credentials invalidates that account’s sessions. The last account cannot be deleted.</p>
         <form id="new-account-form" class="account-create">
-          <label><span>Username</span><input id="new-account-name" required pattern="[a-z0-9][a-z0-9_-]{2,31}" autocomplete="off"></label>
+          <label><span>Username</span><input id="new-account-name" required pattern="[a-z0-9][a-z0-9_-]{2,31}" autocomplete="off" autocapitalize="none" spellcheck="false"></label>
           <label><span>Password</span><input id="new-account-password" type="password" required minlength="8" autocomplete="new-password"></label>
           <button class="primary" type="submit">Create account</button>
         </form>
@@ -356,7 +361,8 @@
         <p id="current-ip" class="hint"></p>
         <form id="new-rule-form" class="rule-create">
           <select id="new-rule-action"><option value="allow">Allow</option><option value="deny">Deny</option></select>
-          <input id="new-rule-network" placeholder="203.0.113.4 or 2001:db8::/48" required>
+          <input id="new-rule-network" placeholder="203.0.113.4 or 2001:db8::/48"
+                 required autocapitalize="none" spellcheck="false">
           <button class="primary compact" type="submit">Add rule</button>
         </form>
         <div id="access-rules" class="list-stack"></div>

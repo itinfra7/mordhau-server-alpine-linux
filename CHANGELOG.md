@@ -2,6 +2,30 @@
 
 All notable changes to this repository are documented in this file.
 
+## [1.5.0] - 2026-07-24
+
+### Added
+
+- Responsive dashboard and login layouts for narrow mobile viewports.
+- Safe-area handling for notched displays and standalone browser windows.
+- Mobile regression tests for viewport metadata, touch targets, input sizing,
+  status visibility, narrow-screen grids, text wrapping, and safe-area rules.
+
+### Changed
+
+- Keep server status and the authenticated account visible in a compact
+  two-row mobile header.
+- Use 44-pixel touch targets and 16-pixel mobile form controls to improve
+  touch operation and prevent automatic input zoom on mobile Safari.
+- Reflow lifecycle controls, service settings, INI entries, account rows,
+  access rules, mod controls, dependencies, and Live RCON lines at phone
+  widths.
+- Wrap long operation output, RCON text, dependency identities, mod summaries,
+  status text, and notifications without creating page-level horizontal
+  overflow.
+- Disable mobile autocapitalization and spell checking for usernames, CIDR
+  rules, INI fields, map names, URLs, and mod references.
+
 ## [1.4.0] - 2026-07-24
 
 ### Added

@@ -279,6 +279,8 @@ function renderConfig() {
     const sectionInput = document.createElement("input");
     sectionInput.value = section.name;
     sectionInput.disabled = section.line < 0;
+    sectionInput.autocapitalize = "none";
+    sectionInput.spellcheck = false;
     sectionInput.setAttribute("aria-label", "Section name");
     head.append(sectionInput);
     if (section.line >= 0) {
@@ -302,9 +304,13 @@ function renderConfig() {
       row.classList.toggle("disabled", !entry.enabled);
       const key = document.createElement("input");
       key.value = entry.key;
+      key.autocapitalize = "none";
+      key.spellcheck = false;
       key.setAttribute("aria-label", "Entry key");
       const value = document.createElement("input");
       value.value = entry.value;
+      value.autocapitalize = "none";
+      value.spellcheck = false;
       value.setAttribute("aria-label", "Entry value");
       row.append(
         key,
@@ -332,8 +338,12 @@ function renderConfig() {
     const newKey = document.createElement("input");
     newKey.placeholder = "New key";
     newKey.required = true;
+    newKey.autocapitalize = "none";
+    newKey.spellcheck = false;
     const newValue = document.createElement("input");
     newValue.placeholder = "Value";
+    newValue.autocapitalize = "none";
+    newValue.spellcheck = false;
     const submit = document.createElement("button");
     submit.type = "submit";
     submit.className = "primary compact";
@@ -725,6 +735,8 @@ function renderAccounts(accounts) {
     row.className = "list-row";
     const username = document.createElement("input");
     username.value = account.username;
+    username.autocapitalize = "none";
+    username.spellcheck = false;
     username.setAttribute("aria-label", `Username for ${account.username}`);
     const password = document.createElement("input");
     password.type = "password";
@@ -829,6 +841,8 @@ function renderAccessRules(rules) {
     action.value = rule.action;
     const network = document.createElement("input");
     network.value = rule.network;
+    network.autocapitalize = "none";
+    network.spellcheck = false;
     const save = makeButton("Save", "secondary compact", async () => {
       try {
         await api("/api/access/rule", {

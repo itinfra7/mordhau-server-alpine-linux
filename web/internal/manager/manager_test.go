@@ -1269,7 +1269,8 @@ func TestDashboardThemeAndMessageMarkup(t *testing.T) {
 	index := string(indexData)
 	for _, expected := range []string{
 		`id="theme-toggle"`,
-		`src="/static/theme.js?v=1.4.0"`,
+		`content="width=device-width, initial-scale=1, viewport-fit=cover"`,
+		`src="/static/theme.js?v=1.5.0"`,
 		`<label for="rcon-message">Send Message</label>`,
 		`id="mods-refresh-minutes"`,
 		`min="1" max="10080"`,
@@ -1294,8 +1295,12 @@ func TestDashboardThemeAndMessageMarkup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(loginData), `src="/static/theme.js?v=1.4.0"`) {
+	loginSource := string(loginData)
+	if !strings.Contains(loginSource, `src="/static/theme.js?v=1.5.0"`) {
 		t.Fatal("login page does not initialize the persisted theme")
+	}
+	if !strings.Contains(loginSource, `viewport-fit=cover`) {
+		t.Fatal("login page does not enable mobile safe-area layout")
 	}
 
 	themeData, err := staticFiles.ReadFile("static/theme.js")
@@ -1328,6 +1333,37 @@ func TestDashboardThemeAndMessageMarkup(t *testing.T) {
 	} {
 		if strings.Contains(appSource, unwanted) {
 			t.Fatal("mod refresh interval is still read from or written to browser-local state")
+		}
+	}
+}
+
+func TestMobileLayoutHasTouchAndNarrowViewportRules(t *testing.T) {
+	cssData, err := staticFiles.ReadFile("static/app.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	css := string(cssData)
+	for _, expected := range []string{
+		`@media (max-width: 720px)`,
+		`@media (max-width: 480px)`,
+		`@media (max-width: 360px)`,
+		`grid-template-areas: "server user theme logout"`,
+		`min-height: 44px`,
+		`font-size: 16px`,
+		`env(safe-area-inset-bottom)`,
+		`overflow-wrap: anywhere`,
+		`touch-action: manipulation`,
+	} {
+		if !strings.Contains(css, expected) {
+			t.Fatalf("mobile stylesheet is missing %q", expected)
+		}
+	}
+	for _, unwanted := range []string{
+		`.server-pill { display: none; }`,
+		`.user-chip { display: none; }`,
+	} {
+		if strings.Contains(css, unwanted) {
+			t.Fatalf("mobile stylesheet hides important status with %q", unwanted)
 		}
 	}
 }
