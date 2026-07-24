@@ -489,6 +489,9 @@ func (m *Manager) configMutationHandler(response http.ResponseWriter, request *h
 	}
 	m.auditRequestEvent(request, session.Username, "configuration_changed",
 		configMutationAuditDetails(mutation, view.Staged))
+	if mutation.File == "Game.ini" {
+		_, _ = m.refreshModCacheAfterConfigurationChange()
+	}
 	writeJSON(response, http.StatusOK, view)
 }
 
@@ -506,6 +509,7 @@ func (m *Manager) configDiscardHandler(response http.ResponseWriter, request *ht
 		return
 	}
 	m.auditRequestEvent(request, session.Username, "pending_configuration_discarded", nil)
+	_, _ = m.refreshModCacheAfterConfigurationChange()
 	response.WriteHeader(http.StatusNoContent)
 }
 

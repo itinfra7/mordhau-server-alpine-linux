@@ -171,6 +171,211 @@ func TestDisabledRCONEntryRemainsIntentionallyDisabled(t *testing.T) {
 	}
 }
 
+func TestPersistentDisabledEntrySurvivesINIRewriteAndReenables(t *testing.T) {
+	original := []byte("[One]\nFirst=A\nMap=One\nMap=Two\nLast=Z\n")
+	document := parseIni(original)
+	store := newDisabledINIFile()
+
+	if err := disableConfigEntry("Game.ini", &document, &store, 2); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(document.bytes()), disabledEntryPrefix) ||
+		strings.Contains(string(document.bytes()), "Map=One") {
+		t.Fatalf("disabled entry remained in the game-owned INI:\n%s", document.bytes())
+	}
+	if len(store.Entries) != 1 || store.Entries[0].Position != 1 {
+		t.Fatalf("unexpected persistent disabled state: %+v", store)
+	}
+
+	view := makeConfigViewWithDisabled("Game.ini", document.bytes(), false, store)
+	entries := view.Sections[0].Entries
+	if len(entries) != 4 ||
+		entries[1].Enabled ||
+		entries[1].Value != "One" ||
+		entries[2].Value != "Two" {
+		t.Fatalf("rewritten INI and persistent state merged incorrectly: %+v", entries)
+	}
+
+	id := store.Entries[0].ID
+	if err := enableConfigEntry("Game.ini", &document, &store, id); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.Entries) != 0 {
+		t.Fatalf("re-enabled entry remained persistent: %+v", store.Entries)
+	}
+	if got := string(document.bytes()); got != string(original) {
+		t.Fatalf("re-enabled entry order changed:\n%s", got)
+	}
+}
+
+func TestPersistentSectionDisableAndEnableCoversEveryEntry(t *testing.T) {
+	original := []byte("[One]\nFirst=A\nDuplicate=One\nDuplicate=Two\n\n[Two]\nOther=Z\n")
+	document := parseIni(original)
+	store := newDisabledINIFile()
+
+	if err := setConfigSectionEnabled(
+		"Engine.ini",
+		&document,
+		&store,
+		0,
+		"",
+		"One",
+		false,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.Sections) != 1 || len(store.Entries) != 3 {
+		t.Fatalf("section disable did not persist all entries: %+v", store)
+	}
+	for _, entry := range store.Entries {
+		if entry.Section != "One" {
+			t.Fatalf("entry escaped the disabled section: %+v", entry)
+		}
+	}
+	view := makeConfigViewWithDisabled("Engine.ini", document.bytes(), false, store)
+	if view.Sections[0].Enabled || len(view.Sections[0].Entries) != 3 {
+		t.Fatalf("disabled section view is incorrect: %+v", view.Sections[0])
+	}
+	for _, entry := range view.Sections[0].Entries {
+		if entry.Enabled {
+			t.Fatalf("section disable left an active entry: %+v", entry)
+		}
+	}
+
+	sectionID := store.Sections[0].ID
+	if err := setConfigSectionEnabled(
+		"Engine.ini",
+		&document,
+		&store,
+		-1,
+		sectionID,
+		"One",
+		true,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.Sections) != 0 || len(store.Entries) != 0 {
+		t.Fatalf("section enable left disabled state behind: %+v", store)
+	}
+	enabledView := makeConfigViewWithDisabled("Engine.ini", document.bytes(), false, store)
+	if !enabledView.Sections[0].Enabled || len(enabledView.Sections[0].Entries) != 3 {
+		t.Fatalf("section was not restored: %+v", enabledView.Sections[0])
+	}
+	for _, entry := range enabledView.Sections[0].Entries {
+		if !entry.Enabled {
+			t.Fatalf("section enable left a disabled entry: %+v", entry)
+		}
+	}
+	if enabledView.Sections[0].Entries[1].Value != "One" ||
+		enabledView.Sections[0].Entries[2].Value != "Two" {
+		t.Fatalf("duplicate entry order changed: %+v", enabledView.Sections[0].Entries)
+	}
+}
+
+func TestDisabledSectionCanBeRestoredAfterGameRemovesHeader(t *testing.T) {
+	document := parseIni([]byte("[Temporary]\nKey=Value\n"))
+	store := newDisabledINIFile()
+	if err := setConfigSectionEnabled(
+		"Game.ini",
+		&document,
+		&store,
+		0,
+		"",
+		"Temporary",
+		false,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	document = parseIni([]byte{})
+	view := makeConfigViewWithDisabled("Game.ini", document.bytes(), false, store)
+	if len(view.Sections) != 1 ||
+		view.Sections[0].Name != "Temporary" ||
+		view.Sections[0].Enabled ||
+		len(view.Sections[0].Entries) != 1 {
+		t.Fatalf("disabled virtual section was not retained: %+v", view.Sections)
+	}
+	if err := setConfigSectionEnabled(
+		"Game.ini",
+		&document,
+		&store,
+		-1,
+		store.Sections[0].ID,
+		"Temporary",
+		true,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if got := string(document.bytes()); got != "[Temporary]\nKey=Value\n" {
+		t.Fatalf("virtual section restoration = %q", got)
+	}
+}
+
+func TestConfigRevisionIncludesPersistentDisabledState(t *testing.T) {
+	data := []byte("[One]\nKey=Value\n")
+	store := newDisabledINIFile()
+	before := configRevision("Game.ini", data, store)
+	store.Entries = append(store.Entries, disabledINIEntry{
+		ID:       "entry-one",
+		File:     "Game.ini",
+		Section:  "One",
+		Position: 1,
+		Key:      "Other",
+		Value:    "Disabled",
+	})
+	after := configRevision("Game.ini", data, store)
+	if before == after {
+		t.Fatal("sidecar-only change did not change the configuration revision")
+	}
+	if unrelated := configRevision("Engine.ini", data, store); unrelated !=
+		configRevision("Engine.ini", data, newDisabledINIFile()) {
+		t.Fatal("Game.ini disabled state changed the Engine.ini revision")
+	}
+}
+
+func TestLegacyDisabledCommentsMigrateOutOfGameINI(t *testing.T) {
+	original := []byte("[One]\r\nActive=A\r\n" +
+		disabledEntryPrefix + "Disabled=B=C\r\n; ordinary comment\r\n")
+	store := newDisabledINIFile()
+	migrated, count, err := migrateLegacyDisabledEntries(
+		"Game.ini",
+		original,
+		&store,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 || len(store.Entries) != 1 {
+		t.Fatalf("migration count/state = %d, %+v", count, store)
+	}
+	if strings.Contains(string(migrated), disabledEntryPrefix) ||
+		!strings.Contains(string(migrated), "; ordinary comment\r\n") {
+		t.Fatalf("legacy migration damaged INI content:\n%s", migrated)
+	}
+	if store.Entries[0].Key != "Disabled" ||
+		store.Entries[0].Value != "B=C" ||
+		store.Entries[0].Position != 1 {
+		t.Fatalf("legacy entry migrated incorrectly: %+v", store.Entries[0])
+	}
+
+	duplicates := []byte("[One]\n" +
+		disabledEntryPrefix + "Map=Same\n" +
+		disabledEntryPrefix + "Map=Same\n")
+	duplicateStore := newDisabledINIFile()
+	if _, count, err := migrateLegacyDisabledEntries(
+		"Game.ini",
+		duplicates,
+		&duplicateStore,
+	); err != nil || count != 2 || len(duplicateStore.Entries) != 2 {
+		t.Fatalf(
+			"duplicate legacy values were not preserved: count=%d state=%+v err=%v",
+			count,
+			duplicateStore,
+			err,
+		)
+	}
+}
+
 func TestAccessRulePrecedenceAndEmergency(t *testing.T) {
 	now := time.Now()
 	expires := now.Add(time.Minute)
@@ -1709,7 +1914,7 @@ func TestDashboardThemeAndMessageMarkup(t *testing.T) {
 	for _, expected := range []string{
 		`id="theme-toggle"`,
 		`content="width=device-width, initial-scale=1, viewport-fit=cover"`,
-		`src="/static/theme.js?v=1.8.2"`,
+		`src="/static/theme.js?v=1.8.3"`,
 		`<label for="rcon-message">Send Message</label>`,
 		`id="mods-refresh-minutes"`,
 		`min="1" max="10080"`,
@@ -1740,7 +1945,7 @@ func TestDashboardThemeAndMessageMarkup(t *testing.T) {
 		t.Fatal(err)
 	}
 	loginSource := string(loginData)
-	if !strings.Contains(loginSource, `src="/static/theme.js?v=1.8.2"`) {
+	if !strings.Contains(loginSource, `src="/static/theme.js?v=1.8.3"`) {
 		t.Fatal("login page does not initialize the persisted theme")
 	}
 	if !strings.Contains(loginSource, `viewport-fit=cover`) {
@@ -1769,6 +1974,9 @@ func TestDashboardThemeAndMessageMarkup(t *testing.T) {
 		`comment: comment.value`,
 		`typeof rule.comment === "string"`,
 		`event.text.startsWith("RCON connection closed:")`,
+		`action: "set_section_enabled"`,
+		`section_id: section.id || ""`,
+		`entry_id: entry.id || ""`,
 	} {
 		if !strings.Contains(appSource, expected) {
 			t.Fatalf("frontend is missing %q", expected)
@@ -1801,6 +2009,7 @@ func TestMobileLayoutHasTouchAndNarrowViewportRules(t *testing.T) {
 		`overflow-wrap: anywhere`,
 		`touch-action: manipulation`,
 		`.access-rule-row`,
+		`.config-section.disabled`,
 	} {
 		if !strings.Contains(css, expected) {
 			t.Fatalf("mobile stylesheet is missing %q", expected)
@@ -1822,9 +2031,18 @@ func TestModDocumentMutationsPreserveScopeAndOrdering(t *testing.T) {
 		disabledEntryPrefix + "Mods=20\r\n" +
 		"[Other]\r\n" +
 		"Mods=999\r\n")
-	document := parseIni(original)
+	store := newDisabledINIFile()
+	migrated, count, err := migrateLegacyDisabledEntries(
+		"Game.ini",
+		original,
+		&store,
+	)
+	if err != nil || count != 1 {
+		t.Fatalf("legacy setup migration: count=%d err=%v", count, err)
+	}
+	document := parseIni(migrated)
 
-	change, err := addModsToDocument(&document, []int{10, 20, 30})
+	change, err := addModsToConfigState(&document, &store, []int{10, 20, 30})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1838,25 +2056,70 @@ func TestModDocumentMutationsPreserveScopeAndOrdering(t *testing.T) {
 		t.Fatalf("mod lines were not added in dependency-first order or scope:\n%s", result)
 	}
 
-	change, err = setModEnabledInDocument(&document, 10, false)
+	change, err = setModEnabledInConfigState(&document, &store, 10, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !change.Changed ||
-		!strings.Contains(string(document.bytes()), disabledEntryPrefix+"Mods=10") {
+		strings.Contains(string(document.bytes()), disabledEntryPrefix) {
 		t.Fatal("configured mod was not disabled")
 	}
 
-	change, err = removeModFromDocument(&document, 20)
+	change, err = removeModFromConfigState(&document, &store, 20)
 	if err != nil {
 		t.Fatal(err)
 	}
 	result = string(document.bytes())
+	mods, _ := configuredModsFromState(document.bytes(), store)
+	for _, mod := range mods {
+		if mod.ID == 20 {
+			t.Fatal("configured mod was not removed from active or disabled state")
+		}
+	}
 	if !change.Changed || strings.Contains(result, "Mods=20") {
 		t.Fatal("configured mod was not removed")
 	}
 	if !strings.Contains(result, "[Other]\r\nMods=999") {
 		t.Fatal("a Mods entry in another section was changed")
+	}
+}
+
+func TestModMutationsUsePersistentDisabledState(t *testing.T) {
+	document := parseIni([]byte("[" + modIOGameSessionSection + "]\n" +
+		"Mods=10\n" +
+		"Mods=20\n"))
+	store := newDisabledINIFile()
+
+	change, err := setModEnabledInConfigState(&document, &store, 20, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !change.Changed || len(store.Entries) != 1 ||
+		strings.Contains(string(document.bytes()), disabledEntryPrefix) ||
+		strings.Contains(string(document.bytes()), "Mods=20") {
+		t.Fatalf("mod was not moved into persistent disabled state: %+v\n%s",
+			store,
+			document.bytes(),
+		)
+	}
+	mods, invalid := configuredModsFromState(document.bytes(), store)
+	if invalid != 0 || len(mods) != 2 || mods[1].ID != 20 || mods[1].Enabled {
+		t.Fatalf("persistent disabled mod was not visible: %+v, invalid=%d", mods, invalid)
+	}
+
+	change, err = addModsToConfigState(&document, &store, []int{20, 30})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !change.Changed ||
+		!slicesEqual(change.Reenabled, []int{20}) ||
+		!slicesEqual(change.Added, []int{30}) ||
+		len(store.Entries) != 0 {
+		t.Fatalf("mod re-enable/add result = %+v, state=%+v", change, store)
+	}
+	if got := string(document.bytes()); got !=
+		"["+modIOGameSessionSection+"]\nMods=10\nMods=20\nMods=30\n" {
+		t.Fatalf("mod order after re-enable/add:\n%s", got)
 	}
 }
 

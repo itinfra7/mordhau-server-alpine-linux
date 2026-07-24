@@ -128,6 +128,9 @@ func New(trustedProxies ...netip.Prefix) (*Manager, error) {
 	if err := m.ensureLanguage(); err != nil {
 		return nil, err
 	}
+	if err := initializeDisabledINIState(); err != nil {
+		return nil, err
+	}
 	if err := m.ensureRCONConfig(); err != nil {
 		return nil, err
 	}

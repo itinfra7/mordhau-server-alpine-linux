@@ -1,12 +1,12 @@
 package manager
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -35,12 +35,15 @@ type ConfigView struct {
 }
 
 type IniSection struct {
+	ID      string     `json:"id,omitempty"`
 	Line    int        `json:"line"`
 	Name    string     `json:"name"`
+	Enabled bool       `json:"enabled"`
 	Entries []IniEntry `json:"entries"`
 }
 
 type IniEntry struct {
+	ID      string `json:"id,omitempty"`
 	Line    int    `json:"line"`
 	Key     string `json:"key"`
 	Value   string `json:"value"`
@@ -51,6 +54,8 @@ type ConfigMutation struct {
 	File        string `json:"file"`
 	Revision    string `json:"revision"`
 	Action      string `json:"action"`
+	EntryID     string `json:"entry_id"`
+	SectionID   string `json:"section_id"`
 	Line        int    `json:"line"`
 	SectionLine int    `json:"section_line"`
 	Section     string `json:"section"`
@@ -67,6 +72,9 @@ func parseIni(data []byte) iniDocument {
 	newline := "\n"
 	if strings.Contains(string(data), "\r\n") {
 		newline = "\r\n"
+	}
+	if len(data) == 0 {
+		return iniDocument{lines: []string{}, newline: newline, raw: data}
 	}
 	normalized := strings.ReplaceAll(string(data), "\r\n", "\n")
 	trailing := strings.HasSuffix(normalized, "\n")
@@ -150,11 +158,6 @@ func setConfigEntryEnabled(lines []string, line int, enabled bool) error {
 	return nil
 }
 
-func revision(data []byte) string {
-	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:])
-}
-
 func configPath(name string, staged bool) string {
 	if staged {
 		return filepath.Join(pendingDir, name)
@@ -179,21 +182,40 @@ func readConfig(name string) (data []byte, staged bool, err error) {
 }
 
 func makeConfigView(name string, data []byte, staged bool) ConfigView {
+	return makeConfigViewWithDisabled(name, data, staged, newDisabledINIFile())
+}
+
+func makeConfigViewWithDisabled(
+	name string,
+	data []byte,
+	staged bool,
+	store disabledINIFile,
+) ConfigView {
 	document := parseIni(data)
 	view := ConfigView{
 		File:     name,
-		Revision: revision(data),
+		Revision: configRevision(name, data, store),
 		Staged:   staged,
 		Sections: []IniSection{},
 	}
-	current := IniSection{Line: -1, Name: "(entries before first section)"}
+	current := IniSection{
+		Line:    -1,
+		Name:    "(entries before first section)",
+		Enabled: true,
+		Entries: []IniEntry{},
+	}
 	haveGlobal := false
 	for lineNumber, line := range document.lines {
-		if name, ok := sectionName(line); ok {
+		if parsedName, ok := sectionName(line); ok {
 			if current.Line >= 0 || haveGlobal {
 				view.Sections = append(view.Sections, current)
 			}
-			current = IniSection{Line: lineNumber, Name: name, Entries: []IniEntry{}}
+			current = IniSection{
+				Line:    lineNumber,
+				Name:    parsedName,
+				Enabled: true,
+				Entries: []IniEntry{},
+			}
 			haveGlobal = false
 			continue
 		}
@@ -214,15 +236,127 @@ func makeConfigView(name string, data []byte, staged bool) ConfigView {
 	if current.Line >= 0 || haveGlobal {
 		view.Sections = append(view.Sections, current)
 	}
+
+	globalOffset := 0
+	if len(view.Sections) > 0 && view.Sections[0].Line < 0 &&
+		view.Sections[0].Name == "(entries before first section)" {
+		globalOffset = 1
+	}
+	for _, disabledSection := range disabledINISectionsFor(store, name) {
+		found := -1
+		for index := range view.Sections {
+			if view.Sections[index].Name == disabledSection.Name {
+				found = index
+				break
+			}
+		}
+		if found >= 0 {
+			view.Sections[found].ID = disabledSection.ID
+			view.Sections[found].Enabled = false
+			continue
+		}
+		position := disabledSection.Position + globalOffset
+		if position < globalOffset {
+			position = globalOffset
+		}
+		if position > len(view.Sections) {
+			position = len(view.Sections)
+		}
+		virtual := IniSection{
+			ID:      disabledSection.ID,
+			Line:    -1,
+			Name:    disabledSection.Name,
+			Enabled: false,
+			Entries: []IniEntry{},
+		}
+		view.Sections = append(view.Sections, IniSection{})
+		copy(view.Sections[position+1:], view.Sections[position:])
+		view.Sections[position] = virtual
+	}
+
+	disabledEntries := make([]disabledINIEntry, 0)
+	for _, disabledEntry := range store.Entries {
+		if disabledEntry.File == name {
+			disabledEntries = append(disabledEntries, disabledEntry)
+		}
+	}
+	sort.SliceStable(disabledEntries, func(left, right int) bool {
+		if disabledEntries[left].Section != disabledEntries[right].Section {
+			return disabledEntries[left].Section < disabledEntries[right].Section
+		}
+		if disabledEntries[left].Position != disabledEntries[right].Position {
+			return disabledEntries[left].Position < disabledEntries[right].Position
+		}
+		return disabledEntries[left].ID < disabledEntries[right].ID
+	})
+	for _, disabledEntry := range disabledEntries {
+		displaySection := disabledEntry.Section
+		if displaySection == "" {
+			displaySection = "(entries before first section)"
+		}
+		sectionIndex := -1
+		for index := range view.Sections {
+			if view.Sections[index].Name == displaySection {
+				sectionIndex = index
+				break
+			}
+		}
+		if sectionIndex < 0 {
+			virtual := IniSection{
+				Line:    -1,
+				Name:    displaySection,
+				Enabled: true,
+				Entries: []IniEntry{},
+			}
+			if disabledEntry.Section == "" {
+				view.Sections = append(view.Sections, IniSection{})
+				copy(view.Sections[1:], view.Sections[:len(view.Sections)-1])
+				view.Sections[0] = virtual
+				sectionIndex = 0
+			} else {
+				view.Sections = append(view.Sections, virtual)
+				sectionIndex = len(view.Sections) - 1
+			}
+		}
+		entry := IniEntry{
+			ID:      disabledEntry.ID,
+			Line:    -1,
+			Key:     disabledEntry.Key,
+			Value:   disabledEntry.Value,
+			Enabled: false,
+		}
+		position := disabledEntry.Position
+		if position < 0 {
+			position = 0
+		}
+		if position > len(view.Sections[sectionIndex].Entries) {
+			position = len(view.Sections[sectionIndex].Entries)
+		}
+		entries := view.Sections[sectionIndex].Entries
+		entries = append(entries, IniEntry{})
+		copy(entries[position+1:], entries[position:])
+		entries[position] = entry
+		view.Sections[sectionIndex].Entries = entries
+	}
 	return view
 }
 
 func (m *Manager) configView(name string) (ConfigView, error) {
+	m.configMu.Lock()
+	defer m.configMu.Unlock()
 	data, staged, err := readConfig(name)
 	if err != nil {
 		return ConfigView{}, err
 	}
-	return makeConfigView(name, data, staged), nil
+	storeStaged, err := disabledINIStateStaged(staged)
+	if err != nil {
+		return ConfigView{}, err
+	}
+	store, err := loadDisabledINIFile(storeStaged)
+	if err != nil {
+		return ConfigView{}, err
+	}
+	return makeConfigViewWithDisabled(name, data, staged, store), nil
 }
 
 func validIniText(value string, allowEmpty bool) bool {
@@ -249,6 +383,380 @@ func releaseLifecycleLock(file *os.File) {
 	_ = file.Close()
 }
 
+func configSectionStorageName(section IniSection) string {
+	if section.Line < 0 && section.Name == "(entries before first section)" && section.ID == "" {
+		return ""
+	}
+	return section.Name
+}
+
+func configSectionPosition(view ConfigView, wanted int) int {
+	position := 0
+	for index := range view.Sections {
+		if index == wanted {
+			return position
+		}
+		if configSectionStorageName(view.Sections[index]) != "" {
+			position++
+		}
+	}
+	return position
+}
+
+func findConfigSection(
+	view ConfigView,
+	line int,
+	id string,
+	name string,
+) (int, IniSection, bool) {
+	for index, section := range view.Sections {
+		if id != "" && section.ID == id {
+			return index, section, true
+		}
+		if id == "" && line >= 0 && section.Line == line {
+			return index, section, true
+		}
+	}
+	if id == "" && line < 0 {
+		for index, section := range view.Sections {
+			if section.Name == name {
+				return index, section, true
+			}
+		}
+	}
+	return -1, IniSection{}, false
+}
+
+func findConfigEntry(
+	view ConfigView,
+	line int,
+	id string,
+) (int, int, IniEntry, bool) {
+	for sectionIndex, section := range view.Sections {
+		for entryIndex, entry := range section.Entries {
+			if id != "" && entry.ID == id {
+				return sectionIndex, entryIndex, entry, true
+			}
+			if id == "" && line >= 0 && entry.Line == line {
+				return sectionIndex, entryIndex, entry, true
+			}
+		}
+	}
+	return -1, -1, IniEntry{}, false
+}
+
+func insertConfigEntry(
+	document *iniDocument,
+	view ConfigView,
+	sectionIndex int,
+	position int,
+	line string,
+) error {
+	if sectionIndex < 0 || sectionIndex >= len(view.Sections) {
+		return errRevisionConflict
+	}
+	section := view.Sections[sectionIndex]
+	for index := position + 1; index < len(section.Entries); index++ {
+		entry := section.Entries[index]
+		if entry.Enabled && entry.Line >= 0 {
+			document.lines = insertConfigLine(document.lines, entry.Line, line)
+			return nil
+		}
+	}
+
+	storageName := configSectionStorageName(section)
+	if storageName == "" {
+		insertAt := len(document.lines)
+		for index := range document.lines {
+			if _, ok := sectionName(document.lines[index]); ok {
+				insertAt = index
+				break
+			}
+		}
+		document.lines = insertConfigLine(document.lines, insertAt, line)
+		return nil
+	}
+	_, end, found := findSectionBounds(document.lines, storageName)
+	if found {
+		document.lines = insertConfigLine(document.lines, end, line)
+		return nil
+	}
+	if len(document.lines) > 0 && strings.TrimSpace(document.lines[len(document.lines)-1]) != "" {
+		document.lines = append(document.lines, "")
+	}
+	document.lines = append(document.lines, "["+storageName+"]", line)
+	return nil
+}
+
+func disableConfigEntry(
+	name string,
+	document *iniDocument,
+	store *disabledINIFile,
+	line int,
+) error {
+	view := makeConfigViewWithDisabled(name, document.bytes(), false, *store)
+	sectionIndex, entryPosition, entry, found := findConfigEntry(view, line, "")
+	if !found || !entry.Enabled || entry.Line < 0 {
+		return errRevisionConflict
+	}
+	if entry.Line >= len(document.lines) {
+		return errRevisionConflict
+	}
+	key, value, enabled, ok := configEntryParts(document.lines[entry.Line])
+	if !ok || !enabled {
+		return errRevisionConflict
+	}
+	id, err := randomID()
+	if err != nil {
+		return err
+	}
+	store.Entries = append(store.Entries, disabledINIEntry{
+		ID:       id,
+		File:     name,
+		Section:  configSectionStorageName(view.Sections[sectionIndex]),
+		Position: entryPosition,
+		Key:      key,
+		Value:    value,
+	})
+	document.lines = append(
+		document.lines[:entry.Line],
+		document.lines[entry.Line+1:]...,
+	)
+	return nil
+}
+
+func enableConfigEntry(
+	name string,
+	document *iniDocument,
+	store *disabledINIFile,
+	id string,
+) error {
+	storeIndex := disabledINIEntryIndex(store, name, id)
+	if storeIndex < 0 {
+		return errRevisionConflict
+	}
+	view := makeConfigViewWithDisabled(name, document.bytes(), false, *store)
+	sectionIndex, entryPosition, _, found := findConfigEntry(view, -1, id)
+	if !found {
+		return errRevisionConflict
+	}
+	entry := takeDisabledINIEntryAt(store, storeIndex)
+	if sectionStateIndex, _ := disabledINISectionByName(store, name, entry.Section); sectionStateIndex >= 0 {
+		takeDisabledINISectionAt(store, sectionStateIndex)
+	}
+	return insertConfigEntry(
+		document,
+		view,
+		sectionIndex,
+		entryPosition,
+		formatConfigEntry(entry.Key, entry.Value, true),
+	)
+}
+
+func removeConfigEntry(
+	name string,
+	document *iniDocument,
+	store *disabledINIFile,
+	line int,
+	id string,
+) error {
+	view := makeConfigViewWithDisabled(name, document.bytes(), false, *store)
+	sectionIndex, entryPosition, entry, found := findConfigEntry(view, line, id)
+	if !found {
+		return errRevisionConflict
+	}
+	if entry.ID != "" {
+		storeIndex := disabledINIEntryIndex(store, name, entry.ID)
+		if storeIndex < 0 {
+			return errRevisionConflict
+		}
+		removeDisabledINIEntryAt(store, storeIndex)
+		return nil
+	}
+	if entry.Line < 0 || entry.Line >= len(document.lines) {
+		return errRevisionConflict
+	}
+	if _, _, enabled, ok := configEntryParts(document.lines[entry.Line]); !ok || !enabled {
+		return errRevisionConflict
+	}
+	shiftDisabledINIPositions(
+		store,
+		name,
+		configSectionStorageName(view.Sections[sectionIndex]),
+		entryPosition+1,
+		-1,
+	)
+	document.lines = append(
+		document.lines[:entry.Line],
+		document.lines[entry.Line+1:]...,
+	)
+	return nil
+}
+
+func setConfigSectionEnabled(
+	name string,
+	document *iniDocument,
+	store *disabledINIFile,
+	line int,
+	id string,
+	sectionNameValue string,
+	enabled bool,
+) error {
+	view := makeConfigViewWithDisabled(name, document.bytes(), false, *store)
+	sectionIndex, section, found := findConfigSection(view, line, id, sectionNameValue)
+	if !found || configSectionStorageName(section) == "" {
+		return errRevisionConflict
+	}
+	storageName := configSectionStorageName(section)
+	if enabled {
+		stateIndex, _ := disabledINISectionByName(store, name, storageName)
+		if stateIndex < 0 {
+			return errRevisionConflict
+		}
+		takeDisabledINISectionAt(store, stateIndex)
+		entryIDs := make([]string, 0)
+		for _, entry := range section.Entries {
+			if !entry.Enabled && entry.ID != "" {
+				entryIDs = append(entryIDs, entry.ID)
+			}
+		}
+		for _, entryID := range entryIDs {
+			if err := enableConfigEntry(name, document, store, entryID); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if _, existing := disabledINISectionByName(store, name, storageName); existing != nil {
+		return errRevisionConflict
+	}
+	activeLines := make([]int, 0)
+	for _, entry := range section.Entries {
+		if entry.Enabled && entry.Line >= 0 {
+			activeLines = append(activeLines, entry.Line)
+		}
+	}
+	sort.Ints(activeLines)
+	for index := len(activeLines) - 1; index >= 0; index-- {
+		if err := disableConfigEntry(name, document, store, activeLines[index]); err != nil {
+			return err
+		}
+	}
+	sectionID, err := randomID()
+	if err != nil {
+		return err
+	}
+	store.Sections = append(store.Sections, disabledINISection{
+		ID:       sectionID,
+		File:     name,
+		Name:     storageName,
+		Position: configSectionPosition(view, sectionIndex),
+	})
+	return nil
+}
+
+type configFileSnapshot struct {
+	exists bool
+	data   []byte
+}
+
+func snapshotConfigFile(path string) (configFileSnapshot, error) {
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return configFileSnapshot{}, nil
+	}
+	if err != nil {
+		return configFileSnapshot{}, err
+	}
+	return configFileSnapshot{exists: true, data: data}, nil
+}
+
+func restoreConfigFile(path string, snapshot configFileSnapshot) {
+	if snapshot.exists {
+		_ = writeFileAtomic(path, snapshot.data, 0600)
+		return
+	}
+	_ = os.Remove(path)
+}
+
+func persistConfigState(
+	name string,
+	oldData []byte,
+	newData []byte,
+	oldStore disabledINIFile,
+	newStore disabledINIFile,
+	staged bool,
+) error {
+	targetConfig := configPath(name, staged)
+	targetStore := disabledINIStorePath(staged)
+	configSnapshot, err := snapshotConfigFile(targetConfig)
+	if err != nil {
+		return err
+	}
+	storeSnapshot, err := snapshotConfigFile(targetStore)
+	if err != nil {
+		return err
+	}
+	oldStoreData, err := marshalDisabledINIFile(oldStore)
+	if err != nil {
+		return err
+	}
+	newStoreData, err := marshalDisabledINIFile(newStore)
+	if err != nil {
+		return err
+	}
+	configChanged := !bytes.Equal(oldData, newData)
+	storeChanged := !bytes.Equal(oldStoreData, newStoreData)
+
+	if !staged {
+		if configChanged {
+			if err := backupConfig(name, oldData); err != nil {
+				return err
+			}
+		}
+		if storeChanged && storeSnapshot.exists {
+			if err := backupDisabledINI(storeSnapshot.data); err != nil {
+				return err
+			}
+		}
+	}
+
+	writeConfig := configChanged || !configSnapshot.exists
+	writeStore := storeChanged || !storeSnapshot.exists
+	if !writeConfig && !writeStore {
+		return nil
+	}
+
+	configFirst := len(newStore.Entries) < len(oldStore.Entries) ||
+		len(newStore.Sections) < len(oldStore.Sections)
+	if configFirst {
+		if writeConfig {
+			if err := writeFileAtomic(targetConfig, newData, 0600); err != nil {
+				return err
+			}
+		}
+		if writeStore {
+			if err := writeFileAtomic(targetStore, newStoreData, 0600); err != nil {
+				restoreConfigFile(targetConfig, configSnapshot)
+				return err
+			}
+		}
+		return nil
+	}
+	if writeStore {
+		if err := writeFileAtomic(targetStore, newStoreData, 0600); err != nil {
+			return err
+		}
+	}
+	if writeConfig {
+		if err := writeFileAtomic(targetConfig, newData, 0600); err != nil {
+			restoreConfigFile(targetStore, storeSnapshot)
+			return err
+		}
+	}
+	return nil
+}
+
 func (m *Manager) mutateConfig(request ConfigMutation) (ConfigView, error) {
 	if !allowedConfigFile(request.File) {
 		return ConfigView{}, errors.New("unsupported configuration file")
@@ -266,7 +774,16 @@ func (m *Manager) mutateConfig(request ConfigMutation) (ConfigView, error) {
 	if err != nil {
 		return ConfigView{}, err
 	}
-	if request.Revision == "" || request.Revision != revision(data) {
+	storeStaged, err := disabledINIStateStaged(staged)
+	if err != nil {
+		return ConfigView{}, err
+	}
+	store, err := loadDisabledINIFile(storeStaged)
+	if err != nil {
+		return ConfigView{}, err
+	}
+	oldStore := cloneDisabledINIFile(store)
+	if request.Revision == "" || request.Revision != configRevision(request.File, data, store) {
 		return ConfigView{}, errRevisionConflict
 	}
 
@@ -274,113 +791,224 @@ func (m *Manager) mutateConfig(request ConfigMutation) (ConfigView, error) {
 	lines := document.lines
 	lineValid := request.Line >= 0 && request.Line < len(lines)
 	sectionLineValid := request.SectionLine >= -1 && request.SectionLine < len(lines)
+	view := makeConfigViewWithDisabled(request.File, data, staged, store)
 
 	switch request.Action {
 	case "set_entry":
-		if !lineValid || !validIniText(request.Key, false) || !validIniText(request.Value, true) {
+		if !validIniText(request.Key, false) || !validIniText(request.Value, true) {
 			return ConfigView{}, errors.New("invalid entry")
 		}
-		_, _, enabled, ok := configEntryParts(lines[request.Line])
-		if !ok {
-			return ConfigView{}, errRevisionConflict
+		if request.EntryID != "" {
+			index := disabledINIEntryIndex(&store, request.File, request.EntryID)
+			if index < 0 {
+				return ConfigView{}, errRevisionConflict
+			}
+			store.Entries[index].Key = strings.TrimSpace(request.Key)
+			store.Entries[index].Value = request.Value
+		} else {
+			if !lineValid {
+				return ConfigView{}, errors.New("invalid entry")
+			}
+			_, _, enabled, ok := configEntryParts(lines[request.Line])
+			if !ok || !enabled {
+				return ConfigView{}, errRevisionConflict
+			}
+			lines[request.Line] = formatConfigEntry(request.Key, request.Value, true)
 		}
-		lines[request.Line] = formatConfigEntry(request.Key, request.Value, enabled)
 	case "set_entry_enabled":
-		if err := setConfigEntryEnabled(lines, request.Line, request.Enabled); err != nil {
-			return ConfigView{}, err
+		if request.Enabled {
+			if err := enableConfigEntry(request.File, &document, &store, request.EntryID); err != nil {
+				return ConfigView{}, err
+			}
+		} else {
+			if err := disableConfigEntry(request.File, &document, &store, request.Line); err != nil {
+				return ConfigView{}, err
+			}
 		}
 	case "remove_entry":
-		if !lineValid {
-			return ConfigView{}, errors.New("invalid entry line")
+		if err := removeConfigEntry(
+			request.File,
+			&document,
+			&store,
+			request.Line,
+			request.EntryID,
+		); err != nil {
+			return ConfigView{}, err
 		}
-		if _, _, _, ok := configEntryParts(lines[request.Line]); !ok {
-			return ConfigView{}, errRevisionConflict
-		}
-		lines = append(lines[:request.Line], lines[request.Line+1:]...)
 	case "add_entry":
 		if !sectionLineValid || !validIniText(request.Key, false) || !validIniText(request.Value, true) {
 			return ConfigView{}, errors.New("invalid new entry")
 		}
-		insertAt := 0
-		if request.SectionLine >= 0 {
-			if _, ok := sectionName(lines[request.SectionLine]); !ok {
-				return ConfigView{}, errRevisionConflict
+		sectionIndex, section, found := findConfigSection(
+			view,
+			request.SectionLine,
+			request.SectionID,
+			request.Section,
+		)
+		if !found {
+			return ConfigView{}, errRevisionConflict
+		}
+		if !section.Enabled {
+			id, err := randomID()
+			if err != nil {
+				return ConfigView{}, err
 			}
-			insertAt = len(lines)
-			for i := request.SectionLine + 1; i < len(lines); i++ {
-				if _, ok := sectionName(lines[i]); ok {
-					insertAt = i
-					break
-				}
-			}
-		} else {
-			insertAt = len(lines)
-			for i := range lines {
-				if _, ok := sectionName(lines[i]); ok {
-					insertAt = i
-					break
-				}
-			}
+			store.Entries = append(store.Entries, disabledINIEntry{
+				ID:       id,
+				File:     request.File,
+				Section:  configSectionStorageName(section),
+				Position: len(section.Entries),
+				Key:      strings.TrimSpace(request.Key),
+				Value:    request.Value,
+			})
+			break
 		}
 		newLine := strings.TrimSpace(request.Key) + "=" + request.Value
-		lines = append(lines, "")
-		copy(lines[insertAt+1:], lines[insertAt:])
-		lines[insertAt] = newLine
+		if err := insertConfigEntry(
+			&document,
+			view,
+			sectionIndex,
+			len(section.Entries)-1,
+			newLine,
+		); err != nil {
+			return ConfigView{}, err
+		}
 	case "add_section":
 		if !validIniText(request.Section, false) ||
 			strings.ContainsAny(request.Section, "[]") {
 			return ConfigView{}, errors.New("invalid section name")
 		}
+		newName := strings.TrimSpace(request.Section)
+		for _, existing := range view.Sections {
+			if configSectionStorageName(existing) == newName {
+				return ConfigView{}, errors.New("section already exists")
+			}
+		}
 		if len(lines) > 0 && strings.TrimSpace(lines[len(lines)-1]) != "" {
 			lines = append(lines, "")
 		}
-		lines = append(lines, "["+strings.TrimSpace(request.Section)+"]")
+		lines = append(lines, "["+newName+"]")
+		document.lines = lines
 	case "rename_section":
-		if !lineValid || !validIniText(request.Section, false) ||
+		if !validIniText(request.Section, false) ||
 			strings.ContainsAny(request.Section, "[]") {
 			return ConfigView{}, errors.New("invalid section")
 		}
-		if _, ok := sectionName(lines[request.Line]); !ok {
+		_, existingSection, found := findConfigSection(
+			view,
+			request.Line,
+			request.SectionID,
+			"",
+		)
+		if !found || configSectionStorageName(existingSection) == "" {
 			return ConfigView{}, errRevisionConflict
 		}
-		lines[request.Line] = "[" + strings.TrimSpace(request.Section) + "]"
-	case "remove_section":
-		if !lineValid {
-			return ConfigView{}, errors.New("invalid section line")
-		}
-		if _, ok := sectionName(lines[request.Line]); !ok {
-			return ConfigView{}, errRevisionConflict
-		}
-		end := len(lines)
-		for i := request.Line + 1; i < len(lines); i++ {
-			if _, ok := sectionName(lines[i]); ok {
-				end = i
-				break
+		oldName := configSectionStorageName(existingSection)
+		newName := strings.TrimSpace(request.Section)
+		if newName != oldName {
+			for _, candidate := range view.Sections {
+				if configSectionStorageName(candidate) == newName {
+					return ConfigView{}, errors.New("section already exists")
+				}
 			}
 		}
-		lines = append(lines[:request.Line], lines[end:]...)
+		if existingSection.Line >= 0 {
+			if _, ok := sectionName(lines[existingSection.Line]); !ok {
+				return ConfigView{}, errRevisionConflict
+			}
+			lines[existingSection.Line] = "[" + newName + "]"
+		}
+		for index := range store.Sections {
+			if store.Sections[index].File == request.File &&
+				store.Sections[index].Name == oldName {
+				store.Sections[index].Name = newName
+			}
+		}
+		for index := range store.Entries {
+			if store.Entries[index].File == request.File &&
+				store.Entries[index].Section == oldName {
+				store.Entries[index].Section = newName
+			}
+		}
+	case "remove_section":
+		sectionIndex, existingSection, found := findConfigSection(
+			view,
+			request.Line,
+			request.SectionID,
+			request.Section,
+		)
+		if !found || configSectionStorageName(existingSection) == "" {
+			return ConfigView{}, errRevisionConflict
+		}
+		storageName := configSectionStorageName(existingSection)
+		if existingSection.Line >= 0 {
+			end := len(lines)
+			for i := existingSection.Line + 1; i < len(lines); i++ {
+				if _, ok := sectionName(lines[i]); ok {
+					end = i
+					break
+				}
+			}
+			lines = append(lines[:existingSection.Line], lines[end:]...)
+			document.lines = lines
+		}
+		filteredEntries := store.Entries[:0]
+		for _, entry := range store.Entries {
+			if entry.File != request.File || entry.Section != storageName {
+				filteredEntries = append(filteredEntries, entry)
+			}
+		}
+		store.Entries = filteredEntries
+		if stateIndex, _ := disabledINISectionByName(&store, request.File, storageName); stateIndex >= 0 {
+			removeDisabledINISectionAt(&store, stateIndex)
+		} else {
+			shiftDisabledINISectionPositions(
+				&store,
+				request.File,
+				configSectionPosition(view, sectionIndex)+1,
+				-1,
+			)
+		}
+	case "set_section_enabled":
+		if err := setConfigSectionEnabled(
+			request.File,
+			&document,
+			&store,
+			request.Line,
+			request.SectionID,
+			request.Section,
+			request.Enabled,
+		); err != nil {
+			return ConfigView{}, err
+		}
 	default:
 		return ConfigView{}, errors.New("unsupported mutation")
 	}
-	document.lines = lines
 	newData := document.bytes()
 
-	targetStaged := staged || serverRunning()
-	target := configPath(request.File, targetStaged)
-	if !targetStaged {
-		if err := backupConfig(request.File, data); err != nil {
-			return ConfigView{}, err
-		}
-	}
-	if err := writeFileAtomic(target, newData, 0600); err != nil {
+	targetStaged := staged || storeStaged || serverRunning()
+	if err := persistConfigState(
+		request.File,
+		data,
+		newData,
+		oldStore,
+		store,
+		targetStaged,
+	); err != nil {
 		return ConfigView{}, err
 	}
-	return makeConfigView(request.File, newData, targetStaged), nil
+	return makeConfigViewWithDisabled(request.File, newData, targetStaged, store), nil
 }
 
 func backupConfig(name string, data []byte) error {
 	stamp := time.Now().Format("2006-01-02_15-04-05.000000000")
 	path := filepath.Join(backupDir, name+"."+stamp+".bak")
+	return writeFileAtomic(path, data, 0600)
+}
+
+func backupDisabledINI(data []byte) error {
+	stamp := time.Now().Format("2006-01-02_15-04-05.000000000")
+	path := filepath.Join(backupDir, "disabled-ini-entries.json."+stamp+".bak")
 	return writeFileAtomic(path, data, 0600)
 }
 
@@ -392,8 +1020,12 @@ func (m *Manager) discardPending() error {
 		return err
 	}
 	defer releaseLifecycleLock(lock)
-	for _, name := range []string{"Game.ini", "Engine.ini"} {
-		err := os.Remove(configPath(name, true))
+	for _, path := range []string{
+		configPath("Game.ini", true),
+		configPath("Engine.ini", true),
+		pendingDisabledINIPath(),
+	} {
+		err := os.Remove(path)
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
@@ -471,6 +1103,27 @@ func iniEntryState(data []byte, section, key string) (value string, enabled, exi
 	return "", false, false
 }
 
+func iniEntryStateWithDisabled(
+	data []byte,
+	store disabledINIFile,
+	file string,
+	section string,
+	key string,
+) (value string, enabled, exists bool) {
+	value, enabled, exists = iniEntryState(data, section, key)
+	if exists {
+		return value, enabled, true
+	}
+	for _, entry := range store.Entries {
+		if entry.File == file &&
+			entry.Section == section &&
+			strings.EqualFold(entry.Key, key) {
+			return strings.TrimSpace(entry.Value), false, true
+		}
+	}
+	return "", false, false
+}
+
 func (m *Manager) ensureRCONConfig() error {
 	path := configPath("Game.ini", false)
 	data, err := os.ReadFile(path)
@@ -478,8 +1131,18 @@ func (m *Manager) ensureRCONConfig() error {
 		return fmt.Errorf("read generated Game.ini: %w", err)
 	}
 	document := parseIni(data)
+	store, err := loadDisabledINIFile(false)
+	if err != nil {
+		return err
+	}
 	const section = "/Script/Mordhau.MordhauGameSession"
-	password, passwordEnabled, passwordExists := iniEntryState(data, section, "RconPassword")
+	password, passwordEnabled, passwordExists := iniEntryStateWithDisabled(
+		data,
+		store,
+		"Game.ini",
+		section,
+		"RconPassword",
+	)
 	changed := false
 	if !passwordExists || (passwordEnabled && password == "") {
 		password, err = randomPassword()
@@ -489,7 +1152,13 @@ func (m *Manager) ensureRCONConfig() error {
 		setIniValue(&document, section, "RconPassword", password)
 		changed = true
 	}
-	port, portEnabled, portExists := iniEntryState(data, section, "RconPort")
+	port, portEnabled, portExists := iniEntryStateWithDisabled(
+		data,
+		store,
+		"Game.ini",
+		section,
+		"RconPort",
+	)
 	portNumber, parseErr := strconv.Atoi(port)
 	if !portExists || (portEnabled && (parseErr != nil || portNumber < 1 || portNumber > 65535)) {
 		setIniValue(&document, section, "RconPort", strconv.Itoa(defaultRCONPort))
@@ -505,8 +1174,12 @@ func (m *Manager) ensureRCONConfig() error {
 }
 
 func pendingConfigExists() bool {
-	for _, name := range []string{"Game.ini", "Engine.ini"} {
-		if _, err := os.Stat(configPath(name, true)); err == nil {
+	for _, path := range []string{
+		configPath("Game.ini", true),
+		configPath("Engine.ini", true),
+		pendingDisabledINIPath(),
+	} {
+		if _, err := os.Stat(path); err == nil {
 			return true
 		}
 	}

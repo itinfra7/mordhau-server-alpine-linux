@@ -280,22 +280,46 @@ function renderConfig() {
   for (const section of app.config.sections) {
     const card = document.createElement("section");
     card.className = "config-section";
+    card.classList.toggle("disabled", section.enabled === false);
     const head = document.createElement("div");
     head.className = "section-head";
     const sectionInput = document.createElement("input");
     sectionInput.value = section.name;
-    sectionInput.disabled = section.line < 0;
+    const globalSection = section.line < 0 && !section.id &&
+      section.name === "(entries before first section)";
+    sectionInput.disabled = globalSection;
     sectionInput.autocapitalize = "none";
     sectionInput.spellcheck = false;
     sectionInput.setAttribute("aria-label", "Section name");
     head.append(sectionInput);
-    if (section.line >= 0) {
+    if (!globalSection) {
       head.append(
         makeButton("Rename", "secondary compact", () =>
-          mutateConfig({ action: "rename_section", line: section.line, section: sectionInput.value })),
+          mutateConfig({
+            action: "rename_section",
+            line: section.line,
+            section_id: section.id || "",
+            section: sectionInput.value,
+          })),
+        makeButton(
+          section.enabled === false ? "Enable section" : "Disable section",
+          section.enabled === false ? "primary compact" : "ghost compact",
+          () => mutateConfig({
+            action: "set_section_enabled",
+            line: section.line,
+            section_id: section.id || "",
+            section: section.name,
+            enabled: section.enabled === false,
+          }),
+        ),
         makeButton("Remove", "danger compact", () => {
-          if (confirm(`Remove [${section.name}] and all lines in that section?`)) {
-            mutateConfig({ action: "remove_section", line: section.line });
+          if (confirm(`Remove [${section.name}] and all active or disabled items in that section?`)) {
+            mutateConfig({
+              action: "remove_section",
+              line: section.line,
+              section_id: section.id || "",
+              section: section.name,
+            });
           }
         }),
       );
@@ -325,14 +349,30 @@ function renderConfig() {
           mutateConfig({
             action: "set_entry_enabled",
             line: entry.line,
+            entry_id: entry.id || "",
             section: section.name,
             key: entry.key,
             enabled: !entry.enabled,
           })),
         makeButton("Save", "secondary compact", () =>
-          mutateConfig({ action: "set_entry", line: entry.line, key: key.value, value: value.value })),
+          mutateConfig({
+            action: "set_entry",
+            line: entry.line,
+            entry_id: entry.id || "",
+            section: section.name,
+            key: key.value,
+            value: value.value,
+          })),
         makeButton("Remove", "danger compact", () => {
-          if (confirm(`Remove ${entry.key}?`)) mutateConfig({ action: "remove_entry", line: entry.line });
+          if (confirm(`Remove ${entry.key}?`)) {
+            mutateConfig({
+              action: "remove_entry",
+              line: entry.line,
+              entry_id: entry.id || "",
+              section: section.name,
+              key: entry.key,
+            });
+          }
         }),
       );
       entries.append(row);
@@ -360,6 +400,8 @@ function renderConfig() {
       mutateConfig({
         action: "add_entry",
         section_line: section.line,
+        section_id: section.id || "",
+        section: section.name,
         key: newKey.value,
         value: newValue.value,
       });

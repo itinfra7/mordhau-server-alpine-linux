@@ -296,8 +296,11 @@ func configMutationAuditDetails(mutation ConfigMutation, staged bool) map[string
 		if mutation.Action == "set_entry_enabled" {
 			details["enabled"] = fmt.Sprintf("%t", mutation.Enabled)
 		}
-	case "add_section", "rename_section", "remove_section":
+	case "add_section", "rename_section", "remove_section", "set_section_enabled":
 		details["section"] = mutation.Section
+		if mutation.Action == "set_section_enabled" {
+			details["enabled"] = fmt.Sprintf("%t", mutation.Enabled)
+		}
 	}
 	return details
 }

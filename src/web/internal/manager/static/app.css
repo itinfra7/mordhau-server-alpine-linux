@@ -452,6 +452,13 @@ input:focus, select:focus { border-color: rgba(233, 79, 81, .65); box-shadow: 0 
   border-radius: 13px;
   background: var(--surface-soft);
 }
+.config-section.disabled {
+  border-color: rgba(243, 185, 95, .28);
+  background: rgba(243, 185, 95, .035);
+}
+.config-section.disabled .section-head {
+  background: rgba(243, 185, 95, .055);
+}
 .section-head { display: flex; align-items: center; gap: .45rem; padding: .65rem; border-bottom: 1px solid var(--line); background: var(--surface-soft); }
 .section-head input { flex: 1; color: var(--section-accent); font-family: ui-monospace, monospace; }
 .entry-list { display: grid; }

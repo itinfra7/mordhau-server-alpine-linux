@@ -16,7 +16,8 @@ The repository provides:
 - OpenRC service definitions for the game server and web manager
 - An animated responsive Go web manager with shared one-minute system metrics
   and persistent light/dark themes
-- Structured Game.ini and Engine.ini editing
+- Structured Game.ini and Engine.ini editing with persistent item and section
+  enable/disable state
 - Optional mod.io metadata, recursive dependency status, and dependency
   management for Game.ini
 - Persistent initial-map and dedicated-server port selection
@@ -77,11 +78,11 @@ MORDHAU Dedicated Server, and Steam update staging.
 ### Release archive
 
 ```sh
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v1.8.2/mordhau-server-alpine-linux-v1.8.2.tar.gz
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v1.8.2/SHA256SUMS
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v1.8.3/mordhau-server-alpine-linux-v1.8.3.tar.gz
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v1.8.3/SHA256SUMS
 sha256sum -c SHA256SUMS
-tar -xzf mordhau-server-alpine-linux-v1.8.2.tar.gz
-cd mordhau-server-alpine-linux-v1.8.2
+tar -xzf mordhau-server-alpine-linux-v1.8.3.tar.gz
+cd mordhau-server-alpine-linux-v1.8.3
 chmod +x src/mordhau-server-alpine-linux.sh
 ./src/mordhau-server-alpine-linux.sh
 ```
@@ -213,7 +214,7 @@ The web manager provides:
 - Server-wide cached mod metadata auto-refresh from 1 to 10,080 minutes,
   defaulting to 60 minutes
 - Game.ini and Engine.ini section/item creation, editing, and removal
-- Reversible per-entry enable and disable controls
+- Reversible per-item and whole-section enable and disable controls
 - Revision checks, active-file backups, and staged edits while the game is
   running
 - RCON authentication, acknowledged `listen allon` subscription, reconnection
@@ -444,23 +445,39 @@ The web manager edits the server-generated files:
 ```
 
 The editor preserves duplicate keys, ordering, comments, and unrelated lines.
+Disabled items and disabled-section state are stored independently in the
+root-only file `/root/mordhau/.manager/disabled-ini-entries.json`. Disabled
+items are omitted from the game-owned INI file, so a MORDHAU or Unreal Engine
+configuration rewrite cannot discard the manager's reversible state.
+Re-enabling an item restores its original `Key=Value` line at its logical
+position. Disabling a section moves every active item in that section into the
+persistent state; enabling the section restores all of them together. A
+disabled section remains recoverable even if the game removes its empty
+section header.
+
 Edits made while the server is running are written to
-`/root/mordhau/.manager/pending` and applied by the next managed start or
-restart. Direct edits made while stopped are backed up under
-`/root/mordhau/.manager/backups`.
+`/root/mordhau/.manager/pending`, including a staged copy of the disabled-item
+state, and applied together by the next managed start or restart. Discarding
+staged configuration removes both parts. Direct edits made while stopped are
+backed up under `/root/mordhau/.manager/backups`.
 
-Disabling an entry retains its key, value, order, and editability while
-serializing it as:
+Upgrades automatically migrate legacy
+`; MORDHAU_MANAGER_DISABLED: Key=Value` markers into persistent state while
+leaving ordinary user-authored comments untouched. A backup containing legacy
+markers can be selectively recovered while no staged configuration exists:
 
-```text
-; MORDHAU_MANAGER_DISABLED: Key=Value
+```sh
+rc-service mordhau-web stop
+/root/mordhau/bin/mordhau-web \
+  --recover-disabled-from /root/mordhau/.manager/backups/Game.ini.example.bak \
+  --recover-file Game.ini \
+  --recover-section '/Script/Mordhau.MordhauGameMode' \
+  --recover-key MapRotation
+rc-service mordhau-web start
 ```
 
-MORDHAU ignores that comment at the next start. Re-enabling the entry removes
-the marker and restores the original `Key=Value` line. Ordinary user-authored
-comments are not interpreted as disabled entries. Disabling `RconPassword`
-intentionally makes the web RCON stream unavailable after the next server
-start until the entry is enabled again.
+Disabling `RconPassword` intentionally makes the web RCON stream unavailable
+after the next server start until the item is enabled again.
 
 The generated files remain the source of truth for the installed MORDHAU
 version. The repository does not install a static gameplay-configuration
@@ -562,9 +579,10 @@ Changing a boot mode does not change the current process state.
 
 - The web manager runs as root because it controls Wine processes, OpenRC, and
   root-owned configuration files.
-- State files, sessions, generated credentials, the last working RCON
-  reconnect credential, pending configuration, lifecycle results, the RCON
-  event log, and the web audit log use root-only permissions.
+- State files, disabled INI items and sections, sessions, generated
+  credentials, the last working RCON reconnect credential, pending
+  configuration, lifecycle results, the RCON event log, and the web audit log
+  use root-only permissions.
 - Session tokens are stored as SHA-256 digests.
 - Login attempts are rate-limited.
 - CSRF tokens and same-site HTTP-only cookies protect authenticated changes.
@@ -636,8 +654,10 @@ range/CIDR precedence, resolved-client emergency access, default-empty trusted
 proxy configuration, direct-header spoofing resistance, strict single-value
 forwarded IPv4/IPv6 parsing, proxy-aware access control, audit and login-limit
 attribution, network-rule comment normalization and backward-compatible JSON,
-audit-log permissions and secret exclusion, enabled/disabled INI entry round
-trips, RCON credential fallback order, idle keepalive framing, zero-byte
+audit-log permissions and secret exclusion, persistent item and whole-section
+INI disable/enable round trips, duplicate ordering, virtual-section recovery,
+legacy-marker migration, RCON credential fallback order, idle keepalive
+framing, zero-byte
 versus partial-packet timeout handling, transport-status filtering, packet
 framing, Korean legacy decoding, current all-broadcast subscription syntax
 and response filtering, UTF-8 chat log parsing, partial writes, log rotation,

@@ -9,6 +9,8 @@ STATE_DIR="$ROOT/.manager"
 RUNTIME_DIR="$STATE_DIR/runtime"
 PENDING_DIR="$STATE_DIR/pending"
 BACKUP_DIR="$STATE_DIR/backups"
+DISABLED_INI_STATE="$STATE_DIR/disabled-ini-entries.json"
+PENDING_DISABLED_INI_STATE="$PENDING_DIR/disabled-ini-entries.json"
 CONFIG_DIR="$ROOT/Mordhau/Saved/Config/WindowsServer"
 GAME_LOG="$ROOT/Mordhau/Saved/Logs/Mordhau.log"
 ARCHIVE_DIR="$ROOT/log"
@@ -257,8 +259,17 @@ apply_pending_config() {
             applied=1
         fi
     done
+    if [ -f "$PENDING_DISABLED_INI_STATE" ]; then
+        if [ -f "$DISABLED_INI_STATE" ]; then
+            cp -p "$DISABLED_INI_STATE" \
+                "$BACKUP_DIR/disabled-ini-entries.json.${stamp}.bak"
+        fi
+        chmod 600 "$PENDING_DISABLED_INI_STATE"
+        mv "$PENDING_DISABLED_INI_STATE" "$DISABLED_INI_STATE"
+        applied=1
+    fi
     if [ "$applied" -eq 1 ]; then
-        printf '%s\n' 'Applied staged Game.ini/Engine.ini changes.'
+        printf '%s\n' 'Applied staged INI configuration and disabled-item state.'
     fi
 }
 

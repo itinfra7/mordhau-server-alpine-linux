@@ -1,9 +1,11 @@
-# MORDHAU Server Alpine Linux v1.8.2
+# MORDHAU Server Alpine Linux v1.8.3
 
-This release provides a consolidated source tree, one-minute shared OS resource
-sampling, and strict trusted reverse-proxy client-IP resolution while
-preserving direct HTTP access, network-rule comments, responsive layouts,
-persistent dashboard state, and RCON idle keepalives.
+This release adds durable item- and section-level enable/disable state for
+Game.ini and Engine.ini, including staged changes and recovery after game-owned
+configuration rewrites. It retains the consolidated source tree, shared
+one-minute OS resource sampling, strict trusted reverse-proxy client-IP
+resolution, direct HTTP access, responsive layouts, persistent dashboard state,
+and RCON idle keepalives.
 
 ## Included
 
@@ -31,8 +33,13 @@ persistent dashboard state, and RCON idle keepalives.
 - Persistent latest lifecycle action, requester account, canonical client IP,
   result, timestamps, and command output
 - Game.ini and Engine.ini structured editing with running-server staging
-- Reversible per-entry enable/disable controls that preserve keys, values,
-  ordering, and ordinary comments
+- Persistent root-only disabled item and section state independent of
+  game-owned INI comments
+- Reversible per-item and whole-section enable/disable controls that preserve
+  keys, values, duplicate-key ordering, and ordinary comments
+- Section-wide state transitions that disable or restore every contained item
+  together
+- Active and staged disabled-state backups with selective legacy-backup import
 - Persistent launch-language and initial-map selection
 - Korean CP949, Russian CP1251, Simplified Chinese CP936, and Traditional
   Chinese CP950 RCON decoding paths

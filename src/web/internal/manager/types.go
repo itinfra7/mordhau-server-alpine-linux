@@ -17,6 +17,7 @@ const (
 	languagePath       = stateDir + "/language"
 	rconStatePath      = stateDir + "/rcon-last.json"
 	operationStatePath = stateDir + "/operation.json"
+	disabledINIPath    = stateDir + "/disabled-ini-entries.json"
 	webAuditLogPath    = logDir + "/mordhau-web.log"
 	rconEventLogPath   = logDir + "/mordhau-rcon.log"
 	defaultAccount     = rootDir + "/default_web_account.txt"
@@ -144,4 +145,26 @@ type PublicAccount struct {
 	Username  string    `json:"username"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type disabledINIEntry struct {
+	ID       string `json:"id"`
+	File     string `json:"file"`
+	Section  string `json:"section"`
+	Position int    `json:"position"`
+	Key      string `json:"key"`
+	Value    string `json:"value"`
+}
+
+type disabledINIFile struct {
+	Version  int                  `json:"version"`
+	Sections []disabledINISection `json:"sections"`
+	Entries  []disabledINIEntry   `json:"entries"`
+}
+
+type disabledINISection struct {
+	ID       string `json:"id"`
+	File     string `json:"file"`
+	Name     string `json:"name"`
+	Position int    `json:"position"`
 }

@@ -556,38 +556,46 @@ func findSectionBoundsFold(lines []string, wanted string) (start, end int, found
 }
 
 func configuredModsFromData(data []byte) ([]ConfiguredMod, int) {
-	document := parseIni(data)
-	start, end, found := findSectionBoundsFold(document.lines, modIOGameSessionSection)
-	if !found {
-		return []ConfiguredMod{}, 0
-	}
+	return configuredModsFromState(data, newDisabledINIFile())
+}
+
+func configuredModsFromState(
+	data []byte,
+	store disabledINIFile,
+) ([]ConfiguredMod, int) {
+	view := makeConfigViewWithDisabled("Game.ini", data, false, store)
 	result := make([]ConfiguredMod, 0)
 	indexByID := make(map[int]int)
 	invalid := 0
-	for line := start + 1; line < end; line++ {
-		key, value, enabled, ok := configEntryParts(document.lines[line])
-		if !ok || !strings.EqualFold(key, "Mods") {
+	for _, section := range view.Sections {
+		if !strings.EqualFold(section.Name, modIOGameSessionSection) {
 			continue
 		}
-		parsed, err := strconv.ParseInt(strings.TrimSpace(value), 10, 32)
-		if err != nil || parsed < 1 {
-			invalid++
-			continue
+		for _, entry := range section.Entries {
+			if !strings.EqualFold(entry.Key, "Mods") {
+				continue
+			}
+			parsed, err := strconv.ParseInt(strings.TrimSpace(entry.Value), 10, 32)
+			if err != nil || parsed < 1 {
+				invalid++
+				continue
+			}
+			id := int(parsed)
+			if index, exists := indexByID[id]; exists {
+				result[index].Occurrences++
+				result[index].Enabled = result[index].Enabled || entry.Enabled
+				continue
+			}
+			indexByID[id] = len(result)
+			result = append(result, ConfiguredMod{
+				ID:                     id,
+				Enabled:                entry.Enabled,
+				Occurrences:            1,
+				Dependencies:           []ModIOItem{},
+				UnresolvedDependencies: []int{},
+			})
 		}
-		id := int(parsed)
-		if index, exists := indexByID[id]; exists {
-			result[index].Occurrences++
-			result[index].Enabled = result[index].Enabled || enabled
-			continue
-		}
-		indexByID[id] = len(result)
-		result = append(result, ConfiguredMod{
-			ID:                     id,
-			Enabled:                enabled,
-			Occurrences:            1,
-			Dependencies:           []ModIOItem{},
-			UnresolvedDependencies: []int{},
-		})
+		break
 	}
 	return result, invalid
 }
@@ -709,11 +717,23 @@ func markUnresolvedModDependencies(configured []ConfiguredMod) {
 }
 
 func (m *Manager) modManagementView() (ModManagementView, error) {
+	m.configMu.Lock()
 	data, staged, err := readConfig("Game.ini")
+	if err != nil {
+		m.configMu.Unlock()
+		return ModManagementView{}, err
+	}
+	storeStaged, err := disabledINIStateStaged(staged)
+	if err != nil {
+		m.configMu.Unlock()
+		return ModManagementView{}, err
+	}
+	store, err := loadDisabledINIFile(storeStaged)
+	m.configMu.Unlock()
 	if err != nil {
 		return ModManagementView{}, err
 	}
-	configured, invalid := configuredModsFromData(data)
+	configured, invalid := configuredModsFromState(data, store)
 	settings, err := m.modIOSettings()
 	if err != nil {
 		return ModManagementView{}, err
@@ -754,115 +774,182 @@ func insertConfigLine(lines []string, index int, line string) []string {
 	return lines
 }
 
-func addModsToDocument(document *iniDocument, ids []int) (ModConfigChange, error) {
-	change := ModConfigChange{Added: []int{}, Reenabled: []int{}}
-	if _, _, found := findSectionBoundsFold(document.lines, modIOGameSessionSection); !found {
-		if len(document.lines) > 0 && strings.TrimSpace(document.lines[len(document.lines)-1]) != "" {
-			document.lines = append(document.lines, "")
-		}
-		document.lines = append(document.lines, "["+modIOGameSessionSection+"]")
-		change.Changed = true
-	}
-
-	for _, id := range ids {
-		start, end, _ := findSectionBoundsFold(document.lines, modIOGameSessionSection)
-		activeFound := false
-		disabledLine := -1
-		for line := start + 1; line < end; line++ {
-			key, value, enabled, ok := configEntryParts(document.lines[line])
-			if !ok || !strings.EqualFold(key, "Mods") {
-				continue
-			}
-			existingID, err := strconv.ParseInt(strings.TrimSpace(value), 10, 32)
-			if err != nil || int(existingID) != id {
-				continue
-			}
-			if enabled {
-				activeFound = true
-				break
-			}
-			if disabledLine < 0 {
-				disabledLine = line
-			}
-		}
-		if activeFound {
+func modOccurrences(
+	document *iniDocument,
+	store disabledINIFile,
+	id int,
+) (sectionIndex int, activeLines []int, disabledIDs []string, found bool) {
+	view := makeConfigViewWithDisabled("Game.ini", document.bytes(), false, store)
+	sectionIndex = -1
+	for index, section := range view.Sections {
+		if !strings.EqualFold(section.Name, modIOGameSessionSection) {
 			continue
 		}
-		if disabledLine >= 0 {
-			document.lines[disabledLine] = "Mods=" + strconv.Itoa(id)
+		sectionIndex = index
+		for _, entry := range section.Entries {
+			if !strings.EqualFold(entry.Key, "Mods") {
+				continue
+			}
+			parsed, err := strconv.ParseInt(strings.TrimSpace(entry.Value), 10, 32)
+			if err != nil || int(parsed) != id {
+				continue
+			}
+			found = true
+			if entry.Enabled && entry.Line >= 0 {
+				activeLines = append(activeLines, entry.Line)
+			} else if entry.ID != "" {
+				disabledIDs = append(disabledIDs, entry.ID)
+			}
+		}
+		break
+	}
+	return sectionIndex, activeLines, disabledIDs, found
+}
+
+func ensureModSection(document *iniDocument) {
+	if _, _, found := findSectionBoundsFold(document.lines, modIOGameSessionSection); found {
+		return
+	}
+	if len(document.lines) > 0 && strings.TrimSpace(document.lines[len(document.lines)-1]) != "" {
+		document.lines = append(document.lines, "")
+	}
+	document.lines = append(document.lines, "["+modIOGameSessionSection+"]")
+}
+
+func addModsToConfigState(
+	document *iniDocument,
+	store *disabledINIFile,
+	ids []int,
+) (ModConfigChange, error) {
+	change := ModConfigChange{Added: []int{}, Reenabled: []int{}}
+	ensureModSection(document)
+	for _, id := range ids {
+		sectionIndex, activeLines, disabledIDs, _ := modOccurrences(document, *store, id)
+		if len(activeLines) > 0 {
+			continue
+		}
+		if len(disabledIDs) > 0 {
+			if err := enableConfigEntry("Game.ini", document, store, disabledIDs[0]); err != nil {
+				return ModConfigChange{}, err
+			}
 			change.Changed = true
 			change.Reenabled = append(change.Reenabled, id)
 			continue
 		}
-		_, end, _ = findSectionBoundsFold(document.lines, modIOGameSessionSection)
-		document.lines = insertConfigLine(document.lines, end, "Mods="+strconv.Itoa(id))
+		view := makeConfigViewWithDisabled("Game.ini", document.bytes(), false, *store)
+		if sectionIndex < 0 || sectionIndex >= len(view.Sections) ||
+			!strings.EqualFold(view.Sections[sectionIndex].Name, modIOGameSessionSection) {
+			for index, section := range view.Sections {
+				if strings.EqualFold(section.Name, modIOGameSessionSection) {
+					sectionIndex = index
+					break
+				}
+			}
+		}
+		if sectionIndex < 0 || sectionIndex >= len(view.Sections) {
+			return ModConfigChange{}, errors.New("MORDHAU game session section was not found")
+		}
+		section := view.Sections[sectionIndex]
+		if !section.Enabled {
+			stateIndex, _ := disabledINISectionByName(
+				store,
+				"Game.ini",
+				configSectionStorageName(section),
+			)
+			if stateIndex < 0 {
+				return ModConfigChange{}, errRevisionConflict
+			}
+			takeDisabledINISectionAt(store, stateIndex)
+			view = makeConfigViewWithDisabled(
+				"Game.ini",
+				document.bytes(),
+				false,
+				*store,
+			)
+			for index, candidate := range view.Sections {
+				if strings.EqualFold(candidate.Name, modIOGameSessionSection) {
+					sectionIndex = index
+					section = candidate
+					break
+				}
+			}
+		}
+		if err := insertConfigEntry(
+			document,
+			view,
+			sectionIndex,
+			len(section.Entries)-1,
+			"Mods="+strconv.Itoa(id),
+		); err != nil {
+			return ModConfigChange{}, err
+		}
 		change.Changed = true
 		change.Added = append(change.Added, id)
 	}
 	return change, nil
 }
 
-func setModEnabledInDocument(document *iniDocument, id int, enabled bool) (ModConfigChange, error) {
-	start, end, found := findSectionBoundsFold(document.lines, modIOGameSessionSection)
+func setModEnabledInConfigState(
+	document *iniDocument,
+	store *disabledINIFile,
+	id int,
+	enabled bool,
+) (ModConfigChange, error) {
+	_, activeLines, disabledIDs, found := modOccurrences(document, *store, id)
 	if !found {
-		return ModConfigChange{}, errors.New("MORDHAU game session section was not found")
+		return ModConfigChange{}, errors.New("mod Resource ID is not configured")
 	}
-	matched := false
 	changed := false
-	for line := start + 1; line < end; line++ {
-		key, value, currentEnabled, ok := configEntryParts(document.lines[line])
-		if !ok || !strings.EqualFold(key, "Mods") {
-			continue
-		}
-		existingID, err := strconv.ParseInt(strings.TrimSpace(value), 10, 32)
-		if err != nil || int(existingID) != id {
-			continue
-		}
-		matched = true
-		if currentEnabled != enabled {
-			document.lines[line] = formatConfigEntry("Mods", strconv.Itoa(id), enabled)
+	if enabled {
+		for _, entryID := range disabledIDs {
+			if err := enableConfigEntry("Game.ini", document, store, entryID); err != nil {
+				return ModConfigChange{}, err
+			}
 			changed = true
 		}
-	}
-	if !matched {
-		return ModConfigChange{}, errors.New("mod Resource ID is not configured")
+	} else {
+		sort.Ints(activeLines)
+		for index := len(activeLines) - 1; index >= 0; index-- {
+			if err := disableConfigEntry("Game.ini", document, store, activeLines[index]); err != nil {
+				return ModConfigChange{}, err
+			}
+			changed = true
+		}
 	}
 	return ModConfigChange{Changed: changed}, nil
 }
 
-func removeModFromDocument(document *iniDocument, id int) (ModConfigChange, error) {
-	start, end, found := findSectionBoundsFold(document.lines, modIOGameSessionSection)
+func removeModFromConfigState(
+	document *iniDocument,
+	store *disabledINIFile,
+	id int,
+) (ModConfigChange, error) {
+	_, activeLines, disabledIDs, found := modOccurrences(document, *store, id)
 	if !found {
-		return ModConfigChange{}, errors.New("MORDHAU game session section was not found")
-	}
-	kept := make([]string, 0, len(document.lines))
-	removed := false
-	for line, text := range document.lines {
-		if line <= start || line >= end {
-			kept = append(kept, text)
-			continue
-		}
-		key, value, _, ok := configEntryParts(text)
-		if !ok || !strings.EqualFold(key, "Mods") {
-			kept = append(kept, text)
-			continue
-		}
-		existingID, err := strconv.ParseInt(strings.TrimSpace(value), 10, 32)
-		if err != nil || int(existingID) != id {
-			kept = append(kept, text)
-			continue
-		}
-		removed = true
-	}
-	if !removed {
 		return ModConfigChange{}, errors.New("mod Resource ID is not configured")
 	}
-	document.lines = kept
+	sort.Ints(activeLines)
+	for index := len(activeLines) - 1; index >= 0; index-- {
+		if err := removeConfigEntry(
+			"Game.ini",
+			document,
+			store,
+			activeLines[index],
+			"",
+		); err != nil {
+			return ModConfigChange{}, err
+		}
+	}
+	for _, entryID := range disabledIDs {
+		if err := removeConfigEntry("Game.ini", document, store, -1, entryID); err != nil {
+			return ModConfigChange{}, err
+		}
+	}
 	return ModConfigChange{Changed: true}, nil
 }
 
 func (m *Manager) mutateModConfig(
-	mutation func(document *iniDocument) (ModConfigChange, error),
+	mutation func(document *iniDocument, store *disabledINIFile) (ModConfigChange, error),
 ) (ModConfigChange, error) {
 	m.configMu.Lock()
 	defer m.configMu.Unlock()
@@ -877,22 +964,33 @@ func (m *Manager) mutateModConfig(
 	if err != nil {
 		return ModConfigChange{}, err
 	}
-	document := parseIni(data)
-	change, err := mutation(&document)
+	storeStaged, err := disabledINIStateStaged(staged)
 	if err != nil {
 		return ModConfigChange{}, err
 	}
-	targetStaged := staged || serverRunning()
+	store, err := loadDisabledINIFile(storeStaged)
+	if err != nil {
+		return ModConfigChange{}, err
+	}
+	oldStore := cloneDisabledINIFile(store)
+	document := parseIni(data)
+	change, err := mutation(&document, &store)
+	if err != nil {
+		return ModConfigChange{}, err
+	}
+	targetStaged := staged || storeStaged || serverRunning()
 	change.Staged = targetStaged
 	if !change.Changed {
 		return change, nil
 	}
-	if !targetStaged {
-		if err := backupConfig("Game.ini", data); err != nil {
-			return ModConfigChange{}, err
-		}
-	}
-	if err := writeFileAtomic(configPath("Game.ini", targetStaged), document.bytes(), 0600); err != nil {
+	if err := persistConfigState(
+		"Game.ini",
+		data,
+		document.bytes(),
+		oldStore,
+		store,
+		targetStaged,
+	); err != nil {
 		return ModConfigChange{}, err
 	}
 	return change, nil
@@ -912,8 +1010,11 @@ func (m *Manager) addConfiguredMods(ids []int) (ModConfigChange, error) {
 		return ModConfigChange{}, errors.New("no valid mod Resource IDs were supplied")
 	}
 
-	return m.mutateModConfig(func(document *iniDocument) (ModConfigChange, error) {
-		return addModsToDocument(document, unique)
+	return m.mutateModConfig(func(
+		document *iniDocument,
+		store *disabledINIFile,
+	) (ModConfigChange, error) {
+		return addModsToConfigState(document, store, unique)
 	})
 }
 
@@ -921,8 +1022,11 @@ func (m *Manager) setConfiguredModEnabled(id int, enabled bool) (ModConfigChange
 	if id < 1 {
 		return ModConfigChange{}, errors.New("invalid mod Resource ID")
 	}
-	return m.mutateModConfig(func(document *iniDocument) (ModConfigChange, error) {
-		return setModEnabledInDocument(document, id, enabled)
+	return m.mutateModConfig(func(
+		document *iniDocument,
+		store *disabledINIFile,
+	) (ModConfigChange, error) {
+		return setModEnabledInConfigState(document, store, id, enabled)
 	})
 }
 
@@ -930,7 +1034,10 @@ func (m *Manager) removeConfiguredMod(id int) (ModConfigChange, error) {
 	if id < 1 {
 		return ModConfigChange{}, errors.New("invalid mod Resource ID")
 	}
-	return m.mutateModConfig(func(document *iniDocument) (ModConfigChange, error) {
-		return removeModFromDocument(document, id)
+	return m.mutateModConfig(func(
+		document *iniDocument,
+		store *disabledINIFile,
+	) (ModConfigChange, error) {
+		return removeModFromConfigState(document, store, id)
 	})
 }

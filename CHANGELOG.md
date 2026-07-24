@@ -2,6 +2,33 @@
 
 All notable changes to this repository are documented in this file.
 
+## [Unreleased]
+
+## [1.8.3] - 2026-07-24
+
+### Added
+
+- Add persistent, root-only disabled INI item and section state independent of
+  game-owned Game.ini and Engine.ini files.
+- Add whole-section disable and enable controls that move every item together,
+  retain duplicate-key order, and restore sections removed by game rewrites.
+- Add selective import of matching legacy disabled entries from an INI backup.
+- Add active and staged state backups, revision coverage, and tests for item,
+  section, virtual-section, duplicate-key, legacy-migration, and mod workflows.
+
+### Changed
+
+- Stage and apply disabled-item state together with running-server Game.ini and
+  Engine.ini edits.
+- Use the same persistent disabled-item model for structured INI editing and
+  mod.io `Mods=` management.
+
+### Fixed
+
+- Prevent MORDHAU or Unreal Engine configuration serialization from erasing
+  reversibly disabled entries that were previously represented only as INI
+  comments.
+
 ## [1.8.2] - 2026-07-24
 
 ### Changed

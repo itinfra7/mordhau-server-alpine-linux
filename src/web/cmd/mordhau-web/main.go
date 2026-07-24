@@ -45,6 +45,26 @@ func main() {
 	var trustedProxies trustedProxyFlags
 	listen := flag.String("listen", "0.0.0.0:8080", "HTTP listen address")
 	initOnly := flag.Bool("init", false, "initialize persistent state and exit")
+	recoverDisabledFrom := flag.String(
+		"recover-disabled-from",
+		"",
+		"import matching legacy disabled entries from an INI backup and exit",
+	)
+	recoverFile := flag.String(
+		"recover-file",
+		"Game.ini",
+		"configuration file used with --recover-disabled-from",
+	)
+	recoverSection := flag.String(
+		"recover-section",
+		"",
+		"exact INI section used with --recover-disabled-from",
+	)
+	recoverKey := flag.String(
+		"recover-key",
+		"",
+		"INI key used with --recover-disabled-from",
+	)
 	flag.Var(
 		&trustedProxies,
 		"trusted-proxy",
@@ -55,6 +75,22 @@ func main() {
 	app, err := manager.New(trustedProxies...)
 	if err != nil {
 		log.Fatalf("initialize manager: %v", err)
+	}
+	if *recoverDisabledFrom != "" {
+		if *recoverSection == "" || *recoverKey == "" {
+			log.Fatal("--recover-section and --recover-key are required for recovery")
+		}
+		count, err := app.RecoverDisabledEntriesFromBackup(
+			*recoverDisabledFrom,
+			*recoverFile,
+			*recoverSection,
+			*recoverKey,
+		)
+		if err != nil {
+			log.Fatalf("recover disabled entries: %v", err)
+		}
+		fmt.Printf("Recovered %d disabled INI entries.\n", count)
+		return
 	}
 	if *initOnly {
 		fmt.Println("MORDHAU manager state initialized.")

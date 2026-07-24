@@ -5,9 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="light dark">
   <title>MORDHAU Control</title>
-  <script src="/static/theme.js?v=1.8.2"></script>
-  <link rel="stylesheet" href="/static/app.css?v=1.8.2">
-  <script src="/static/app.js?v=1.8.2" defer></script>
+  <script src="/static/theme.js?v=1.8.3"></script>
+  <link rel="stylesheet" href="/static/app.css?v=1.8.3">
+  <script src="/static/app.js?v=1.8.3" defer></script>
 </head>
 <body>
   <div class="ambient ambient-one"></div>
@@ -218,7 +218,7 @@
             <button id="discard-config" class="ghost compact">Discard staged changes</button>
           </div>
         </div>
-        <p class="hint">Duplicate keys, order, comments, and unrelated lines are retained. Disabled entries remain editable but are ignored at the next server start. Each mutation is revision-checked and active-file edits are backed up.</p>
+        <p class="hint">Duplicate keys, order, comments, and unrelated lines are retained. Disabled items remain editable in persistent manager state and are ignored at the next server start. Disabling a section disables every item in it; enabling the section restores them together. Each mutation is revision-checked and active-file edits are backed up.</p>
         <form id="add-section-form" class="inline-form">
           <input id="new-section-name" placeholder="New section name" required
                  autocapitalize="none" spellcheck="false">
