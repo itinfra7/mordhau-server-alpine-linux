@@ -13,6 +13,28 @@ const app = {
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
+const themeStorageKey = "mordhau-control-theme";
+
+function setTheme(theme, persist = true) {
+  const dark = theme === "dark";
+  document.documentElement.dataset.theme = dark ? "dark" : "light";
+  const toggle = $("#theme-toggle");
+  if (toggle) {
+    toggle.setAttribute("aria-pressed", String(dark));
+    toggle.setAttribute("aria-label", dark ? "Switch to light mode" : "Switch to dark mode");
+    $("#theme-toggle-icon").textContent = dark ? "☀" : "☾";
+    $("#theme-toggle-label").textContent = dark ? "Light mode" : "Dark mode";
+  }
+  if (persist) {
+    try {
+      localStorage.setItem(themeStorageKey, dark ? "dark" : "light");
+    } catch (_) {}
+  }
+}
+
+function initializeTheme() {
+  setTheme(document.documentElement.dataset.theme === "dark" ? "dark" : "light", false);
+}
 
 async function api(path, options = {}) {
   const settings = { ...options, headers: { ...(options.headers || {}) } };
@@ -163,7 +185,7 @@ async function sendUnicodeMessage(event) {
     });
     input.value = "";
     input.focus();
-    toast("Unicode server message sent.");
+    toast("Message sent.");
   } catch (error) {
     toast(error.message, true);
   } finally {
@@ -330,6 +352,102 @@ function renderModIOSettings(settings) {
   $("#modio-clear").disabled = !configured;
 }
 
+function appendConfiguredModDependencies(details, configured, configuredByID) {
+  const section = document.createElement("div");
+  section.className = "mod-dependencies";
+
+  const dependencies = Array.isArray(configured.dependencies)
+    ? configured.dependencies
+    : [];
+  const unresolved = new Set(
+    Array.isArray(configured.unresolved_dependencies)
+      ? configured.unresolved_dependencies
+      : [],
+  );
+  const heading = document.createElement("strong");
+  heading.className = "mod-dependencies-heading";
+  heading.textContent = configured.dependencies_checked
+    ? `Dependencies (${dependencies.length})`
+    : "Dependencies";
+  section.append(heading);
+
+  if (!configured.metadata) {
+    const note = document.createElement("p");
+    note.className = "mod-dependency-note";
+    note.textContent = "Unavailable — mod.io metadata was not returned for this Resource ID.";
+    section.append(note);
+    details.append(section);
+    return;
+  }
+
+  if (configured.dependency_error) {
+    const warning = document.createElement("p");
+    warning.className = configured.enabled
+      ? "mod-dependency-warning"
+      : "mod-dependency-note";
+    warning.textContent = `Dependency check failed: ${configured.dependency_error}`;
+    section.append(warning);
+    details.append(section);
+    return;
+  }
+
+  if (!configured.dependencies_checked) {
+    const note = document.createElement("p");
+    note.className = "mod-dependency-note";
+    note.textContent = "Unavailable — configure a valid mod.io API key to inspect dependencies.";
+    section.append(note);
+    details.append(section);
+    return;
+  }
+
+  if (!dependencies.length) {
+    const note = document.createElement("p");
+    note.className = "mod-dependency-note";
+    note.textContent = "None reported by mod.io.";
+    section.append(note);
+    details.append(section);
+    return;
+  }
+
+  if (configured.enabled && unresolved.size) {
+    const warning = document.createElement("p");
+    warning.className = "mod-dependency-warning";
+    const ids = [...unresolved].map((id) => `Mods=${id}`).join(", ");
+    warning.textContent = `Warning: ${unresolved.size} required dependenc${unresolved.size === 1 ? "y is" : "ies are"} not enabled: ${ids}`;
+    section.append(warning);
+  }
+
+  const list = document.createElement("ul");
+  list.className = "dependency-list configured-dependency-list";
+  for (const dependency of dependencies) {
+    const item = document.createElement("li");
+    const configuredDependency = configuredByID.get(dependency.id);
+    const enabled = Boolean(configuredDependency && configuredDependency.enabled);
+    const shouldWarn = configured.enabled && unresolved.has(dependency.id);
+    item.classList.toggle("unresolved", shouldWarn);
+
+    const identity = document.createElement("span");
+    identity.className = "dependency-identity";
+    const name = document.createElement("span");
+    name.textContent = modDisplayName(dependency);
+    const id = document.createElement("code");
+    id.textContent = `Mods=${dependency.id}`;
+    identity.append(name, id);
+
+    const status = document.createElement("span");
+    status.className = `dependency-status${enabled ? " resolved" : shouldWarn ? " unresolved" : ""}`;
+    status.textContent = enabled
+      ? "enabled"
+      : configuredDependency
+        ? "disabled"
+        : "not configured";
+    item.append(identity, status);
+    list.append(item);
+  }
+  section.append(list);
+  details.append(section);
+}
+
 function renderConfiguredMods(data) {
   renderModIOSettings(data.settings || {});
   const stage = $("#mods-config-stage");
@@ -351,6 +469,7 @@ function renderConfiguredMods(data) {
   const list = $("#configured-mods");
   list.replaceChildren();
   const mods = Array.isArray(data.mods) ? data.mods : [];
+  const configuredByID = new Map(mods.map((item) => [item.id, item]));
   if (!mods.length) {
     const empty = document.createElement("p");
     empty.className = "hint";
@@ -397,6 +516,7 @@ function renderConfiguredMods(data) {
     fields.push(configured.enabled ? "enabled" : "disabled");
     meta.textContent = fields.join(" · ");
     details.append(meta);
+    appendConfiguredModDependencies(details, configured, configuredByID);
 
     const link = document.createElement("a");
     link.className = "secondary-link";
@@ -664,6 +784,9 @@ function renderAccessRules(rules) {
 }
 
 function bindEvents() {
+  $("#theme-toggle").addEventListener("click", () => {
+    setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
+  });
   $$(".tab").forEach((tab) => tab.addEventListener("click", () => {
     $$(".tab").forEach((item) => item.classList.toggle("active", item === tab));
     $$(".panel").forEach((panel) => panel.classList.toggle("active", panel.id === `panel-${tab.dataset.panel}`));
@@ -866,6 +989,7 @@ function bindEvents() {
 }
 
 async function initialize() {
+  initializeTheme();
   bindEvents();
   try {
     const me = await api("/api/me");

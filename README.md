@@ -14,9 +14,11 @@ The repository provides:
 - SteamCMD validation before every server start or restart
 - POSIX shell lifecycle control
 - OpenRC service definitions for the game server and web manager
-- An animated Go web manager with live system metrics
+- An animated Go web manager with live system metrics and persistent
+  light/dark themes
 - Structured Game.ini and Engine.ini editing
-- Optional mod.io metadata and recursive dependency management for Game.ini
+- Optional mod.io metadata, recursive dependency status, and dependency
+  management for Game.ini
 - Persistent initial-map and dedicated-server port selection
 - Authenticated RCON event streaming with UTF-8 player-chat integration
 - A server-only Unicode Bridge for acknowledged outbound multilingual messages
@@ -69,11 +71,11 @@ MORDHAU Dedicated Server, and Steam update staging.
 ### Release archive
 
 ```sh
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v1.2.0/mordhau-server-alpine-linux-v1.2.0.tar.gz
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v1.2.0/SHA256SUMS
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v1.3.0/mordhau-server-alpine-linux-v1.3.0.tar.gz
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v1.3.0/SHA256SUMS
 sha256sum -c SHA256SUMS
-tar -xzf mordhau-server-alpine-linux-v1.2.0.tar.gz
-cd mordhau-server-alpine-linux-v1.2.0
+tar -xzf mordhau-server-alpine-linux-v1.3.0.tar.gz
+cd mordhau-server-alpine-linux-v1.3.0
 chmod +x mordhau-server-alpine-linux.sh
 ./mordhau-server-alpine-linux.sh
 ```
@@ -185,21 +187,23 @@ The web manager provides:
 - Selectable `all allow` or `all deny` base policy
 - A 30-minute exact-address emergency allow when switching to `all deny`
 - Live CPU, memory, swap, and MORDHAU-filesystem utilization
+- A default light theme with a persistent light/dark toggle
 - Start, stop, restart, and stopped-only update controls
 - Boot startup mode controls for both OpenRC services
 - Persistent web-service port selection
 - Persistent initial-map selection
 - Game, RCON, beacon, and query port selection with range and collision checks
 - Launch-language selection
-- Optional mod.io API-key validation, mod lookup, recursive dependency
-  inspection, and scoped `Mods=<Resource ID>` management
+- Optional mod.io API-key validation, mod lookup, per-mod recursive dependency
+  status, unresolved-dependency warnings, and scoped `Mods=<Resource ID>`
+  management
 - Game.ini and Engine.ini section/item creation, editing, and removal
 - Reversible per-entry enable and disable controls
 - Revision checks, active-file backups, and staged edits while the game is
   running
 - RCON authentication, acknowledged `listen allon` subscription, reconnection
   across live Game.ini credential changes, and live events
-- A Unicode server-message form with a root-only UTF-8 spool, ASCII token RCON
+- A Send Message form with a root-only UTF-8 spool, ASCII token RCON
   transport, and acknowledgement before success is reported
 - Root-only web access and administrative change audit logging
 
@@ -343,6 +347,12 @@ metadata, and recursive dependency inspection. Dependencies are deduplicated,
 validated as public live MORDHAU resources, and inserted before the selected
 mod. Existing entries are not duplicated.
 
+Each configured mod displays its recursive mod.io dependency list and whether
+each dependency is enabled, disabled, or absent from Game.ini. An enabled mod
+shows a warning when a required dependency is disabled or absent. Disabled
+mods retain dependency information without producing unresolved-dependency
+warnings.
+
 The API key and API path are stored in
 `/root/mordhau/.manager/modio.json` with mode `0600`. The key is not returned
 to the browser or written to the audit log. Requests are restricted to HTTPS
@@ -476,7 +486,8 @@ validation, server-port parsing and collision checks, mod.io URL and API-path
 validation, dependency ordering, and scoped mod-entry mutation. The shell
 integration test covers PAK installation, active and staged Game.ini
 registration, existing server-actor preservation, backup creation, and
-idempotent reinstallation.
+idempotent reinstallation. Static asset tests verify the default-light theme
+initializer, persistent theme control markup, and Live RCON message form.
 
 ## Update and Rollback
 

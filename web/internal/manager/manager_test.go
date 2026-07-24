@@ -872,10 +872,105 @@ func TestConfiguredModsParsingIsScopedAndNullSafe(t *testing.T) {
 	if mods[1].ID != 20 || mods[1].Enabled || mods[1].Occurrences != 1 {
 		t.Fatalf("second configured mod parsed incorrectly: %+v", mods[1])
 	}
+	for _, mod := range mods {
+		if mod.Dependencies == nil || mod.UnresolvedDependencies == nil {
+			t.Fatalf("configured mod dependency arrays must not be null: %+v", mod)
+		}
+	}
 
 	empty, invalid := configuredModsFromData([]byte("[Other]\nMods=999\n"))
 	if empty == nil || len(empty) != 0 || invalid != 0 {
 		t.Fatalf("missing game-session section did not produce an empty array: %#v, %d", empty, invalid)
+	}
+}
+
+func TestUnresolvedModDependenciesWarnOnlyForEnabledMods(t *testing.T) {
+	mods := []ConfiguredMod{
+		{
+			ID:                  10,
+			Enabled:             true,
+			DependenciesChecked: true,
+			Dependencies: []ModIOItem{
+				{ID: 20},
+				{ID: 30},
+				{ID: 40},
+			},
+		},
+		{
+			ID:                  20,
+			Enabled:             true,
+			DependenciesChecked: true,
+			Dependencies:        []ModIOItem{},
+		},
+		{
+			ID:                  30,
+			Enabled:             false,
+			DependenciesChecked: true,
+			Dependencies:        []ModIOItem{{ID: 50}},
+		},
+		{
+			ID:                  60,
+			Enabled:             false,
+			DependenciesChecked: true,
+			Dependencies:        []ModIOItem{{ID: 70}},
+		},
+	}
+
+	markUnresolvedModDependencies(mods)
+	if !slicesEqual(mods[0].UnresolvedDependencies, []int{30, 40}) {
+		t.Fatalf(
+			"enabled mod unresolved dependencies = %v, want [30 40]",
+			mods[0].UnresolvedDependencies,
+		)
+	}
+	if len(mods[1].UnresolvedDependencies) != 0 {
+		t.Fatalf("resolved mod reported missing dependencies: %v", mods[1].UnresolvedDependencies)
+	}
+	if len(mods[2].UnresolvedDependencies) != 0 ||
+		len(mods[3].UnresolvedDependencies) != 0 {
+		t.Fatal("disabled mods must not report unresolved dependency warnings")
+	}
+}
+
+func TestDashboardThemeAndMessageMarkup(t *testing.T) {
+	indexData, err := staticFiles.ReadFile("static/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	index := string(indexData)
+	for _, expected := range []string{
+		`id="theme-toggle"`,
+		`src="/static/theme.js?v=1.3.0"`,
+		`<label for="rcon-message">Send Message</label>`,
+	} {
+		if !strings.Contains(index, expected) {
+			t.Fatalf("dashboard is missing %q", expected)
+		}
+	}
+	for _, unwanted := range []string{
+		"Unicode server message",
+		"한국어 · Русский · 简体中文 · Français",
+		"<script>\n",
+	} {
+		if strings.Contains(index, unwanted) {
+			t.Fatalf("dashboard still contains %q", unwanted)
+		}
+	}
+
+	loginData, err := staticFiles.ReadFile("static/login.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(loginData), `src="/static/theme.js?v=1.3.0"`) {
+		t.Fatal("login page does not initialize the persisted theme")
+	}
+
+	themeData, err := staticFiles.ReadFile("static/theme.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(themeData), `let theme = "light"`) {
+		t.Fatal("theme initializer does not default to light mode")
 	}
 }
 

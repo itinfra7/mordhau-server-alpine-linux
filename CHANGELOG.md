@@ -2,6 +2,26 @@
 
 All notable changes to this repository are documented in this file.
 
+## [1.3.0] - 2026-07-24
+
+### Added
+
+- Default-light web styling with a persistent light/dark theme toggle in the
+  dashboard header.
+- Recursive dependency lists for every configured mod with enabled, disabled,
+  and not-configured status indicators.
+- Unresolved-dependency warnings for enabled mods when a required Resource ID
+  is disabled or absent from Game.ini.
+- Tests for dependency-warning suppression on disabled mods, non-null
+  dependency arrays, theme assets, and Live RCON message markup.
+
+### Changed
+
+- Rename the Live RCON outbound-message label to `Send Message`.
+- Remove the multilingual placeholder from the outbound-message input.
+- Suppress unresolved-dependency warnings for disabled target mods while
+  retaining their dependency details.
+
 ## [1.2.0] - 2026-07-24
 
 ### Added

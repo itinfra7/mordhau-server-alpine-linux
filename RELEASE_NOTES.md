@@ -1,7 +1,7 @@
-# MORDHAU Server Alpine Linux v1.2.0
+# MORDHAU Server Alpine Linux v1.3.0
 
-This release adds a bundled server-only Unicode Bridge for acknowledged
-outbound multilingual messages from the authenticated web manager.
+This release adds a default-light theme with a persistent dashboard toggle
+and per-mod dependency health information for configured mod.io resources.
 
 ## Included
 
@@ -14,6 +14,7 @@ outbound multilingual messages from the authenticated web manager.
 - OpenRC services with manual or automatic boot modes
 - Log archival based on the source `Mordhau.log` modification time
 - Authenticated Go web manager bound to IPv4 `0.0.0.0`
+- Default-light responsive interface with a persistent light/dark toggle
 - Live CPU, memory, swap, and server-filesystem metrics
 - Game.ini and Engine.ini structured editing with running-server staging
 - Reversible per-entry enable/disable controls that preserve keys, values,
@@ -35,6 +36,8 @@ outbound multilingual messages from the authenticated web manager.
 - Managed game, RCON, beacon, and query launch ports
 - Optional mod.io API-key validation, MORDHAU mod lookup, metadata, and
   recursive dependency inspection
+- Per-mod dependency lists with enabled, disabled, and not-configured status
+- Unresolved-dependency warnings limited to enabled target mods
 - Scoped Game.ini `Mods=<Resource ID>` add, enable, disable, and remove actions
 - IPv4 and IPv6 address/CIDR access policies
 - Null-safe rendering for empty account, access-rule, mod, and dependency data
@@ -53,6 +56,7 @@ outbound multilingual messages from the authenticated web manager.
   all-broadcast subscription as active
 - Broadcast-option help responses omitted from the live RCON event view
 - Per-account Unicode-message audit events that exclude message text
+- Live RCON `Send Message` control without input-language placeholder text
 - Bridge rebuild tooling, cooked-artifact checksums, and installation
   integration tests
 

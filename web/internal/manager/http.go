@@ -123,7 +123,7 @@ func (m *Manager) staticHandler(response http.ResponseWriter, request *http.Requ
 	case "static/app.css":
 		response.Header().Set("Cache-Control", "no-store")
 		serveEmbedded(response, name, "text/css; charset=utf-8")
-	case "static/app.js":
+	case "static/app.js", "static/theme.js":
 		response.Header().Set("Cache-Control", "no-store")
 		serveEmbedded(response, name, "application/javascript; charset=utf-8")
 	default:

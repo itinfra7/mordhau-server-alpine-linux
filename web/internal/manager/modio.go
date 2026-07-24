@@ -22,6 +22,7 @@ const (
 	defaultModIOAPIBase     = "https://api.mod.io/v1"
 	maxModIOResponseBytes   = 8 << 20
 	maxModIODependencies    = 500
+	maxDependencyWorkers    = 4
 )
 
 var modIOHTTPClient = &http.Client{
@@ -92,10 +93,14 @@ type ModInstallPlan struct {
 }
 
 type ConfiguredMod struct {
-	ID          int        `json:"id"`
-	Enabled     bool       `json:"enabled"`
-	Occurrences int        `json:"occurrences"`
-	Metadata    *ModIOItem `json:"metadata,omitempty"`
+	ID                     int         `json:"id"`
+	Enabled                bool        `json:"enabled"`
+	Occurrences            int         `json:"occurrences"`
+	Metadata               *ModIOItem  `json:"metadata,omitempty"`
+	Dependencies           []ModIOItem `json:"dependencies"`
+	DependenciesChecked    bool        `json:"dependencies_checked"`
+	DependencyError        string      `json:"dependency_error,omitempty"`
+	UnresolvedDependencies []int       `json:"unresolved_dependencies"`
 }
 
 type ModManagementView struct {
@@ -574,9 +579,11 @@ func configuredModsFromData(data []byte) ([]ConfiguredMod, int) {
 		}
 		indexByID[id] = len(result)
 		result = append(result, ConfiguredMod{
-			ID:          id,
-			Enabled:     enabled,
-			Occurrences: 1,
+			ID:                     id,
+			Enabled:                enabled,
+			Occurrences:            1,
+			Dependencies:           []ModIOItem{},
+			UnresolvedDependencies: []int{},
 		})
 	}
 	return result, invalid
@@ -608,6 +615,94 @@ func modIOGetModsByIDs(settings modIOSettingsFile, ids []int) (map[int]ModIOItem
 		}
 	}
 	return result, nil
+}
+
+type configuredModDependencyResult struct {
+	Index        int
+	Dependencies []ModIOItem
+	Err          error
+}
+
+func loadConfiguredModDependencies(
+	settings modIOSettingsFile,
+	configured []ConfiguredMod,
+) {
+	indices := make([]int, 0, len(configured))
+	for index := range configured {
+		configured[index].Dependencies = []ModIOItem{}
+		configured[index].UnresolvedDependencies = []int{}
+		if configured[index].Metadata == nil {
+			continue
+		}
+		if !configured[index].Metadata.Dependencies {
+			configured[index].DependenciesChecked = true
+			continue
+		}
+		indices = append(indices, index)
+	}
+	if len(indices) == 0 {
+		markUnresolvedModDependencies(configured)
+		return
+	}
+
+	workerCount := maxDependencyWorkers
+	if len(indices) < workerCount {
+		workerCount = len(indices)
+	}
+	jobs := make(chan int)
+	results := make(chan configuredModDependencyResult, len(indices))
+	for worker := 0; worker < workerCount; worker++ {
+		go func() {
+			for index := range jobs {
+				dependencies, err := modIODependencies(settings, configured[index].ID)
+				results <- configuredModDependencyResult{
+					Index:        index,
+					Dependencies: dependencies,
+					Err:          err,
+				}
+			}
+		}()
+	}
+	go func() {
+		for _, index := range indices {
+			jobs <- index
+		}
+		close(jobs)
+	}()
+
+	for range indices {
+		result := <-results
+		if result.Err != nil {
+			configured[result.Index].DependencyError = result.Err.Error()
+			continue
+		}
+		configured[result.Index].Dependencies = result.Dependencies
+		configured[result.Index].DependenciesChecked = true
+	}
+	markUnresolvedModDependencies(configured)
+}
+
+func markUnresolvedModDependencies(configured []ConfiguredMod) {
+	enabled := make(map[int]bool, len(configured))
+	for _, item := range configured {
+		if item.Enabled {
+			enabled[item.ID] = true
+		}
+	}
+	for index := range configured {
+		configured[index].UnresolvedDependencies = []int{}
+		if !configured[index].Enabled || !configured[index].DependenciesChecked {
+			continue
+		}
+		for _, dependency := range configured[index].Dependencies {
+			if dependency.ID > 0 && !enabled[dependency.ID] {
+				configured[index].UnresolvedDependencies = append(
+					configured[index].UnresolvedDependencies,
+					dependency.ID,
+				)
+			}
+		}
+	}
 }
 
 func (m *Manager) modManagementView() (ModManagementView, error) {
@@ -645,6 +740,7 @@ func (m *Manager) modManagementView() (ModManagementView, error) {
 			view.Mods[index].Metadata = &copy
 		}
 	}
+	loadConfiguredModDependencies(*settings, view.Mods)
 	return view, nil
 }
 

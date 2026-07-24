@@ -3,10 +3,11 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="dark">
+  <meta name="color-scheme" content="light dark">
   <title>MORDHAU Control</title>
-  <link rel="stylesheet" href="/static/app.css?v=1.2.0">
-  <script src="/static/app.js?v=1.2.0" defer></script>
+  <script src="/static/theme.js?v=1.3.0"></script>
+  <link rel="stylesheet" href="/static/app.css?v=1.3.0">
+  <script src="/static/app.js?v=1.3.0" defer></script>
 </head>
 <body>
   <div class="ambient ambient-one"></div>
@@ -20,6 +21,11 @@
       </div>
     </div>
     <div class="top-actions">
+      <button id="theme-toggle" class="ghost compact theme-toggle" type="button"
+              aria-label="Switch to dark mode" aria-pressed="false">
+        <span id="theme-toggle-icon" aria-hidden="true">☾</span>
+        <span id="theme-toggle-label">Dark mode</span>
+      </button>
       <div class="server-pill">
         <span id="server-dot" class="status-dot"></span>
         <span id="server-label">Loading</span>
@@ -106,14 +112,13 @@
           </div>
           <p class="hint">Authenticated <code>listen allon</code> events with player chat followed from the UTF-8 game log.</p>
           <form id="rcon-message-form" class="rcon-send-form">
-            <label for="rcon-message">Unicode server message</label>
+            <label for="rcon-message">Send Message</label>
             <div class="control-row">
               <input
                 id="rcon-message"
                 type="text"
                 maxlength="512"
                 autocomplete="off"
-                placeholder="한국어 · Русский · 简体中文 · Français"
                 required
               >
               <button id="rcon-message-submit" class="primary" type="submit">Send</button>
