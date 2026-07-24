@@ -9,7 +9,11 @@ import (
 	"net/netip"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
+
+const maxAccessRuleCommentRunes = 160
 
 type accessNetwork struct {
 	canonical string
@@ -130,6 +134,22 @@ func ipv4RangePrefixes(start, end uint32) []netip.Prefix {
 	return prefixes
 }
 
+func normalizeAccessRuleComment(value string) (string, error) {
+	if !utf8.ValidString(value) {
+		return "", errors.New("access rule comment must be valid UTF-8")
+	}
+	for _, character := range value {
+		if unicode.IsControl(character) {
+			return "", errors.New("access rule comment must not contain control characters")
+		}
+	}
+	value = strings.TrimSpace(value)
+	if utf8.RuneCountInString(value) > maxAccessRuleCommentRunes {
+		return "", errors.New("access rule comment must not exceed 160 characters")
+	}
+	return value, nil
+}
+
 func accessAllowed(ip netip.Addr, config AccessConfig, now time.Time) bool {
 	ip = ip.Unmap()
 	bestBits := -1
@@ -223,13 +243,23 @@ func (m *Manager) setBasePolicy(policy string, currentIP netip.Addr) error {
 	return writeJSONAtomic(accessPath, m.access, 0600)
 }
 
-func (m *Manager) saveAccessRule(id, action, network string) (string, error) {
+func (m *Manager) saveAccessRule(
+	id, action, network string,
+	comment *string,
+) (AccessRule, error) {
 	if action != "allow" && action != "deny" {
-		return "", errors.New("rule action must be allow or deny")
+		return AccessRule{}, errors.New("rule action must be allow or deny")
 	}
 	normalized, err := normalizeAccessNetwork(network)
 	if err != nil {
-		return "", err
+		return AccessRule{}, err
+	}
+	normalizedComment := ""
+	if comment != nil {
+		normalizedComment, err = normalizeAccessRuleComment(*comment)
+		if err != nil {
+			return AccessRule{}, err
+		}
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -238,32 +268,37 @@ func (m *Manager) saveAccessRule(id, action, network string) (string, error) {
 		for index := range m.access.Rules {
 			if m.access.Rules[index].ID == id {
 				if m.access.Rules[index].Temporary {
-					return "", errors.New("temporary emergency rules cannot be edited")
+					return AccessRule{}, errors.New("temporary emergency rules cannot be edited")
 				}
 				m.access.Rules[index].Action = action
 				m.access.Rules[index].Network = normalized.canonical
-				if err := writeJSONAtomic(accessPath, m.access, 0600); err != nil {
-					return "", err
+				if comment != nil {
+					m.access.Rules[index].Comment = normalizedComment
 				}
-				return normalized.canonical, nil
+				if err := writeJSONAtomic(accessPath, m.access, 0600); err != nil {
+					return AccessRule{}, err
+				}
+				return m.access.Rules[index], nil
 			}
 		}
-		return "", errors.New("access rule not found")
+		return AccessRule{}, errors.New("access rule not found")
 	}
 	id, err = randomID()
 	if err != nil {
-		return "", err
+		return AccessRule{}, err
 	}
-	m.access.Rules = append(m.access.Rules, AccessRule{
+	rule := AccessRule{
 		ID:        id,
 		Action:    action,
 		Network:   normalized.canonical,
+		Comment:   normalizedComment,
 		CreatedAt: time.Now(),
-	})
-	if err := writeJSONAtomic(accessPath, m.access, 0600); err != nil {
-		return "", err
 	}
-	return normalized.canonical, nil
+	m.access.Rules = append(m.access.Rules, rule)
+	if err := writeJSONAtomic(accessPath, m.access, 0600); err != nil {
+		return AccessRule{}, err
+	}
+	return rule, nil
 }
 
 func (m *Manager) deleteAccessRule(id string) error {

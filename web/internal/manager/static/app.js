@@ -835,19 +835,32 @@ function renderAccessRules(rules) {
   }
   for (const rule of rules) {
     const row = document.createElement("div");
-    row.className = "list-row";
+    row.className = "list-row access-rule-row";
     const action = document.createElement("select");
     action.innerHTML = '<option value="allow">Allow</option><option value="deny">Deny</option>';
     action.value = rule.action;
+    action.setAttribute("aria-label", "Rule action");
     const network = document.createElement("input");
     network.value = rule.network;
+    network.setAttribute("aria-label", "Network address, CIDR, or IPv4 range");
     network.autocapitalize = "none";
     network.spellcheck = false;
+    const comment = document.createElement("input");
+    comment.value = typeof rule.comment === "string" ? rule.comment : "";
+    comment.placeholder = rule.temporary ? "Automatic emergency rule" : "Comment (optional)";
+    comment.setAttribute("aria-label", "Rule comment");
+    comment.maxLength = 160;
+    comment.autocomplete = "off";
     const save = makeButton("Save", "secondary compact", async () => {
       try {
         await api("/api/access/rule", {
           method: "POST",
-          body: { id: rule.id, action: action.value, network: network.value },
+          body: {
+            id: rule.id,
+            action: action.value,
+            network: network.value,
+            comment: comment.value,
+          },
         });
         toast("Access rule saved.");
         loadAccess();
@@ -868,12 +881,13 @@ function renderAccessRules(rules) {
     if (rule.temporary) {
       action.disabled = true;
       network.disabled = true;
+      comment.disabled = true;
       save.disabled = true;
       const expiry = rule.expires_at ? new Date(rule.expires_at).toLocaleString() : "soon";
       save.textContent = `Emergency · expires ${expiry}`;
       save.className = "ghost compact temporary-label";
     }
-    row.append(action, network, save, remove);
+    row.append(action, network, comment, save, remove);
     list.append(row);
   }
 }
@@ -953,9 +967,15 @@ function bindEvents() {
     try {
       await api("/api/access/rule", {
         method: "POST",
-        body: { id: "", action: $("#new-rule-action").value, network: $("#new-rule-network").value },
+        body: {
+          id: "",
+          action: $("#new-rule-action").value,
+          network: $("#new-rule-network").value,
+          comment: $("#new-rule-comment").value,
+        },
       });
       $("#new-rule-network").value = "";
+      $("#new-rule-comment").value = "";
       toast("Access rule added.");
       loadAccess();
     } catch (error) {

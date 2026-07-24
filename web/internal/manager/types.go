@@ -75,6 +75,7 @@ type AccessRule struct {
 	ID        string     `json:"id"`
 	Action    string     `json:"action"`
 	Network   string     `json:"network"`
+	Comment   string     `json:"comment,omitempty"`
 	Temporary bool       `json:"temporary,omitempty"`
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 	CreatedAt time.Time  `json:"created_at"`

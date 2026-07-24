@@ -1,9 +1,8 @@
-# MORDHAU Server Alpine Linux v1.6.1
+# MORDHAU Server Alpine Linux v1.7.0
 
-This release presents every supported network-rule input category directly in
-the rule placeholder while retaining exact inclusive IPv4 ranges, CIDR
-precedence, responsive layouts, shared metadata, and persistent dashboard
-state.
+This release adds persistent optional comments to individual network access
+rules while retaining exact inclusive IPv4 ranges, CIDR precedence,
+responsive layouts, shared metadata, and persistent dashboard state.
 
 ## Included
 
@@ -67,6 +66,9 @@ state.
   persistence, and exact minimal-CIDR evaluation
 - Network-rule placeholder examples for a single address, CIDR, and an
   inclusive IPv4 range
+- Optional single-line UTF-8 comments of up to 160 characters on individual
+  network rules, with backward-compatible storage and mobile editing
+- Comment-presence and character-count audit metadata without comment text
 - Null-safe rendering for empty account, access-rule, mod, and dependency data
 - Account management, Argon2id password hashing, CSRF protection, and login
   throttling

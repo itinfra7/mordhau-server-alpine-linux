@@ -256,6 +256,61 @@ func TestNormalizeExistingAddressAndCIDRRules(t *testing.T) {
 	}
 }
 
+func TestNormalizeAccessRuleComment(t *testing.T) {
+	comment, err := normalizeAccessRuleComment("  관리자 VPN · 한국어 · Русский  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if comment != "관리자 VPN · 한국어 · Русский" {
+		t.Fatalf("normalized comment = %q", comment)
+	}
+
+	maximum := strings.Repeat("가", maxAccessRuleCommentRunes)
+	if comment, err := normalizeAccessRuleComment(maximum); err != nil || comment != maximum {
+		t.Fatalf("maximum-length Unicode comment failed: %q, %v", comment, err)
+	}
+
+	for _, invalid := range []string{
+		strings.Repeat("a", maxAccessRuleCommentRunes+1),
+		"line one\nline two",
+		"tab\tseparated",
+		string([]byte{0xff}),
+	} {
+		if _, err := normalizeAccessRuleComment(invalid); err == nil {
+			t.Fatalf("invalid comment %q unexpectedly succeeded", invalid)
+		}
+	}
+}
+
+func TestAccessRuleCommentJSONIsBackwardCompatible(t *testing.T) {
+	var rule AccessRule
+	if err := json.Unmarshal([]byte(
+		`{"id":"example","action":"allow","network":"192.0.2.0/24",`+
+			`"created_at":"2026-07-24T00:00:00Z"}`,
+	), &rule); err != nil {
+		t.Fatal(err)
+	}
+	if rule.Comment != "" {
+		t.Fatalf("legacy rule acquired comment %q", rule.Comment)
+	}
+	encoded, err := json.Marshal(rule)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), `"comment"`) {
+		t.Fatal("an empty comment was not omitted from persistent JSON")
+	}
+
+	rule.Comment = "Office VPN"
+	encoded, err = json.Marshal(rule)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(encoded), `"comment":"Office VPN"`) {
+		t.Fatalf("comment was not persisted: %s", encoded)
+	}
+}
+
 func TestInvalidIPv4RangesAreRejected(t *testing.T) {
 	for _, input := range []string{
 		"203.0.113.1~",
@@ -1444,12 +1499,14 @@ func TestDashboardThemeAndMessageMarkup(t *testing.T) {
 	for _, expected := range []string{
 		`id="theme-toggle"`,
 		`content="width=device-width, initial-scale=1, viewport-fit=cover"`,
-		`src="/static/theme.js?v=1.6.1"`,
+		`src="/static/theme.js?v=1.7.0"`,
 		`<label for="rcon-message">Send Message</label>`,
 		`id="mods-refresh-minutes"`,
 		`min="1" max="10080"`,
 		`value="60"`,
 		`placeholder="10.0.0.4 | 10.0.0.0/24 | 10.0.0.4-10.0.0.9"`,
+		`id="new-rule-comment"`,
+		`maxlength="160"`,
 		`start-end`,
 		`start~end`,
 	} {
@@ -1473,7 +1530,7 @@ func TestDashboardThemeAndMessageMarkup(t *testing.T) {
 		t.Fatal(err)
 	}
 	loginSource := string(loginData)
-	if !strings.Contains(loginSource, `src="/static/theme.js?v=1.6.1"`) {
+	if !strings.Contains(loginSource, `src="/static/theme.js?v=1.7.0"`) {
 		t.Fatal("login page does not initialize the persisted theme")
 	}
 	if !strings.Contains(loginSource, `viewport-fit=cover`) {
@@ -1499,6 +1556,8 @@ func TestDashboardThemeAndMessageMarkup(t *testing.T) {
 		`/api/rcon/history`,
 		`Last successful refresh:`,
 		`resolvedOptions().timeZone`,
+		`comment: comment.value`,
+		`typeof rule.comment === "string"`,
 	} {
 		if !strings.Contains(appSource, expected) {
 			t.Fatalf("frontend is missing %q", expected)
@@ -1530,6 +1589,7 @@ func TestMobileLayoutHasTouchAndNarrowViewportRules(t *testing.T) {
 		`env(safe-area-inset-bottom)`,
 		`overflow-wrap: anywhere`,
 		`touch-action: manipulation`,
+		`.access-rule-row`,
 	} {
 		if !strings.Contains(css, expected) {
 			t.Fatalf("mobile stylesheet is missing %q", expected)

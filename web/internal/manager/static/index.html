@@ -5,9 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="light dark">
   <title>MORDHAU Control</title>
-  <script src="/static/theme.js?v=1.6.1"></script>
-  <link rel="stylesheet" href="/static/app.css?v=1.6.1">
-  <script src="/static/app.js?v=1.6.1" defer></script>
+  <script src="/static/theme.js?v=1.7.0"></script>
+  <link rel="stylesheet" href="/static/app.css?v=1.7.0">
+  <script src="/static/app.js?v=1.7.0" defer></script>
 </head>
 <body>
   <div class="ambient ambient-one"></div>
@@ -364,15 +364,22 @@
         </div>
         <p id="current-ip" class="hint"></p>
         <form id="new-rule-form" class="rule-create">
-          <select id="new-rule-action"><option value="allow">Allow</option><option value="deny">Deny</option></select>
+          <select id="new-rule-action" aria-label="Rule action">
+            <option value="allow">Allow</option>
+            <option value="deny">Deny</option>
+          </select>
           <input id="new-rule-network" placeholder="10.0.0.4 | 10.0.0.0/24 | 10.0.0.4-10.0.0.9"
+                 aria-label="Network address, CIDR, or IPv4 range"
                  required autocapitalize="none" spellcheck="false">
+          <input id="new-rule-comment" placeholder="Comment (optional)"
+                 aria-label="Rule comment" maxlength="160" autocomplete="off">
           <button class="primary compact" type="submit">Add rule</button>
         </form>
         <p class="hint">
           Accepts a single IPv4 or IPv6 address, a CIDR network, or an
           inclusive IPv4 range using <code>start-end</code> or
-          <code>start~end</code>.
+          <code>start~end</code>. Comments are optional and limited to 160
+          characters.
         </p>
         <div id="access-rules" class="list-stack"></div>
       </article>

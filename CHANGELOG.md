@@ -2,6 +2,24 @@
 
 All notable changes to this repository are documented in this file.
 
+## [1.7.0] - 2026-07-24
+
+### Added
+
+- Optional single-line comments for individual network access rules.
+- UTF-8 comment validation with a 160-character limit and control-character
+  rejection.
+- Desktop and mobile comment fields for creating and editing access rules.
+- Regression tests for multilingual comments, limits, persistent JSON
+  compatibility, frontend binding, and responsive layout.
+
+### Changed
+
+- Preserve an existing comment when an older API client edits a rule without
+  sending the optional `comment` field.
+- Record comment presence, change state, and character count in audit events
+  without recording comment text.
+
 ## [1.6.1] - 2026-07-24
 
 ### Fixed

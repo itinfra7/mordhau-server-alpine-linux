@@ -493,6 +493,12 @@ input:focus, select:focus { border-color: rgba(233, 79, 81, .65); box-shadow: 0 
 }
 .rule-create { align-items: center; }
 .rule-create input { flex: 1; }
+#new-rule-network { flex: 1.2; }
+#new-rule-comment { flex: .8; min-width: 12rem; }
+.access-rule-row {
+  grid-template-columns: minmax(7rem, .55fr) minmax(13rem, 1.2fr)
+    minmax(10rem, 1fr) auto auto;
+}
 .temporary-label { color: var(--staged-text); font-size: .72rem; }
 
 .mod-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .9rem; }

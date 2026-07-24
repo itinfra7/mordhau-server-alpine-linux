@@ -24,7 +24,7 @@ The repository provides:
 - Persistent latest lifecycle results and append-only RCON event history
 - A server-only Unicode Bridge for acknowledged outbound multilingual messages
 - Web account and IPv4/IPv6 access-policy management with inclusive IPv4
-  ranges
+  ranges and per-rule comments
 - Per-account JSON Lines web access and change auditing
 
 MORDHAU, SteamCMD, Wine, and their assets are downloaded from their respective
@@ -74,11 +74,11 @@ MORDHAU Dedicated Server, and Steam update staging.
 ### Release archive
 
 ```sh
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v1.6.1/mordhau-server-alpine-linux-v1.6.1.tar.gz
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v1.6.1/SHA256SUMS
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v1.7.0/mordhau-server-alpine-linux-v1.7.0.tar.gz
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v1.7.0/SHA256SUMS
 sha256sum -c SHA256SUMS
-tar -xzf mordhau-server-alpine-linux-v1.6.1.tar.gz
-cd mordhau-server-alpine-linux-v1.6.1
+tar -xzf mordhau-server-alpine-linux-v1.7.0.tar.gz
+cd mordhau-server-alpine-linux-v1.7.0
 chmod +x mordhau-server-alpine-linux.sh
 ./mordhau-server-alpine-linux.sh
 ```
@@ -188,6 +188,7 @@ The web manager provides:
 - Last-account deletion prevention
 - IPv4 and IPv6 address/CIDR allow and deny rules
 - Inclusive IPv4 allow and deny ranges using `start-end` or `start~end`
+- Optional UTF-8 comments on individual network rules
 - Selectable `all allow` or `all deny` base policy
 - A 30-minute exact-address emergency allow when switching to `all deny`
 - Live CPU, memory, swap, and MORDHAU-filesystem utilization
@@ -223,6 +224,10 @@ form. The manager decomposes each range into the smallest exact set of CIDR
 blocks, so addresses outside the submitted boundaries never match. Those
 blocks participate in the same most-specific-prefix and equal-prefix deny
 precedence as ordinary CIDR rules.
+
+Each explicit network rule can store an optional single-line comment of up to
+160 Unicode characters. Comments are metadata only and do not affect address
+matching or rule precedence. Existing rules without a comment remain valid.
 
 ## Mobile Layout
 
@@ -263,7 +268,9 @@ Passwords, request bodies, session cookies, CSRF tokens, RCON credentials,
 configuration values, and configuration revisions are not written to the
 audit log. Configuration events identify the file, operation, section, and
 key without recording its value. Unicode server-message audit events record
-only UTF-8 byte and character counts, not message text.
+only UTF-8 byte and character counts, not message text. Network-rule events
+record whether a comment is present and its character count without recording
+the comment text.
 
 ## Persistent Dashboard History
 
@@ -553,7 +560,8 @@ rc-service mordhau-web status
 The Go tests cover random-password constraints, INI preservation, CIDR
 precedence, inclusive IPv4 range normalization, exact boundary matching,
 range/CIDR precedence, emergency access, proxy-safe request validation,
-audit-log permissions and secret exclusion, enabled/disabled INI entry round trips,
+network-rule comment normalization and backward-compatible JSON, audit-log
+permissions and secret exclusion, enabled/disabled INI entry round trips,
 RCON credential fallback order, packet framing, Korean legacy decoding,
 current all-broadcast subscription syntax and response filtering, UTF-8 chat
 log parsing, partial writes, log rotation, lossy RCON chat suppression,

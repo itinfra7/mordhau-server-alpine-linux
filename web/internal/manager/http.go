@@ -848,15 +848,16 @@ func (m *Manager) accessRuleHandler(response http.ResponseWriter, request *http.
 		return
 	}
 	var body struct {
-		ID      string `json:"id"`
-		Action  string `json:"action"`
-		Network string `json:"network"`
+		ID      string  `json:"id"`
+		Action  string  `json:"action"`
+		Network string  `json:"network"`
+		Comment *string `json:"comment"`
 	}
 	if err := decodeJSON(response, request, &body); err != nil {
 		writeError(response, http.StatusBadRequest, err.Error())
 		return
 	}
-	normalizedNetwork, err := m.saveAccessRule(body.ID, body.Action, body.Network)
+	rule, err := m.saveAccessRule(body.ID, body.Action, body.Network, body.Comment)
 	if err != nil {
 		writeError(response, http.StatusBadRequest, err.Error())
 		return
@@ -866,9 +867,12 @@ func (m *Manager) accessRuleHandler(response http.ResponseWriter, request *http.
 		event = "access_rule_edited"
 	}
 	m.auditRequestEvent(request, session.Username, event, map[string]string{
-		"rule_id": body.ID,
-		"action":  body.Action,
-		"network": normalizedNetwork,
+		"rule_id":            rule.ID,
+		"action":             rule.Action,
+		"network":            rule.Network,
+		"comment_changed":    strconv.FormatBool(body.Comment != nil),
+		"comment_present":    strconv.FormatBool(rule.Comment != ""),
+		"comment_characters": strconv.Itoa(utf8.RuneCountInString(rule.Comment)),
 	})
 	writeJSON(response, http.StatusOK, m.accessConfig())
 }
