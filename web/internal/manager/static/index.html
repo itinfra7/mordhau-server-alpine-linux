@@ -5,9 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="light dark">
   <title>MORDHAU Control</title>
-  <script src="/static/theme.js?v=1.5.0"></script>
-  <link rel="stylesheet" href="/static/app.css?v=1.5.0">
-  <script src="/static/app.js?v=1.5.0" defer></script>
+  <script src="/static/theme.js?v=1.6.0"></script>
+  <link rel="stylesheet" href="/static/app.css?v=1.6.0">
+  <script src="/static/app.js?v=1.6.0" defer></script>
 </head>
 <body>
   <div class="ambient ambient-one"></div>
@@ -344,7 +344,7 @@
       <article class="card">
         <div class="card-heading wrap">
           <div>
-            <p class="eyebrow">IPv4 · IPv6</p>
+            <p class="eyebrow">IPv4 · IPv6 · IPv4 RANGES</p>
             <h2>Network access policy</h2>
           </div>
           <div class="field-row">
@@ -356,15 +356,24 @@
           </div>
         </div>
         <div class="policy-note">
-          <strong>Rule precedence:</strong> the longest matching prefix wins; deny wins a same-prefix tie. When “Deny all” is selected, the current client receives a 30-minute exact-address emergency allow rule that temporarily overrides conflicts and expires automatically.
+          <strong>Rule precedence:</strong> the longest matching prefix wins;
+          deny wins a same-prefix tie. Inclusive IPv4 ranges are evaluated as
+          exact minimal CIDR blocks. When “Deny all” is selected, the current
+          client receives a 30-minute exact-address emergency allow rule that
+          temporarily overrides conflicts and expires automatically.
         </div>
         <p id="current-ip" class="hint"></p>
         <form id="new-rule-form" class="rule-create">
           <select id="new-rule-action"><option value="allow">Allow</option><option value="deny">Deny</option></select>
-          <input id="new-rule-network" placeholder="203.0.113.4 or 2001:db8::/48"
+          <input id="new-rule-network" placeholder="203.226.192.0-203.226.252.255"
                  required autocapitalize="none" spellcheck="false">
           <button class="primary compact" type="submit">Add rule</button>
         </form>
+        <p class="hint">
+          Accepts a single IPv4 or IPv6 address, a CIDR network, or an
+          inclusive IPv4 range using <code>start-end</code> or
+          <code>start~end</code>.
+        </p>
         <div id="access-rules" class="list-stack"></div>
       </article>
     </section>

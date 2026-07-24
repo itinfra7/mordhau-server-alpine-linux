@@ -176,6 +176,180 @@ func TestAccessRulePrecedenceAndEmergency(t *testing.T) {
 	}
 }
 
+func TestNormalizeInclusiveIPv4Ranges(t *testing.T) {
+	const canonical = "203.226.192.0-203.226.252.255"
+	expectedPrefixes := []string{
+		"203.226.192.0/19",
+		"203.226.224.0/20",
+		"203.226.240.0/21",
+		"203.226.248.0/22",
+		"203.226.252.0/24",
+	}
+	for _, input := range []string{
+		"203.226.192.0~203.226.252.255",
+		"203.226.192.0-203.226.252.255",
+		" 203.226.192.0 - 203.226.252.255 ",
+	} {
+		network, err := normalizeAccessNetwork(input)
+		if err != nil {
+			t.Fatalf("normalizeAccessNetwork(%q): %v", input, err)
+		}
+		if network.canonical != canonical {
+			t.Fatalf("normalizeAccessNetwork(%q) canonical = %q", input, network.canonical)
+		}
+		if len(network.prefixes) != len(expectedPrefixes) {
+			t.Fatalf(
+				"normalizeAccessNetwork(%q) returned %d prefixes",
+				input,
+				len(network.prefixes),
+			)
+		}
+		for index, expected := range expectedPrefixes {
+			if actual := network.prefixes[index].String(); actual != expected {
+				t.Fatalf(
+					"normalizeAccessNetwork(%q) prefix %d = %q, want %q",
+					input,
+					index,
+					actual,
+					expected,
+				)
+			}
+		}
+	}
+
+	single, err := normalizeAccessNetwork("203.0.113.8~203.0.113.8")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if single.canonical != "203.0.113.8/32" ||
+		len(single.prefixes) != 1 ||
+		single.prefixes[0].String() != "203.0.113.8/32" {
+		t.Fatalf("equal-endpoint range was not reduced to one address: %#v", single)
+	}
+
+	full, err := normalizeAccessNetwork("0.0.0.0-255.255.255.255")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(full.prefixes) != 1 || full.prefixes[0].String() != "0.0.0.0/0" {
+		t.Fatalf("full IPv4 range = %#v", full.prefixes)
+	}
+}
+
+func TestNormalizeExistingAddressAndCIDRRules(t *testing.T) {
+	for input, expected := range map[string]string{
+		"203.0.113.8":        "203.0.113.8/32",
+		"203.0.113.9/24":     "203.0.113.0/24",
+		"2001:db8::8":        "2001:db8::8/128",
+		"2001:db8:1::8/48":   "2001:db8:1::/48",
+		"2001:db8:abcd::/64": "2001:db8:abcd::/64",
+	} {
+		network, err := normalizeAccessNetwork(input)
+		if err != nil {
+			t.Fatalf("normalizeAccessNetwork(%q): %v", input, err)
+		}
+		if network.canonical != expected ||
+			len(network.prefixes) != 1 ||
+			network.prefixes[0].String() != expected {
+			t.Fatalf("normalizeAccessNetwork(%q) = %#v, want %q", input, network, expected)
+		}
+	}
+}
+
+func TestInvalidIPv4RangesAreRejected(t *testing.T) {
+	for _, input := range []string{
+		"203.0.113.1~",
+		"~203.0.113.2",
+		"203.0.113.2-203.0.113.1",
+		"203.0.113.1~203.0.113.2-203.0.113.3",
+		"203.0.113.0/24-203.0.114.0/24",
+		"2001:db8::1-2001:db8::2",
+	} {
+		if _, err := normalizeAccessNetwork(input); err == nil {
+			t.Fatalf("normalizeAccessNetwork(%q) unexpectedly succeeded", input)
+		}
+	}
+}
+
+func TestIPv4RangeCIDRsCoverOnlyTheInclusiveRange(t *testing.T) {
+	for _, test := range []struct {
+		start string
+		end   string
+	}{
+		{"0.0.0.0", "255.255.255.255"},
+		{"0.0.0.1", "0.0.1.2"},
+		{"192.0.2.3", "192.0.2.130"},
+		{"203.226.192.0", "203.226.252.255"},
+		{"255.255.254.253", "255.255.255.255"},
+	} {
+		start := ipv4Value(netip.MustParseAddr(test.start))
+		end := ipv4Value(netip.MustParseAddr(test.end))
+		prefixes := ipv4RangePrefixes(start, end)
+		cursor := uint64(start)
+		for _, prefix := range prefixes {
+			prefixStart := uint64(ipv4Value(prefix.Addr()))
+			blockSize := uint64(1) << (32 - prefix.Bits())
+			if prefixStart != cursor {
+				t.Fatalf(
+					"%s-%s has a gap or overlap at %s",
+					test.start,
+					test.end,
+					prefix,
+				)
+			}
+			if prefixStart+blockSize-1 > uint64(end) {
+				t.Fatalf("%s exceeds %s-%s", prefix, test.start, test.end)
+			}
+			cursor += blockSize
+		}
+		if cursor != uint64(end)+1 {
+			t.Fatalf("%s-%s ended at IPv4 value %d", test.start, test.end, cursor)
+		}
+	}
+}
+
+func TestInclusiveIPv4RangeBoundariesAndPrecedence(t *testing.T) {
+	now := time.Now()
+	config := AccessConfig{
+		BasePolicy: "all_deny",
+		Rules: []AccessRule{
+			{Action: "allow", Network: "203.226.192.0~203.226.252.255"},
+		},
+	}
+	for _, test := range []struct {
+		ip      string
+		allowed bool
+	}{
+		{"203.226.191.255", false},
+		{"203.226.192.0", true},
+		{"203.226.224.1", true},
+		{"203.226.252.255", true},
+		{"203.226.253.0", false},
+		{"2001:db8::1", false},
+	} {
+		if got := accessAllowed(netip.MustParseAddr(test.ip), config, now); got != test.allowed {
+			t.Fatalf("accessAllowed(%s) = %v, want %v", test.ip, got, test.allowed)
+		}
+	}
+
+	config.Rules = append(config.Rules,
+		AccessRule{Action: "deny", Network: "203.226.250.0/24"},
+	)
+	if accessAllowed(netip.MustParseAddr("203.226.250.40"), config, now) {
+		t.Fatal("a more-specific deny did not override the inclusive allow range")
+	}
+	if !accessAllowed(netip.MustParseAddr("203.226.251.40"), config, now) {
+		t.Fatal("the more-specific deny affected an address outside its prefix")
+	}
+
+	config.Rules = append(config.Rules,
+		AccessRule{Action: "allow", Network: "203.226.250.0-203.226.250.255"},
+	)
+	if accessAllowed(netip.MustParseAddr("203.226.250.40"), config, now) {
+		t.Fatal("deny did not win an equal-prefix tie against an IPv4 range")
+	}
+}
+
 func TestRCONPacketFramingPreservesUTF8(t *testing.T) {
 	text := "한국어 채팅 — Русский — 简体中文 — Français"
 	var wire bytes.Buffer
@@ -1270,11 +1444,13 @@ func TestDashboardThemeAndMessageMarkup(t *testing.T) {
 	for _, expected := range []string{
 		`id="theme-toggle"`,
 		`content="width=device-width, initial-scale=1, viewport-fit=cover"`,
-		`src="/static/theme.js?v=1.5.0"`,
+		`src="/static/theme.js?v=1.6.0"`,
 		`<label for="rcon-message">Send Message</label>`,
 		`id="mods-refresh-minutes"`,
 		`min="1" max="10080"`,
 		`value="60"`,
+		`start-end`,
+		`start~end`,
 	} {
 		if !strings.Contains(index, expected) {
 			t.Fatalf("dashboard is missing %q", expected)
@@ -1296,7 +1472,7 @@ func TestDashboardThemeAndMessageMarkup(t *testing.T) {
 		t.Fatal(err)
 	}
 	loginSource := string(loginData)
-	if !strings.Contains(loginSource, `src="/static/theme.js?v=1.5.0"`) {
+	if !strings.Contains(loginSource, `src="/static/theme.js?v=1.6.0"`) {
 		t.Fatal("login page does not initialize the persisted theme")
 	}
 	if !strings.Contains(loginSource, `viewport-fit=cover`) {

@@ -23,7 +23,8 @@ The repository provides:
 - Authenticated RCON event streaming with UTF-8 player-chat integration
 - Persistent latest lifecycle results and append-only RCON event history
 - A server-only Unicode Bridge for acknowledged outbound multilingual messages
-- Web account and IPv4/IPv6 access-policy management
+- Web account and IPv4/IPv6 access-policy management with inclusive IPv4
+  ranges
 - Per-account JSON Lines web access and change auditing
 
 MORDHAU, SteamCMD, Wine, and their assets are downloaded from their respective
@@ -73,11 +74,11 @@ MORDHAU Dedicated Server, and Steam update staging.
 ### Release archive
 
 ```sh
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v1.5.0/mordhau-server-alpine-linux-v1.5.0.tar.gz
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v1.5.0/SHA256SUMS
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v1.6.0/mordhau-server-alpine-linux-v1.6.0.tar.gz
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v1.6.0/SHA256SUMS
 sha256sum -c SHA256SUMS
-tar -xzf mordhau-server-alpine-linux-v1.5.0.tar.gz
-cd mordhau-server-alpine-linux-v1.5.0
+tar -xzf mordhau-server-alpine-linux-v1.6.0.tar.gz
+cd mordhau-server-alpine-linux-v1.6.0
 chmod +x mordhau-server-alpine-linux.sh
 ./mordhau-server-alpine-linux.sh
 ```
@@ -186,6 +187,7 @@ The web manager provides:
 - Account creation, editing, and deletion
 - Last-account deletion prevention
 - IPv4 and IPv6 address/CIDR allow and deny rules
+- Inclusive IPv4 allow and deny ranges using `start-end` or `start~end`
 - Selectable `all allow` or `all deny` base policy
 - A 30-minute exact-address emergency allow when switching to `all deny`
 - Live CPU, memory, swap, and MORDHAU-filesystem utilization
@@ -215,6 +217,12 @@ The web manager provides:
 - A Send Message form with a root-only UTF-8 spool, ASCII token RCON
   transport, and acknowledgement before success is reported
 - Root-only web access and administrative change audit logging
+
+IPv4 ranges include both endpoints and are stored in canonical `start-end`
+form. The manager decomposes each range into the smallest exact set of CIDR
+blocks, so addresses outside the submitted boundaries never match. Those
+blocks participate in the same most-specific-prefix and equal-prefix deny
+precedence as ordinary CIDR rules.
 
 ## Mobile Layout
 
@@ -490,8 +498,9 @@ Changing a boot mode does not change the current process state.
   header.
 - Access rules use the direct TCP peer address and do not trust forwarding
   headers.
-- The most specific CIDR rule wins; deny wins an equal-prefix tie except for
-  the active emergency exact-address allow.
+- The most specific CIDR block wins; inclusive IPv4 ranges are evaluated as
+  exact minimal CIDR blocks. Deny wins an equal-prefix tie except for the
+  active emergency exact-address allow.
 - RCON connects to `127.0.0.1` from the web manager.
 - Unicode message files and their spool directory are root-only. RCON carries
   only a numeric token; the bridge constructs a fixed filename prefix and
@@ -542,8 +551,9 @@ rc-service mordhau-web status
 ```
 
 The Go tests cover random-password constraints, INI preservation, CIDR
-precedence, emergency access, proxy-safe request validation, audit-log
-permissions and secret exclusion, enabled/disabled INI entry round trips,
+precedence, inclusive IPv4 range normalization, exact boundary matching,
+range/CIDR precedence, emergency access, proxy-safe request validation,
+audit-log permissions and secret exclusion, enabled/disabled INI entry round trips,
 RCON credential fallback order, packet framing, Korean legacy decoding,
 current all-broadcast subscription syntax and response filtering, UTF-8 chat
 log parsing, partial writes, log rotation, lossy RCON chat suppression,

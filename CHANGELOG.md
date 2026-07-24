@@ -2,6 +2,23 @@
 
 All notable changes to this repository are documented in this file.
 
+## [1.6.0] - 2026-07-24
+
+### Added
+
+- Inclusive IPv4 access rules using either `start-end` or `start~end` input.
+- Exact minimal-CIDR decomposition for arbitrary IPv4 ranges.
+- Regression tests for both separators, canonical storage, equal endpoints,
+  the entire IPv4 space, malformed and reversed ranges, exact boundaries, and
+  range/CIDR precedence.
+
+### Changed
+
+- Normalize accepted IPv4 ranges to canonical `start-end` form in persistent
+  policy state and audit records.
+- Explain IPv4 range syntax and precedence directly in the Network access
+  panel.
+
 ## [1.5.0] - 2026-07-24
 
 ### Added

@@ -856,7 +856,8 @@ func (m *Manager) accessRuleHandler(response http.ResponseWriter, request *http.
 		writeError(response, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := m.saveAccessRule(body.ID, body.Action, body.Network); err != nil {
+	normalizedNetwork, err := m.saveAccessRule(body.ID, body.Action, body.Network)
+	if err != nil {
 		writeError(response, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -867,7 +868,7 @@ func (m *Manager) accessRuleHandler(response http.ResponseWriter, request *http.
 	m.auditRequestEvent(request, session.Username, event, map[string]string{
 		"rule_id": body.ID,
 		"action":  body.Action,
-		"network": body.Network,
+		"network": normalizedNetwork,
 	})
 	writeJSON(response, http.StatusOK, m.accessConfig())
 }

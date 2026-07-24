@@ -1,13 +1,20 @@
 package manager
 
 import (
+	"encoding/binary"
 	"errors"
+	"math/bits"
 	"net"
 	"net/http"
 	"net/netip"
 	"strings"
 	"time"
 )
+
+type accessNetwork struct {
+	canonical string
+	prefixes  []netip.Prefix
+}
 
 func requestIP(request *http.Request) (netip.Addr, error) {
 	host, _, err := net.SplitHostPort(request.RemoteAddr)
@@ -21,21 +28,106 @@ func requestIP(request *http.Request) (netip.Addr, error) {
 	return ip.Unmap(), nil
 }
 
-func normalizeNetwork(value string) (netip.Prefix, error) {
+func normalizeAccessNetwork(value string) (accessNetwork, error) {
 	value = strings.TrimSpace(value)
 	if prefix, err := netip.ParsePrefix(value); err == nil {
-		return prefix.Masked(), nil
+		prefix = prefix.Masked()
+		return accessNetwork{
+			canonical: prefix.String(),
+			prefixes:  []netip.Prefix{prefix},
+		}, nil
 	}
-	address, err := netip.ParseAddr(value)
-	if err != nil {
-		return netip.Prefix{}, errors.New("invalid IPv4/IPv6 address or CIDR network")
+	if address, err := netip.ParseAddr(value); err == nil {
+		address = address.Unmap()
+		addressBits := 128
+		if address.Is4() {
+			addressBits = 32
+		}
+		prefix := netip.PrefixFrom(address, addressBits)
+		return accessNetwork{
+			canonical: prefix.String(),
+			prefixes:  []netip.Prefix{prefix},
+		}, nil
 	}
-	address = address.Unmap()
-	bits := 128
-	if address.Is4() {
-		bits = 32
+
+	hyphens := strings.Count(value, "-")
+	tildes := strings.Count(value, "~")
+	if hyphens+tildes == 0 {
+		return accessNetwork{}, errors.New(
+			"invalid IPv4/IPv6 address, CIDR network, or inclusive IPv4 range",
+		)
 	}
-	return netip.PrefixFrom(address, bits), nil
+	if hyphens+tildes != 1 {
+		return accessNetwork{}, errors.New(
+			"an IPv4 range must contain exactly one '-' or '~' separator",
+		)
+	}
+	separator := "-"
+	if tildes == 1 {
+		separator = "~"
+	}
+	rangeParts := strings.SplitN(value, separator, 2)
+	start, startErr := netip.ParseAddr(strings.TrimSpace(rangeParts[0]))
+	end, endErr := netip.ParseAddr(strings.TrimSpace(rangeParts[1]))
+	if startErr != nil || endErr != nil {
+		return accessNetwork{}, errors.New(
+			"an IPv4 range must contain two IPv4 addresses",
+		)
+	}
+	start = start.Unmap()
+	end = end.Unmap()
+	if !start.Is4() || !end.Is4() {
+		return accessNetwork{}, errors.New("address ranges are supported for IPv4 only")
+	}
+
+	startValue := ipv4Value(start)
+	endValue := ipv4Value(end)
+	if startValue > endValue {
+		return accessNetwork{}, errors.New("IPv4 range start must not exceed its end")
+	}
+	if startValue == endValue {
+		prefix := netip.PrefixFrom(start, 32)
+		return accessNetwork{
+			canonical: prefix.String(),
+			prefixes:  []netip.Prefix{prefix},
+		}, nil
+	}
+	return accessNetwork{
+		canonical: start.String() + "-" + end.String(),
+		prefixes:  ipv4RangePrefixes(startValue, endValue),
+	}, nil
+}
+
+func ipv4Value(address netip.Addr) uint32 {
+	bytes := address.As4()
+	return binary.BigEndian.Uint32(bytes[:])
+}
+
+func ipv4Address(value uint32) netip.Addr {
+	var bytes [4]byte
+	binary.BigEndian.PutUint32(bytes[:], value)
+	return netip.AddrFrom4(bytes)
+}
+
+func ipv4RangePrefixes(start, end uint32) []netip.Prefix {
+	current := uint64(start)
+	last := uint64(end)
+	prefixes := make([]netip.Prefix, 0, 8)
+	for current <= last {
+		alignmentBits := bits.TrailingZeros32(uint32(current))
+		remaining := last - current + 1
+		sizeBits := bits.Len64(remaining) - 1
+		hostBits := alignmentBits
+		if sizeBits < hostBits {
+			hostBits = sizeBits
+		}
+		prefixes = append(prefixes, netip.PrefixFrom(
+			ipv4Address(uint32(current)),
+			32-hostBits,
+		))
+		current += uint64(1) << hostBits
+	}
+	return prefixes
 }
 
 func accessAllowed(ip netip.Addr, config AccessConfig, now time.Time) bool {
@@ -46,23 +138,24 @@ func accessAllowed(ip netip.Addr, config AccessConfig, now time.Time) bool {
 		if rule.Temporary && rule.ExpiresAt != nil && !now.Before(*rule.ExpiresAt) {
 			continue
 		}
-		prefix, err := netip.ParsePrefix(rule.Network)
+		network, err := normalizeAccessNetwork(rule.Network)
 		if err != nil {
 			continue
 		}
-		prefix = prefix.Masked()
-		if prefix.Addr().Is4() != ip.Is4() || !prefix.Contains(ip) {
-			continue
-		}
-		// An active exact-address emergency rule must keep the administrator
-		// connected even if an older deny rule has the same prefix.
-		if rule.Temporary && rule.Action == "allow" && prefix.Bits() == ip.BitLen() {
-			return true
-		}
-		bits := prefix.Bits()
-		if bits > bestBits || (bits == bestBits && rule.Action == "deny") {
-			bestBits = bits
-			bestAction = rule.Action
+		for _, prefix := range network.prefixes {
+			if prefix.Addr().Is4() != ip.Is4() || !prefix.Contains(ip) {
+				continue
+			}
+			// An active exact-address emergency rule must keep the administrator
+			// connected even if an older deny rule has the same prefix.
+			if rule.Temporary && rule.Action == "allow" && prefix.Bits() == ip.BitLen() {
+				return true
+			}
+			prefixBits := prefix.Bits()
+			if prefixBits > bestBits || (prefixBits == bestBits && rule.Action == "deny") {
+				bestBits = prefixBits
+				bestAction = rule.Action
+			}
 		}
 	}
 	if bestBits >= 0 {
@@ -130,13 +223,13 @@ func (m *Manager) setBasePolicy(policy string, currentIP netip.Addr) error {
 	return writeJSONAtomic(accessPath, m.access, 0600)
 }
 
-func (m *Manager) saveAccessRule(id, action, network string) error {
+func (m *Manager) saveAccessRule(id, action, network string) (string, error) {
 	if action != "allow" && action != "deny" {
-		return errors.New("rule action must be allow or deny")
+		return "", errors.New("rule action must be allow or deny")
 	}
-	prefix, err := normalizeNetwork(network)
+	normalized, err := normalizeAccessNetwork(network)
 	if err != nil {
-		return err
+		return "", err
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -145,26 +238,32 @@ func (m *Manager) saveAccessRule(id, action, network string) error {
 		for index := range m.access.Rules {
 			if m.access.Rules[index].ID == id {
 				if m.access.Rules[index].Temporary {
-					return errors.New("temporary emergency rules cannot be edited")
+					return "", errors.New("temporary emergency rules cannot be edited")
 				}
 				m.access.Rules[index].Action = action
-				m.access.Rules[index].Network = prefix.String()
-				return writeJSONAtomic(accessPath, m.access, 0600)
+				m.access.Rules[index].Network = normalized.canonical
+				if err := writeJSONAtomic(accessPath, m.access, 0600); err != nil {
+					return "", err
+				}
+				return normalized.canonical, nil
 			}
 		}
-		return errors.New("access rule not found")
+		return "", errors.New("access rule not found")
 	}
 	id, err = randomID()
 	if err != nil {
-		return err
+		return "", err
 	}
 	m.access.Rules = append(m.access.Rules, AccessRule{
 		ID:        id,
 		Action:    action,
-		Network:   prefix.String(),
+		Network:   normalized.canonical,
 		CreatedAt: time.Now(),
 	})
-	return writeJSONAtomic(accessPath, m.access, 0600)
+	if err := writeJSONAtomic(accessPath, m.access, 0600); err != nil {
+		return "", err
+	}
+	return normalized.canonical, nil
 }
 
 func (m *Manager) deleteAccessRule(id string) error {

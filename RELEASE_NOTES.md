@@ -1,7 +1,8 @@
-# MORDHAU Server Alpine Linux v1.5.0
+# MORDHAU Server Alpine Linux v1.6.0
 
-This release adds complete responsive management layouts for mobile browsers
-while retaining shared server-side metadata and persistent dashboard state.
+This release adds exact inclusive IPv4 ranges to the management access policy
+while retaining CIDR precedence, responsive layouts, shared metadata, and
+persistent dashboard state.
 
 ## Included
 
@@ -61,6 +62,8 @@ while retaining shared server-side metadata and persistent dashboard state.
   retaining the previous success time and using a capped retry delay
 - Scoped Game.ini `Mods=<Resource ID>` add, enable, disable, and remove actions
 - IPv4 and IPv6 address/CIDR access policies
+- Inclusive IPv4 ranges using `start-end` or `start~end`, canonical
+  persistence, and exact minimal-CIDR evaluation
 - Null-safe rendering for empty account, access-rule, mod, and dependency data
 - Account management, Argon2id password hashing, CSRF protection, and login
   throttling
