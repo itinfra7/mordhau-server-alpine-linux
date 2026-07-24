@@ -31,6 +31,7 @@ func (m *Manager) Handler() http.Handler {
 	mux.HandleFunc("/api/server/action", m.withSession(m.serverActionHandler))
 	mux.HandleFunc("/api/rcon/history", m.withSession(m.rconHistoryHandler))
 	mux.HandleFunc("/api/rcon/message", m.withSession(m.rconMessageHandler))
+	mux.HandleFunc("/api/rcon/command", m.withSession(m.rconCommandHandler))
 	mux.HandleFunc("/api/language", m.withSession(m.languageHandler))
 	mux.HandleFunc("/api/config", m.withSession(m.configHandler))
 	mux.HandleFunc("/api/config/mutate", m.withSession(m.configMutationHandler))
@@ -408,6 +409,105 @@ func (m *Manager) rconMessageHandler(
 		"utf8_bytes": strconv.Itoa(len(body.Message)),
 	})
 	writeJSON(response, http.StatusOK, map[string]string{"status": "sent"})
+}
+
+func (m *Manager) rconCommandHandler(
+	response http.ResponseWriter,
+	request *http.Request,
+	session Session,
+) {
+	if request.Method != http.MethodPost {
+		http.Error(response, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !validCSRF(request, session) {
+		writeError(response, http.StatusForbidden, "invalid CSRF token")
+		return
+	}
+	var body struct {
+		Command string `json:"command"`
+	}
+	if err := decodeJSON(response, request, &body); err != nil {
+		writeError(response, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	command, err := normalizeRCONCommand(body.Command)
+	if err != nil {
+		m.auditRequestEvent(request, session.Username, "rcon_command_rejected", map[string]string{
+			"reason": err.Error(),
+		})
+		writeError(response, http.StatusBadRequest, err.Error())
+		return
+	}
+	commandFields := strings.Fields(command)
+	details := map[string]string{
+		"command_name": strings.ToLower(commandFields[0]),
+		"characters":   strconv.Itoa(utf8.RuneCountInString(command)),
+		"utf8_bytes":   strconv.Itoa(len(command)),
+	}
+
+	m.rconCommandMu.Lock()
+	defer m.rconCommandMu.Unlock()
+
+	events := make([]RCONEvent, 0, 3)
+	if event, added := m.addRCONEvent(
+		"command",
+		session.Username+" > "+command,
+	); added {
+		events = append(events, event)
+	}
+
+	execute := m.runRCONCommand
+	if m.rconCommandExecute != nil {
+		execute = m.rconCommandExecute
+	}
+	result, err := execute(command)
+	if err != nil {
+		if event, added := m.addRCONEvent(
+			"command-error",
+			"RCON command failed: "+err.Error(),
+		); added {
+			events = append(events, event)
+		}
+		details["error"] = err.Error()
+		m.auditRequestEvent(request, session.Username, "rcon_command_failed", details)
+		writeError(response, http.StatusConflict, err.Error())
+		return
+	}
+
+	if len(result.Lines) == 0 {
+		if event, added := m.addRCONEvent(
+			"response",
+			"(no response text)",
+		); added {
+			events = append(events, event)
+		}
+	} else {
+		for _, line := range result.Lines {
+			if event, added := m.addRCONEvent("response", line); added {
+				events = append(events, event)
+			}
+		}
+	}
+	if result.Truncated {
+		if event, added := m.addRCONEvent(
+			"response",
+			"(response truncated by the web output limit)",
+		); added {
+			events = append(events, event)
+		}
+	}
+
+	details["response_lines"] = strconv.Itoa(len(result.Lines))
+	details["response_truncated"] = strconv.FormatBool(result.Truncated)
+	m.auditRequestEvent(request, session.Username, "rcon_command_executed", details)
+	writeJSON(response, http.StatusOK, map[string]any{
+		"status":             "executed",
+		"response_lines":     len(result.Lines),
+		"response_truncated": result.Truncated,
+		"events":             events,
+	})
 }
 
 func (m *Manager) rconHistoryHandler(

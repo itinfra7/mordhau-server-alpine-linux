@@ -658,6 +658,226 @@ func TestRCONPacketFramingPreservesUTF8(t *testing.T) {
 	}
 }
 
+func TestRCONCommandValidation(t *testing.T) {
+	command, err := normalizeRCONCommand(`  playerlist  `)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if command != "playerlist" {
+		t.Fatalf("normalized command = %q", command)
+	}
+	if _, err := normalizeRCONCommand(`kick "플레이어"`); err != nil {
+		t.Fatalf("multilingual command argument was rejected: %v", err)
+	}
+
+	for _, invalid := range []string{
+		"",
+		"   ",
+		"playerlist\nstatus",
+		"playerlist\tstatus",
+		string([]byte{0xff}),
+		strings.Repeat("a", rconCommandMaxRunes+1),
+		strings.Repeat("😀", rconCommandMaxBytes/4+1),
+	} {
+		if _, err := normalizeRCONCommand(invalid); !errors.Is(err, errInvalidRCONCommand) {
+			t.Fatalf("normalizeRCONCommand(%q) error = %v", invalid, err)
+		}
+	}
+}
+
+func TestExecuteRCONAdminCommandCollectsResponsePackets(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+
+	serverResult := make(chan string, 1)
+	releaseServer := make(chan struct{})
+	defer close(releaseServer)
+	go func() {
+		defer server.Close()
+		auth, err := readRCONPacket(server)
+		if err != nil {
+			serverResult <- err.Error()
+			return
+		}
+		if auth.ID != 101 || auth.Type != rconAuth || string(auth.Body) != "SecretRcon9" {
+			serverResult <- "unexpected authentication packet"
+			return
+		}
+		if err := writeRCONPacket(server, rconPacket{
+			ID:   auth.ID,
+			Type: rconAuthResponse,
+		}); err != nil {
+			serverResult <- err.Error()
+			return
+		}
+		command, err := readRCONPacket(server)
+		if err != nil {
+			serverResult <- err.Error()
+			return
+		}
+		if command.ID != rconAdminCommandPacketID ||
+			command.Type != rconExecCommand ||
+			string(command.Body) != "playerlist" {
+			serverResult <- "unexpected administrative command packet"
+			return
+		}
+		for _, response := range []string{
+			"Players:\r\nAlpha",
+			"Bravo\r\n한국어 응답",
+		} {
+			if err := writeRCONPacket(server, rconPacket{
+				ID:   command.ID,
+				Type: rconResponseValue,
+				Body: []byte(response),
+			}); err != nil {
+				serverResult <- err.Error()
+				return
+			}
+		}
+		serverResult <- ""
+		<-releaseServer
+	}()
+
+	result, commandSent, err := executeRCONAdminCommand(
+		client,
+		"SecretRcon9",
+		"playerlist",
+		"ko",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !commandSent {
+		t.Fatal("successful command was not marked as sent")
+	}
+	if result.Truncated {
+		t.Fatal("small command response was marked as truncated")
+	}
+	expected := []string{"Players:", "Alpha", "Bravo", "한국어 응답"}
+	if len(result.Lines) != len(expected) {
+		t.Fatalf("response lines = %#v", result.Lines)
+	}
+	for index := range expected {
+		if result.Lines[index] != expected[index] {
+			t.Fatalf("response line %d = %q, want %q",
+				index,
+				result.Lines[index],
+				expected[index],
+			)
+		}
+	}
+	if serverError := <-serverResult; serverError != "" {
+		t.Fatal(serverError)
+	}
+}
+
+func TestExecuteRCONAdminCommandReportsPossibleExecutionWithoutResponse(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+
+	serverResult := make(chan error, 1)
+	go func() {
+		auth, err := readRCONPacket(server)
+		if err == nil {
+			err = writeRCONPacket(server, rconPacket{
+				ID:   auth.ID,
+				Type: rconAuthResponse,
+			})
+		}
+		if err == nil {
+			_, err = readRCONPacket(server)
+		}
+		_ = server.Close()
+		serverResult <- err
+	}()
+
+	_, commandSent, err := executeRCONAdminCommand(
+		client,
+		"SecretRcon9",
+		"restartlevel",
+		"en",
+	)
+	if err == nil {
+		t.Fatal("missing command response was accepted")
+	}
+	if !commandSent {
+		t.Fatal("a written command was incorrectly safe to retry")
+	}
+	if serverError := <-serverResult; serverError != nil {
+		t.Fatal(serverError)
+	}
+}
+
+func TestRCONCommandHandlerPersistsOutputAndAuditsActor(t *testing.T) {
+	directory := t.TempDir()
+	manager := &Manager{
+		rconLogPath: filepath.Join(directory, "rcon.log"),
+		auditPath:   filepath.Join(directory, "audit.log"),
+	}
+	manager.rconCommandExecute = func(command string) (rconCommandResult, error) {
+		if command != "adminlogin SuperSecret" {
+			t.Fatalf("executor received %q", command)
+		}
+		return rconCommandResult{
+			Lines: []string{"first response", "한국어 응답"},
+		}, nil
+	}
+	session := Session{Username: "operator", CSRF: "csrf-token"}
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"http://manager.example/api/rcon/command",
+		strings.NewReader(`{"command":"adminlogin SuperSecret"}`),
+	)
+	request.Header.Set("X-CSRF-Token", session.CSRF)
+	response := httptest.NewRecorder()
+
+	manager.rconCommandHandler(response, request, session)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var result struct {
+		Status         string      `json:"status"`
+		ResponseLines  int         `json:"response_lines"`
+		ResponseEvents []RCONEvent `json:"events"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "executed" || result.ResponseLines != 2 ||
+		len(result.ResponseEvents) != 3 {
+		t.Fatalf("unexpected handler result: %+v", result)
+	}
+	if result.ResponseEvents[0].Kind != "command" ||
+		result.ResponseEvents[0].Text != "operator > adminlogin SuperSecret" ||
+		result.ResponseEvents[1].Kind != "response" ||
+		result.ResponseEvents[2].Text != "한국어 응답" {
+		t.Fatalf("unexpected command events: %#v", result.ResponseEvents)
+	}
+
+	history := manager.rconHistory(rconBrowserHistoryLimit)
+	if len(history) != 3 || history[2].Text != "한국어 응답" {
+		t.Fatalf("command output was not retained: %#v", history)
+	}
+	auditData, err := os.ReadFile(manager.auditPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	auditText := string(auditData)
+	for _, expected := range []string{
+		`"event":"rcon_command_executed"`,
+		`"account":"operator"`,
+		`"command_name":"adminlogin"`,
+		`"response_lines":"2"`,
+	} {
+		if !strings.Contains(auditText, expected) {
+			t.Fatalf("audit log is missing %q: %s", expected, auditText)
+		}
+	}
+	if strings.Contains(auditText, "SuperSecret") {
+		t.Fatal("RCON command arguments leaked into the web audit log")
+	}
+}
+
 func TestUnicodeRCONCommandUsesASCIIFileToken(t *testing.T) {
 	token := "012345678901234567890123"
 	command, err := unicodeRCONCommand(token)
@@ -1914,8 +2134,10 @@ func TestDashboardThemeAndMessageMarkup(t *testing.T) {
 	for _, expected := range []string{
 		`id="theme-toggle"`,
 		`content="width=device-width, initial-scale=1, viewport-fit=cover"`,
-		`src="/static/theme.js?v=1.8.3"`,
+		`src="/static/theme.js?v=1.8.4-dev"`,
 		`<label for="rcon-message">Send Message</label>`,
+		`<label for="rcon-command">Execute RCON Command</label>`,
+		`id="rcon-command-submit"`,
 		`id="mods-refresh-minutes"`,
 		`min="1" max="10080"`,
 		`value="60"`,
@@ -1945,7 +2167,7 @@ func TestDashboardThemeAndMessageMarkup(t *testing.T) {
 		t.Fatal(err)
 	}
 	loginSource := string(loginData)
-	if !strings.Contains(loginSource, `src="/static/theme.js?v=1.8.3"`) {
+	if !strings.Contains(loginSource, `src="/static/theme.js?v=1.8.4-dev"`) {
 		t.Fatal("login page does not initialize the persisted theme")
 	}
 	if !strings.Contains(loginSource, `viewport-fit=cover`) {
@@ -1969,6 +2191,7 @@ func TestDashboardThemeAndMessageMarkup(t *testing.T) {
 		`/api/mods/refresh`,
 		`/api/mods/refresh/settings`,
 		`/api/rcon/history`,
+		`/api/rcon/command`,
 		`Last successful refresh:`,
 		`resolvedOptions().timeZone`,
 		`comment: comment.value`,

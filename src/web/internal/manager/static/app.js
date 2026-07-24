@@ -161,6 +161,8 @@ function renderSnapshot(snapshot) {
   $("#rcon-status").classList.toggle("connected", snapshot.rcon_connected);
   $("#rcon-message-submit").disabled = operation.running || !snapshot.server_running;
   $("#rcon-message").disabled = operation.running || !snapshot.server_running;
+  $("#rcon-command-submit").disabled = operation.running || !snapshot.server_running;
+  $("#rcon-command").disabled = operation.running || !snapshot.server_running;
   appendRconEvents(snapshot.rcon_events || []);
 }
 
@@ -218,6 +220,30 @@ async function sendUnicodeMessage(event) {
     input.value = "";
     input.focus();
     toast("Message sent.");
+  } catch (error) {
+    toast(error.message, true);
+  } finally {
+    const snapshot = app.snapshot;
+    submit.disabled = !snapshot || snapshot.operation.running || !snapshot.server_running;
+  }
+}
+
+async function executeRCONCommand(event) {
+  event.preventDefault();
+  const input = $("#rcon-command");
+  const submit = $("#rcon-command-submit");
+  submit.disabled = true;
+  try {
+    const result = await api("/api/rcon/command", {
+      method: "POST",
+      body: { command: input.value },
+    });
+    appendRconEvents(result.events || []);
+    input.value = "";
+    input.focus();
+    const lines = Number(result.response_lines) || 0;
+    const suffix = result.response_truncated ? " · output truncated" : "";
+    toast(`Command executed · ${lines} response line${lines === 1 ? "" : "s"}${suffix}.`);
   } catch (error) {
     toast(error.message, true);
   } finally {
@@ -950,6 +976,7 @@ function bindEvents() {
   }));
   $$("[data-server-action]").forEach((button) =>
     button.addEventListener("click", () => serverAction(button.dataset.serverAction)));
+  $("#rcon-command-form").addEventListener("submit", executeRCONCommand);
   $("#rcon-message-form").addEventListener("submit", sendUnicodeMessage);
 
   $("#language-select").addEventListener("change", async (event) => {

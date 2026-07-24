@@ -22,6 +22,7 @@ The repository provides:
   management for Game.ini
 - Persistent initial-map and dedicated-server port selection
 - Authenticated RCON event streaming with UTF-8 player-chat integration
+- Authenticated administrative RCON command execution with retained responses
 - Persistent latest lifecycle results and append-only RCON event history
 - A server-only Unicode Bridge for acknowledged outbound multilingual messages
 - Web account and IPv4/IPv6 access-policy management with inclusive IPv4
@@ -219,6 +220,8 @@ The web manager provides:
   running
 - RCON authentication, acknowledged `listen allon` subscription, reconnection
   across live Game.ini credential changes, and live events
+- Administrative RCON command execution with bounded response collection and
+  immediate output in the retained Live RCON stream
 - Root-only RCON event persistence with recent-history loading for later
   administrator sessions
 - A Send Message form with a root-only UTF-8 spool, ASCII token RCON
@@ -316,9 +319,10 @@ Dedicated events identify login success, login failure, logout, server
 actions and their completion, language changes, initial-map and port changes,
 mod configuration, mod.io connection changes, manual metadata refreshes,
 server-wide refresh-interval changes, Game.ini and Engine.ini mutations,
-pending-configuration removal, Unicode server-message sends, account changes,
-network-policy changes, OpenRC boot-mode changes, and saved web-port changes.
-Requests without a valid session use the account name `unauthenticated`.
+pending-configuration removal, Unicode server-message sends, administrative
+RCON command success or failure, account changes, network-policy changes,
+OpenRC boot-mode changes, and saved web-port changes. Requests without a valid
+session use the account name `unauthenticated`.
 
 Passwords, request bodies, session cookies, CSRF tokens, RCON credentials,
 configuration values, and configuration revisions are not written to the
@@ -326,7 +330,9 @@ audit log. Configuration events identify the file, operation, section, and
 key without recording its value. Unicode server-message audit events record
 only UTF-8 byte and character counts, not message text. Network-rule events
 record whether a comment is present and its character count without recording
-the comment text.
+the comment text. RCON command audit events record the command name, character
+and byte counts, response-line count, truncation state, and outcome without
+recording command arguments or response text.
 
 ## Persistent Dashboard History
 
@@ -354,6 +360,9 @@ and text. The log is retained across web-service restarts. A newly connected
 administrator receives the latest 400 events once, then continues from the
 authenticated event stream without repeatedly transferring the entire
 on-disk history. The browser retains the same 400-event Live RCON window.
+Administrative commands, requesting account names, returned response lines,
+no-output results, failures, and output-truncation notices use this same
+history.
 
 ## Languages
 
@@ -394,6 +403,16 @@ because the current state is already shown above the console. Historical
 transport-status records are also filtered when loading retained RCON history.
 Connection transitions and non-idle failures remain available in the
 root-only web audit log.
+
+Administrative commands use a separate authenticated loopback RCON connection
+so command responses cannot interfere with the steady `listen allon`
+subscription. The manager rejects control characters, invalid UTF-8, empty
+commands, commands longer than 512 characters or 2,048 bytes, and serializes
+concurrent web requests. It collects matching response packets until a short
+idle boundary, with an eight-second total deadline and limits of 128 KiB and
+398 response lines. Response bytes use the same selected-language decoding as
+Live RCON events. Command text and returned output are retained in the
+root-only RCON event log and are visible to every authenticated administrator.
 
 The manager combines the current Game.ini RCON password with the saved RCON
 launch port. After each successful authentication, it stores the working
@@ -600,6 +619,9 @@ Changing a boot mode does not change the current process state.
   exact minimal CIDR blocks. Deny wins an equal-prefix tie except for the
   active emergency exact-address allow.
 - RCON connects to `127.0.0.1` from the web manager.
+- Every authenticated web account can issue commands with full RCON
+  administrator authority. Command arguments and responses are retained in
+  the root-only Live RCON history but excluded from the separate web audit log.
 - Unicode message files and their spool directory are root-only. RCON carries
   only a numeric token; the bridge constructs a fixed filename prefix and
   extension and does not accept a path from the command.
@@ -657,7 +679,8 @@ attribution, network-rule comment normalization and backward-compatible JSON,
 audit-log permissions and secret exclusion, persistent item and whole-section
 INI disable/enable round trips, duplicate ordering, virtual-section recovery,
 legacy-marker migration, RCON credential fallback order, idle keepalive
-framing, zero-byte
+framing, administrative command validation, response packet collection,
+actor attribution and audit argument exclusion, zero-byte
 versus partial-packet timeout handling, transport-status filtering, packet
 framing, Korean legacy decoding, current all-broadcast subscription syntax
 and response filtering, UTF-8 chat log parsing, partial writes, log rotation,
@@ -674,9 +697,9 @@ registration, existing server-actor preservation, backup creation, and
 idempotent reinstallation. Static asset tests verify the default-light theme
 initializer, persistent theme, server-managed mod-refresh controls,
 browser-time-zone timestamps, initial RCON history loading, the Live RCON
-message form, mobile viewport metadata, touch targets, input sizing, safe-area
-handling, narrow-screen control reflow, and mobile visibility of server and
-account status.
+message and administrative-command forms, mobile viewport metadata, touch
+targets, input sizing, safe-area handling, narrow-screen control reflow, and
+mobile visibility of server and account status.
 
 ## Update and Rollback
 

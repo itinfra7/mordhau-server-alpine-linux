@@ -5,9 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="light dark">
   <title>MORDHAU Control</title>
-  <script src="/static/theme.js?v=1.8.3"></script>
-  <link rel="stylesheet" href="/static/app.css?v=1.8.3">
-  <script src="/static/app.js?v=1.8.3" defer></script>
+  <script src="/static/theme.js?v=1.8.4-dev"></script>
+  <link rel="stylesheet" href="/static/app.css?v=1.8.4-dev">
+  <script src="/static/app.js?v=1.8.4-dev" defer></script>
 </head>
 <body>
   <div class="ambient ambient-one"></div>
@@ -110,7 +110,28 @@
             </div>
             <span id="rcon-status" class="connection-pill">Waiting</span>
           </div>
-          <p class="hint">Authenticated <code>listen allon</code> events with player chat followed from the UTF-8 game log.</p>
+          <p class="hint">Authenticated <code>listen allon</code> events, UTF-8 game-log chat, and on-demand RCON command responses.</p>
+          <form id="rcon-command-form" class="rcon-send-form">
+            <label for="rcon-command">Execute RCON Command</label>
+            <div class="control-row">
+              <input
+                id="rcon-command"
+                type="text"
+                maxlength="512"
+                autocomplete="off"
+                autocapitalize="none"
+                spellcheck="false"
+                enterkeyhint="send"
+                placeholder="playerlist"
+                required
+              >
+              <button id="rcon-command-submit" class="secondary" type="submit">Execute</button>
+            </div>
+            <small>
+              Commands run with full RCON administrator authority. The requesting account,
+              command, and returned output are retained in the Live RCON history below.
+            </small>
+          </form>
           <form id="rcon-message-form" class="rcon-send-form">
             <label for="rcon-message">Send Message</label>
             <div class="control-row">

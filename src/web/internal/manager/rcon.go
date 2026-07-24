@@ -43,6 +43,13 @@ const (
 	rconIdleReadTimeout       = 90 * time.Second
 	rconKeepaliveWriteTimeout = 5 * time.Second
 	rconKeepalivePacketID     = 103
+	rconAdminCommandPacketID  = 4101
+	rconCommandTimeout        = 8 * time.Second
+	rconCommandIdleTimeout    = 750 * time.Millisecond
+	rconCommandMaxRunes       = 512
+	rconCommandMaxBytes       = 2048
+	rconCommandMaxOutputBytes = 128 << 10
+	rconCommandMaxOutputLines = 398
 
 	unicodeBridgePayloadPrefix = "unicode.say "
 	unicodeBridgeCommandPrefix = "string " + unicodeBridgePayloadPrefix
@@ -55,7 +62,10 @@ const (
 	unicodeMessageMaxBytes     = 2048
 )
 
-var errInvalidUnicodeMessage = errors.New("invalid Unicode server message")
+var (
+	errInvalidRCONCommand    = errors.New("invalid RCON command")
+	errInvalidUnicodeMessage = errors.New("invalid Unicode server message")
+)
 
 type rconPacket struct {
 	ID   int32
@@ -77,6 +87,12 @@ func (reader *byteCountingReader) Read(buffer []byte) (int, error) {
 type rconSettings struct {
 	Password string `json:"password"`
 	Port     int    `json:"port"`
+}
+
+type rconCommandResult struct {
+	Lines       []string
+	Truncated   bool
+	outputBytes int
 }
 
 func (settings rconSettings) valid() bool {
@@ -106,10 +122,10 @@ func (m *Manager) setRCONState(connected bool, status string) {
 	m.rconMu.Unlock()
 }
 
-func (m *Manager) addRCONEvent(kind, text string) {
+func (m *Manager) addRCONEvent(kind, text string) (RCONEvent, bool) {
 	text = strings.TrimSpace(strings.ReplaceAll(text, "\x00", ""))
 	if text == "" || isRCONTransportStatusEvent(kind, text) {
-		return
+		return RCONEvent{}, false
 	}
 	m.rconMu.Lock()
 	m.rconSequence++
@@ -125,6 +141,7 @@ func (m *Manager) addRCONEvent(kind, text string) {
 	if persistErr != nil {
 		log.Printf("append RCON event log: %v", persistErr)
 	}
+	return event, true
 }
 
 func isRCONTransportStatusEvent(kind, text string) bool {
@@ -434,6 +451,174 @@ func currentRCONCandidates() []rconSettings {
 		cached = nil
 	}
 	return rconCandidates(currentSettings, cached)
+}
+
+func normalizeRCONCommand(command string) (string, error) {
+	if !utf8.ValidString(command) {
+		return "", fmt.Errorf("%w: command is not valid UTF-8", errInvalidRCONCommand)
+	}
+	for _, character := range command {
+		if unicode.IsControl(character) {
+			return "", fmt.Errorf(
+				"%w: control characters are not allowed",
+				errInvalidRCONCommand,
+			)
+		}
+	}
+	command = strings.TrimSpace(command)
+	if command == "" {
+		return "", fmt.Errorf("%w: command cannot be empty", errInvalidRCONCommand)
+	}
+	if len(command) > rconCommandMaxBytes {
+		return "", fmt.Errorf(
+			"%w: command exceeds %d UTF-8 bytes",
+			errInvalidRCONCommand,
+			rconCommandMaxBytes,
+		)
+	}
+	if utf8.RuneCountInString(command) > rconCommandMaxRunes {
+		return "", fmt.Errorf(
+			"%w: command exceeds %d characters",
+			errInvalidRCONCommand,
+			rconCommandMaxRunes,
+		)
+	}
+	return command, nil
+}
+
+func (result *rconCommandResult) appendText(text string) {
+	if result.Truncated {
+		return
+	}
+	for _, line := range filteredRCONLines(text) {
+		if len(result.Lines) >= rconCommandMaxOutputLines {
+			result.Truncated = true
+			return
+		}
+		remaining := rconCommandMaxOutputBytes - result.outputBytes
+		if remaining <= 0 {
+			result.Truncated = true
+			return
+		}
+		if len(line) > remaining {
+			line = strings.ToValidUTF8(line[:remaining], "")
+			result.Truncated = true
+		}
+		if line != "" {
+			result.Lines = append(result.Lines, line)
+			result.outputBytes += len(line)
+		}
+		if result.Truncated {
+			return
+		}
+	}
+}
+
+func executeRCONAdminCommand(
+	connection net.Conn,
+	password string,
+	command string,
+	language string,
+) (rconCommandResult, bool, error) {
+	var result rconCommandResult
+	if err := authenticateRCON(connection, password); err != nil {
+		return result, false, err
+	}
+
+	responseDeadline := time.Now().Add(rconCommandTimeout)
+	if err := connection.SetDeadline(responseDeadline); err != nil {
+		return result, false, err
+	}
+	defer func() {
+		_ = connection.SetDeadline(time.Time{})
+	}()
+	commandSent := true
+	if err := writeRCONPacket(connection, rconPacket{
+		ID:   rconAdminCommandPacketID,
+		Type: rconExecCommand,
+		Body: []byte(command),
+	}); err != nil {
+		return result, commandSent, err
+	}
+
+	receivedResponse := false
+	for {
+		packet, err := readRCONPacket(connection)
+		if err != nil {
+			var networkError net.Error
+			responseFinished := receivedResponse &&
+				(errors.Is(err, io.EOF) ||
+					(errors.As(err, &networkError) && networkError.Timeout()))
+			if responseFinished {
+				return result, commandSent, nil
+			}
+			if errors.As(err, &networkError) && networkError.Timeout() {
+				return result, commandSent, errors.New("timed out waiting for the RCON command response")
+			}
+			return result, commandSent, err
+		}
+		if packet.ID != rconAdminCommandPacketID {
+			continue
+		}
+
+		receivedResponse = true
+		result.appendText(decodeRCON(packet.Body, language))
+		if result.Truncated {
+			return result, commandSent, nil
+		}
+
+		nextDeadline := time.Now().Add(rconCommandIdleTimeout)
+		if nextDeadline.After(responseDeadline) {
+			nextDeadline = responseDeadline
+		}
+		if err := connection.SetReadDeadline(nextDeadline); err != nil {
+			return result, commandSent, err
+		}
+	}
+}
+
+func (m *Manager) runRCONCommand(command string) (rconCommandResult, error) {
+	var result rconCommandResult
+	if !serverRunning() {
+		return result, errors.New("the dedicated server is not running")
+	}
+
+	candidates := currentRCONCandidates()
+	if len(candidates) == 0 {
+		return result, errors.New("RCON settings are unavailable")
+	}
+
+	var lastErr error
+	for _, candidate := range candidates {
+		address := net.JoinHostPort("127.0.0.1", strconv.Itoa(candidate.Port))
+		connection, err := net.DialTimeout("tcp", address, 5*time.Second)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		var commandSent bool
+		result, commandSent, err = executeRCONAdminCommand(
+			connection,
+			candidate.Password,
+			command,
+			m.currentLanguage(),
+		)
+		_ = connection.Close()
+		if err != nil {
+			lastErr = err
+			if commandSent {
+				return result, fmt.Errorf("execute RCON command: %w", lastErr)
+			}
+			continue
+		}
+		_ = saveLastRCONSettings(candidate)
+		return result, nil
+	}
+
+	if lastErr == nil {
+		lastErr = errors.New("no RCON connection candidate succeeded")
+	}
+	return result, fmt.Errorf("execute RCON command: %w", lastErr)
 }
 
 func executeRCONCommand(connection net.Conn, password string, command []byte) error {

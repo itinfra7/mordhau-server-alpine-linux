@@ -34,13 +34,15 @@ type Manager struct {
 	metrics   Metrics
 	cpu       cpuSample
 
-	rconMu        sync.RWMutex
-	rconConnected bool
-	rconStatus    string
-	rconEvents    []RCONEvent
-	rconSequence  uint64
-	rconLogMu     sync.Mutex
-	rconLogPath   string
+	rconMu             sync.RWMutex
+	rconConnected      bool
+	rconStatus         string
+	rconEvents         []RCONEvent
+	rconSequence       uint64
+	rconLogMu          sync.Mutex
+	rconLogPath        string
+	rconCommandMu      sync.Mutex
+	rconCommandExecute func(command string) (rconCommandResult, error)
 
 	loginMu       sync.Mutex
 	loginAttempts map[string]*loginAttempt

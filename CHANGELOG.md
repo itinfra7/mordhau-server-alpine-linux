@@ -4,6 +4,23 @@ All notable changes to this repository are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Add authenticated administrative RCON command execution from the Live RCON
+  panel with immediate, retained command and response events.
+- Add bounded multi-packet response collection with selected-language legacy
+  decoding, explicit no-output and truncation records, and mobile controls.
+
+### Security
+
+- Reject empty, invalid UTF-8, oversized, and control-character-containing
+  RCON commands.
+- Serialize web-issued RCON commands and bound each response by time, bytes,
+  and line count.
+- Attribute command success and failure to the authenticated account and
+  canonical client address while excluding command arguments from the web
+  audit log.
+
 ## [1.8.3] - 2026-07-24
 
 ### Added

@@ -423,6 +423,10 @@ input:focus, select:focus { border-color: rgba(233, 79, 81, .65); box-shadow: 0 
   gap: .45rem;
   margin: 1rem 0;
 }
+.rcon-send-form + .rcon-send-form {
+  padding-top: 1rem;
+  border-top: 1px solid var(--line);
+}
 .rcon-send-form .control-row { flex-wrap: nowrap; }
 .rcon-send-form input { flex: 1; min-width: 0; }
 .rcon-send-form small { color: var(--muted); }
@@ -442,6 +446,8 @@ input:focus, select:focus { border-color: rgba(233, 79, 81, .65); box-shadow: 0 
 .console-text { min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .console-line.system .console-text { color: var(--console-system); }
 .console-line.outbound .console-text { color: var(--console-outbound); }
+.console-line.command .console-text { color: var(--console-outbound); font-weight: 700; }
+.console-line.command-error .console-text { color: var(--red-bright); }
 
 .inline-form, .account-create, .rule-create { display: flex; align-items: end; gap: .55rem; margin: 1rem 0; }
 .inline-form input { width: min(28rem, 65vw); }
