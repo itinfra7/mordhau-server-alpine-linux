@@ -2,6 +2,7 @@ package manager
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -22,6 +23,32 @@ import (
 	"golang.org/x/text/encoding/korean"
 	"golang.org/x/text/transform"
 )
+
+type timeoutOnceConnection struct {
+	net.Conn
+	once sync.Once
+}
+
+type testTimeoutError struct{}
+
+func (testTimeoutError) Error() string   { return "test idle timeout" }
+func (testTimeoutError) Timeout() bool   { return true }
+func (testTimeoutError) Temporary() bool { return true }
+
+func (connection *timeoutOnceConnection) Read(buffer []byte) (int, error) {
+	timedOut := false
+	connection.once.Do(func() {
+		timedOut = true
+	})
+	if timedOut {
+		return 0, &net.OpError{
+			Op:  "read",
+			Net: "tcp",
+			Err: testTimeoutError{},
+		}
+	}
+	return connection.Conn.Read(buffer)
+}
 
 func TestRandomPasswordShape(t *testing.T) {
 	for i := 0; i < 100; i++ {
@@ -782,6 +809,145 @@ func TestRCONAllBroadcastSubscriptionUsesCurrentSyntax(t *testing.T) {
 	}
 }
 
+func TestConsumeRCONContinuesAfterIdleTimeout(t *testing.T) {
+	client, server := net.Pipe()
+	connection := &timeoutOnceConnection{Conn: client}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	manager := &Manager{}
+	go func() {
+		done <- manager.consumeRCON(ctx, connection)
+	}()
+
+	if err := writeRCONPacket(server, rconPacket{
+		ID:   200,
+		Type: rconResponseValue,
+		Body: []byte("Matchstate: active"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	deadline := time.Now().Add(time.Second)
+	for {
+		manager.rconMu.RLock()
+		events := append([]RCONEvent(nil), manager.rconEvents...)
+		manager.rconMu.RUnlock()
+		if len(events) == 1 {
+			if events[0].Text != "Matchstate: active" {
+				t.Fatalf("unexpected RCON event: %#v", events[0])
+			}
+			break
+		}
+		select {
+		case err := <-done:
+			t.Fatalf("consumeRCON returned after an idle timeout: %v", err)
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("RCON packet was not consumed after the idle timeout")
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	cancel()
+	_ = server.Close()
+	_ = client.Close()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("consumeRCON did not stop after cancellation and connection close")
+	}
+}
+
+func TestPartialRCONReadTimeoutIsNotIdle(t *testing.T) {
+	err := &net.OpError{
+		Op:  "read",
+		Net: "tcp",
+		Err: testTimeoutError{},
+	}
+	if !isRCONIdleTimeout(err, 0) {
+		t.Fatal("a timeout before receiving packet bytes was not treated as idle")
+	}
+	if isRCONIdleTimeout(err, 1) {
+		t.Fatal("a timeout after receiving packet bytes was incorrectly treated as idle")
+	}
+	if isRCONIdleTimeout(io.EOF, 0) {
+		t.Fatal("EOF was incorrectly treated as an idle timeout")
+	}
+}
+
+func TestRCONTransportStatusEventsAreHidden(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "mordhau-rcon.log")
+	manager := &Manager{rconLogPath: path}
+	if err := manager.loadRCONEventLog(); err != nil {
+		t.Fatal(err)
+	}
+	for _, message := range []string{
+		rconConnectedEvent,
+		rconPreviousEvent,
+		rconClosedEventPrefix + " read tcp: i/o timeout",
+	} {
+		manager.addRCONEvent("system", message)
+	}
+	manager.addRCONEvent("rcon", "Killfeed: retained")
+
+	events := manager.rconHistory(rconBrowserHistoryLimit)
+	if len(events) != 1 || events[0].Text != "Killfeed: retained" {
+		t.Fatalf("transport status leaked into RCON history: %#v", events)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "RCON connected") ||
+		strings.Contains(string(data), rconClosedEventPrefix) {
+		t.Fatalf("transport status was persisted: %s", data)
+	}
+}
+
+func TestStoredRCONTransportStatusEventsAreFiltered(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "mordhau-rcon.log")
+	now := time.Now()
+	stored := []RCONEvent{
+		{Sequence: 1, Time: now, Text: rconConnectedEvent, Kind: "system"},
+		{Sequence: 2, Time: now, Text: "Scorefeed: retained", Kind: "rcon"},
+		{
+			Sequence: 3,
+			Time:     now,
+			Text:     rconClosedEventPrefix + " read tcp: i/o timeout",
+			Kind:     "system",
+		},
+	}
+	var data bytes.Buffer
+	encoder := json.NewEncoder(&data)
+	for _, event := range stored {
+		if err := encoder.Encode(event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(path, data.Bytes(), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	manager := &Manager{rconLogPath: path}
+	if err := manager.loadRCONEventLog(); err != nil {
+		t.Fatal(err)
+	}
+	events := manager.rconHistory(rconBrowserHistoryLimit)
+	if len(events) != 1 ||
+		events[0].Sequence != 2 ||
+		events[0].Text != "Scorefeed: retained" ||
+		manager.rconSequence != 3 {
+		t.Fatalf("stored transport status was not filtered correctly: %#v", events)
+	}
+	manager.addRCONEvent("rcon", "Custom: next")
+	events = manager.rconHistory(rconBrowserHistoryLimit)
+	if len(events) != 2 || events[1].Sequence != 4 {
+		t.Fatalf("sequence did not continue after filtered records: %#v", events)
+	}
+}
+
 func TestRCONBroadcastOptionsHelpIsHidden(t *testing.T) {
 	lines := filteredRCONLines(
 		"Chat: retained\r\n" +
@@ -1499,7 +1665,7 @@ func TestDashboardThemeAndMessageMarkup(t *testing.T) {
 	for _, expected := range []string{
 		`id="theme-toggle"`,
 		`content="width=device-width, initial-scale=1, viewport-fit=cover"`,
-		`src="/static/theme.js?v=1.7.0"`,
+		`src="/static/theme.js?v=1.7.1"`,
 		`<label for="rcon-message">Send Message</label>`,
 		`id="mods-refresh-minutes"`,
 		`min="1" max="10080"`,
@@ -1530,7 +1696,7 @@ func TestDashboardThemeAndMessageMarkup(t *testing.T) {
 		t.Fatal(err)
 	}
 	loginSource := string(loginData)
-	if !strings.Contains(loginSource, `src="/static/theme.js?v=1.7.0"`) {
+	if !strings.Contains(loginSource, `src="/static/theme.js?v=1.7.1"`) {
 		t.Fatal("login page does not initialize the persisted theme")
 	}
 	if !strings.Contains(loginSource, `viewport-fit=cover`) {
@@ -1558,6 +1724,7 @@ func TestDashboardThemeAndMessageMarkup(t *testing.T) {
 		`resolvedOptions().timeZone`,
 		`comment: comment.value`,
 		`typeof rule.comment === "string"`,
+		`event.text.startsWith("RCON connection closed:")`,
 	} {
 		if !strings.Contains(appSource, expected) {
 			t.Fatalf("frontend is missing %q", expected)

@@ -170,6 +170,12 @@ function appendRconEvents(events) {
   for (const event of events) {
     if (event.sequence <= app.rconSequence) continue;
     app.rconSequence = event.sequence;
+    if (event.kind === "system" &&
+        (event.text === "RCON connected; all broadcasts enabled" ||
+         event.text === "RCON reconnected with the running server's previous settings; all broadcasts enabled" ||
+         event.text.startsWith("RCON connection closed:"))) {
+      continue;
+    }
     const line = document.createElement("div");
     line.className = `console-line ${event.kind}`;
     const timestamp = document.createElement("span");

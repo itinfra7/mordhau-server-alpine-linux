@@ -2,6 +2,20 @@
 
 All notable changes to this repository are documented in this file.
 
+## [1.7.1] - 2026-07-24
+
+### Fixed
+
+- Treat a 90-second RCON read deadline with no incoming broadcasts as an idle
+  wake-up instead of closing and reconnecting an otherwise healthy local
+  connection.
+- Keep the connected status active across idle read deadlines.
+- Omit redundant RCON connection, reconnection, and connection-closed
+  transport messages from Live RCON and retained history.
+- Preserve non-idle connection diagnostics in the root-only web audit log.
+- Add regression tests for idle-timeout continuation, future transport-event
+  suppression, retained-history filtering, and sequence continuity.
+
 ## [1.7.0] - 2026-07-24
 
 ### Added

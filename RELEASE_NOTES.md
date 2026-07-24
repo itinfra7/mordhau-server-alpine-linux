@@ -1,8 +1,8 @@
-# MORDHAU Server Alpine Linux v1.7.0
+# MORDHAU Server Alpine Linux v1.7.1
 
-This release adds persistent optional comments to individual network access
-rules while retaining exact inclusive IPv4 ranges, CIDR precedence,
-responsive layouts, shared metadata, and persistent dashboard state.
+This release keeps healthy RCON subscriptions connected during broadcast-idle
+periods and removes redundant transport status from Live RCON while retaining
+network-rule comments, responsive layouts, and persistent dashboard state.
 
 ## Included
 
@@ -78,6 +78,11 @@ responsive layouts, shared metadata, and persistent dashboard state.
   server actions, port and map changes, mod configuration, and administrative
   changes
 - RCON `listen allon` event streaming with multilingual decoding
+- Idle RCON read deadlines that retain the authenticated connection instead
+  of forcing a reconnect every 90 seconds without broadcast traffic
+- RCON transport status shown above the console and recorded in the web audit
+  log instead of being duplicated in Live RCON
+- Filtering of previously retained connection and timeout status records
 - Append-only root-only JSON Lines persistence for Live RCON events
 - Initial loading of the latest 400 RCON events for administrators who connect
   after the events were received or after a web-service restart

@@ -62,6 +62,9 @@ func (m *Manager) loadRCONEventLog() error {
 			continue
 		}
 		sequence = event.Sequence
+		if isRCONTransportStatusEvent(event.Kind, event.Text) {
+			continue
+		}
 		events = retainRCONEvent(events, event)
 	}
 	if err := scanner.Err(); err != nil {
