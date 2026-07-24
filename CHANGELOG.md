@@ -2,6 +2,15 @@
 
 All notable changes to this repository are documented in this file.
 
+## [1.8.1] - 2026-07-24
+
+### Changed
+
+- Sample CPU, memory, swap, and MORDHAU-filesystem utilization once per minute
+  through the shared server-side collector.
+- Keep the authenticated event stream responsive for lifecycle, process, RCON,
+  and configuration state without repeating OS metric collection per client.
+
 ## [1.8.0] - 2026-07-24
 
 ### Added

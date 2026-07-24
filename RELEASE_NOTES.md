@@ -1,8 +1,9 @@
-# MORDHAU Server Alpine Linux v1.8.0
+# MORDHAU Server Alpine Linux v1.8.1
 
-This release adds strict trusted reverse-proxy client-IP resolution while
-preserving direct HTTP access, network-rule comments, responsive layouts,
-persistent dashboard state, and RCON idle keepalives.
+This release changes shared OS resource sampling to a one-minute interval and
+includes strict trusted reverse-proxy client-IP resolution while preserving
+direct HTTP access, network-rule comments, responsive layouts, persistent
+dashboard state, and RCON idle keepalives.
 
 ## Included
 
@@ -25,7 +26,8 @@ persistent dashboard state, and RCON idle keepalives.
   summaries, statuses, and notifications
 - Mobile keyboard hints that disable unwanted autocapitalization and spell
   checking for technical fields
-- Live CPU, memory, swap, and server-filesystem metrics
+- CPU, memory, swap, and server-filesystem metrics collected once per minute
+  by one server-side sampler and shared across administrator sessions
 - Persistent latest lifecycle action, requester account, canonical client IP,
   result, timestamps, and command output
 - Game.ini and Engine.ini structured editing with running-server staging

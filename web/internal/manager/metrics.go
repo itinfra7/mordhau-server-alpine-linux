@@ -19,6 +19,8 @@ type cpuSample struct {
 	valid bool
 }
 
+const metricsSampleInterval = time.Minute
+
 func readCPUSample() (cpuSample, error) {
 	file, err := os.Open("/proc/stat")
 	if err != nil {
@@ -146,7 +148,7 @@ func (m *Manager) sampleMetrics() {
 
 func (m *Manager) metricsLoop(ctx context.Context) {
 	m.sampleMetrics()
-	ticker := time.NewTicker(time.Second)
+	ticker := time.NewTicker(metricsSampleInterval)
 	defer ticker.Stop()
 	for {
 		select {

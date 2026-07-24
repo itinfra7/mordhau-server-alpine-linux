@@ -35,6 +35,12 @@ func (testTimeoutError) Error() string   { return "test idle timeout" }
 func (testTimeoutError) Timeout() bool   { return true }
 func (testTimeoutError) Temporary() bool { return true }
 
+func TestMetricsSampleInterval(t *testing.T) {
+	if metricsSampleInterval != time.Minute {
+		t.Fatalf("metrics sample interval = %s, want %s", metricsSampleInterval, time.Minute)
+	}
+}
+
 func (connection *timeoutOnceConnection) Read(buffer []byte) (int, error) {
 	timedOut := false
 	connection.once.Do(func() {
@@ -1703,7 +1709,7 @@ func TestDashboardThemeAndMessageMarkup(t *testing.T) {
 	for _, expected := range []string{
 		`id="theme-toggle"`,
 		`content="width=device-width, initial-scale=1, viewport-fit=cover"`,
-		`src="/static/theme.js?v=1.8.0"`,
+		`src="/static/theme.js?v=1.8.1"`,
 		`<label for="rcon-message">Send Message</label>`,
 		`id="mods-refresh-minutes"`,
 		`min="1" max="10080"`,
@@ -1734,7 +1740,7 @@ func TestDashboardThemeAndMessageMarkup(t *testing.T) {
 		t.Fatal(err)
 	}
 	loginSource := string(loginData)
-	if !strings.Contains(loginSource, `src="/static/theme.js?v=1.8.0"`) {
+	if !strings.Contains(loginSource, `src="/static/theme.js?v=1.8.1"`) {
 		t.Fatal("login page does not initialize the persisted theme")
 	}
 	if !strings.Contains(loginSource, `viewport-fit=cover`) {

@@ -14,8 +14,8 @@ The repository provides:
 - SteamCMD validation before every server start or restart
 - POSIX shell lifecycle control
 - OpenRC service definitions for the game server and web manager
-- An animated responsive Go web manager with live system metrics and
-  persistent light/dark themes
+- An animated responsive Go web manager with shared one-minute system metrics
+  and persistent light/dark themes
 - Structured Game.ini and Engine.ini editing
 - Optional mod.io metadata, recursive dependency status, and dependency
   management for Game.ini
@@ -77,11 +77,11 @@ MORDHAU Dedicated Server, and Steam update staging.
 ### Release archive
 
 ```sh
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v1.8.0/mordhau-server-alpine-linux-v1.8.0.tar.gz
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v1.8.0/SHA256SUMS
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v1.8.1/mordhau-server-alpine-linux-v1.8.1.tar.gz
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v1.8.1/SHA256SUMS
 sha256sum -c SHA256SUMS
-tar -xzf mordhau-server-alpine-linux-v1.8.0.tar.gz
-cd mordhau-server-alpine-linux-v1.8.0
+tar -xzf mordhau-server-alpine-linux-v1.8.1.tar.gz
+cd mordhau-server-alpine-linux-v1.8.1
 chmod +x mordhau-server-alpine-linux.sh
 ./mordhau-server-alpine-linux.sh
 ```
@@ -194,7 +194,8 @@ The web manager provides:
 - Optional UTF-8 comments on individual network rules
 - Selectable `all allow` or `all deny` base policy
 - A 30-minute exact-address emergency allow when switching to `all deny`
-- Live CPU, memory, swap, and MORDHAU-filesystem utilization
+- CPU, memory, swap, and MORDHAU-filesystem utilization sampled once per
+  minute by one server-side collector and shared across administrator sessions
 - A default light theme with a persistent light/dark toggle
 - Responsive phone, tablet, and desktop layouts with notched-display safe
   areas and touch-sized controls
