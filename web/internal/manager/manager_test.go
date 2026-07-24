@@ -1076,8 +1076,15 @@ func TestWebAuditLogRecordsAccountIPAndSecondPrecision(t *testing.T) {
 	if _, err := time.Parse(auditTimeLayout, record.Timestamp); err != nil {
 		t.Fatalf("audit timestamp is not second-precision RFC3339: %q", record.Timestamp)
 	}
-	if record.Account != "operator" || record.ClientIP != "203.0.113.40" {
-		t.Fatalf("unexpected audit actor: account=%q ip=%q", record.Account, record.ClientIP)
+	if record.Account != "operator" ||
+		record.ClientIP != "203.0.113.40" ||
+		record.PeerIP != "203.0.113.40" {
+		t.Fatalf(
+			"unexpected audit actor: account=%q client=%q peer=%q",
+			record.Account,
+			record.ClientIP,
+			record.PeerIP,
+		)
 	}
 	if record.Method != http.MethodPost || record.Path != "/api/config/mutate" {
 		t.Fatalf("unexpected request audit fields: method=%q path=%q", record.Method, record.Path)
@@ -1098,12 +1105,13 @@ func TestLifecycleOperationStateSurvivesManagerRestart(t *testing.T) {
 	manager := &Manager{
 		operationPath: path,
 		op: Operation{
-			Action:     "restart",
-			Successful: true,
-			StartedAt:  started,
-			FinishedAt: finished,
-			Requested:  "operator",
-			Output:     "update complete\nserver started",
+			Action:      "restart",
+			Successful:  true,
+			StartedAt:   started,
+			FinishedAt:  finished,
+			Requested:   "operator",
+			RequestedIP: "198.51.100.60",
+			Output:      "update complete\nserver started",
 		},
 	}
 	manager.mu.Lock()
@@ -1120,6 +1128,7 @@ func TestLifecycleOperationStateSurvivesManagerRestart(t *testing.T) {
 	if reloaded.op.Action != "restart" ||
 		!reloaded.op.Successful ||
 		reloaded.op.Requested != "operator" ||
+		reloaded.op.RequestedIP != "198.51.100.60" ||
 		reloaded.op.Output != "update complete\nserver started" ||
 		!reloaded.op.StartedAt.Equal(started) ||
 		!reloaded.op.FinishedAt.Equal(finished) {
@@ -1280,8 +1289,15 @@ func TestHTTPAccessAuditIncludesUnauthenticatedRequests(t *testing.T) {
 	if record.Event != "http_access" || record.Account != "unauthenticated" {
 		t.Fatalf("unexpected access audit record: event=%q account=%q", record.Event, record.Account)
 	}
-	if record.Status != http.StatusNoContent || record.ClientIP != "2001:db8::10" {
-		t.Fatalf("unexpected access result: status=%d ip=%q", record.Status, record.ClientIP)
+	if record.Status != http.StatusNoContent ||
+		record.ClientIP != "2001:db8::10" ||
+		record.PeerIP != "2001:db8::10" {
+		t.Fatalf(
+			"unexpected access result: status=%d client=%q peer=%q",
+			record.Status,
+			record.ClientIP,
+			record.PeerIP,
+		)
 	}
 }
 
@@ -1687,7 +1703,7 @@ func TestDashboardThemeAndMessageMarkup(t *testing.T) {
 	for _, expected := range []string{
 		`id="theme-toggle"`,
 		`content="width=device-width, initial-scale=1, viewport-fit=cover"`,
-		`src="/static/theme.js?v=1.7.2"`,
+		`src="/static/theme.js?v=1.8.0"`,
 		`<label for="rcon-message">Send Message</label>`,
 		`id="mods-refresh-minutes"`,
 		`min="1" max="10080"`,
@@ -1718,7 +1734,7 @@ func TestDashboardThemeAndMessageMarkup(t *testing.T) {
 		t.Fatal(err)
 	}
 	loginSource := string(loginData)
-	if !strings.Contains(loginSource, `src="/static/theme.js?v=1.7.2"`) {
+	if !strings.Contains(loginSource, `src="/static/theme.js?v=1.8.0"`) {
 		t.Fatal("login page does not initialize the persisted theme")
 	}
 	if !strings.Contains(loginSource, `viewport-fit=cover`) {

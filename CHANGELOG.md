@@ -2,6 +2,31 @@
 
 All notable changes to this repository are documented in this file.
 
+## [1.8.0] - 2026-07-24
+
+### Added
+
+- Add a default-empty, root-only trusted-proxy configuration loaded by the
+  web launcher and passed as repeatable `--trusted-proxy` startup options.
+- Resolve canonical client and TCP peer addresses into request context without
+  rewriting `RemoteAddr`.
+- Retain the validated client IP in persisted lifecycle requester state and
+  record the direct TCP peer separately as `peer_ip` in web audit records.
+
+### Security
+
+- Ignore `X-Forwarded-For`, `X-Real-IP`, and `Forwarded` for every untrusted
+  direct TCP peer.
+- Require exactly one single-address `X-Forwarded-For` value from a trusted
+  proxy and reject missing, duplicate, chained, malformed, zoned, unspecified,
+  or multicast values with HTTP 400 before authentication.
+- Apply the validated client address to network access policy, emergency
+  access, login throttling, audit attribution, and lifecycle operations.
+- Add regression coverage for trusted IPv4/IPv6 proxies, IPv4-mapped
+  canonicalization, direct-header spoofing, strict header rejection,
+  all-deny behavior, proxy/client audit separation, login throttling, and
+  lifecycle requester attribution.
+
 ## [1.7.2] - 2026-07-24
 
 ### Fixed

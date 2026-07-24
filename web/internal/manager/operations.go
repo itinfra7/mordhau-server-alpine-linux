@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-func (m *Manager) startOperation(action, username, clientIP string) error {
+func (m *Manager) startOperation(action, username, clientIP, peerIP string) error {
 	switch action {
 	case "start", "stop", "restart", "update":
 	default:
@@ -30,10 +30,11 @@ func (m *Manager) startOperation(action, username, clientIP string) error {
 	}
 	previous := m.op
 	m.op = Operation{
-		Action:    action,
-		Running:   true,
-		StartedAt: time.Now(),
-		Requested: username,
+		Action:      action,
+		Running:     true,
+		StartedAt:   time.Now(),
+		Requested:   username,
+		RequestedIP: clientIP,
 	}
 	if err := m.saveOperationLocked(); err != nil {
 		m.op = previous
@@ -71,7 +72,7 @@ func (m *Manager) startOperation(action, username, clientIP string) error {
 			log.Printf("save completed lifecycle operation state: %v", persistErr)
 		}
 		m.addRCONEvent("system", "Server operation "+result+": "+action)
-		m.auditActorEvent(username, clientIP, "server_action_completed", map[string]string{
+		m.auditNetworkActorEvent(username, clientIP, peerIP, "server_action_completed", map[string]string{
 			"action": action,
 			"result": result,
 		})

@@ -4,6 +4,7 @@ name="mordhau-web"
 description="MORDHAU management web server"
 
 port_file="/root/mordhau/.manager/web-port"
+trusted_proxy_file="/root/mordhau/.manager/trusted-proxies"
 web_port="8080"
 if [ -f "$port_file" ]; then
     web_port=$(sed -n '1p' "$port_file" | tr -d '\r\n')
@@ -35,4 +36,5 @@ start_pre() {
         return 1
     fi
     checkpath --directory --mode 0700 /root/mordhau/.manager/runtime
+    checkpath --file --mode 0600 "$trusted_proxy_file"
 }

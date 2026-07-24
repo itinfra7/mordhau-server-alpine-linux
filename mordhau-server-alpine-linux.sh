@@ -2,7 +2,7 @@
 
 set -eu
 
-PROJECT_VERSION="1.7.2"
+PROJECT_VERSION="1.8.0"
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 MORDHAU_ROOT="/root/mordhau"
 STEAMCMD_ROOT="/root/steamcmd"
@@ -225,6 +225,13 @@ install_runtime_files() {
         /etc/init.d/mordhau-server
     install -m 0755 "$SCRIPT_DIR/templates/openrc/mordhau-web" \
         /etc/init.d/mordhau-web
+
+    if [ ! -e "$STATE_DIR/trusted-proxies" ]; then
+        trusted_proxy_temp="$STATE_DIR/.trusted-proxies.$$"
+        : > "$trusted_proxy_temp"
+        chmod 0600 "$trusted_proxy_temp"
+        mv "$trusted_proxy_temp" "$STATE_DIR/trusted-proxies"
+    fi
 
     port_temp="$STATE_DIR/.web-port.$$"
     printf '%s\n' "$WEB_PORT" > "$port_temp"

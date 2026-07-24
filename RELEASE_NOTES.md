@@ -1,9 +1,8 @@
-# MORDHAU Server Alpine Linux v1.7.2
+# MORDHAU Server Alpine Linux v1.8.0
 
-This release renews healthy RCON subscriptions before MORDHAU's server-side
-idle close and removes redundant transport status from Live RCON while
-retaining network-rule comments, responsive layouts, and persistent dashboard
-state.
+This release adds strict trusted reverse-proxy client-IP resolution while
+preserving direct HTTP access, network-rule comments, responsive layouts,
+persistent dashboard state, and RCON idle keepalives.
 
 ## Included
 
@@ -27,8 +26,8 @@ state.
 - Mobile keyboard hints that disable unwanted autocapitalization and spell
   checking for technical fields
 - Live CPU, memory, swap, and server-filesystem metrics
-- Persistent latest lifecycle action, requester, result, timestamps, and
-  command output
+- Persistent latest lifecycle action, requester account, canonical client IP,
+  result, timestamps, and command output
 - Game.ini and Engine.ini structured editing with running-server staging
 - Reversible per-entry enable/disable controls that preserve keys, values,
   ordering, and ordinary comments
@@ -75,6 +74,21 @@ state.
   throttling
 - Login and authenticated request validation compatible with NAT and
   reverse-proxy Host rewriting
+- Default-empty root-only trusted-proxy configuration with one IP address or
+  CIDR prefix per line
+- Repeatable `--trusted-proxy` startup options loaded by the foreground and
+  OpenRC launch path
+- Direct access that always uses the canonical TCP peer and ignores
+  `X-Forwarded-For`, `X-Real-IP`, and `Forwarded`
+- Trusted proxy requests that require exactly one single-address
+  `X-Forwarded-For` value before authentication
+- HTTP 400 rejection for missing, duplicate, empty, comma-chained, malformed,
+  zoned, unspecified, or multicast forwarded addresses
+- Structured IPv4/IPv6 parsing and canonical IPv4-mapped IPv6 unmapping
+- Request-context separation of the validated client IP and direct TCP peer
+- Resolved-client application to access rules, all-deny emergency access,
+  login throttling, audit attribution, and lifecycle requester records
+- Separate root-only `client_ip` and `peer_ip` web audit fields
 - Root-only per-account JSON Lines logging for web access, authentication,
   server actions, port and map changes, mod configuration, and administrative
   changes
@@ -111,8 +125,8 @@ chmod +x mordhau-server-alpine-linux.sh
 ```
 
 Both services remain in manual mode and stopped by default. See `README.md`
-for installer options, service controls, mod.io setup, launch settings,
-security guidance, testing, and rollback instructions.
+for installer options, service controls, trusted reverse-proxy setup, mod.io
+setup, launch settings, security guidance, testing, and rollback instructions.
 
 ## Integrity
 

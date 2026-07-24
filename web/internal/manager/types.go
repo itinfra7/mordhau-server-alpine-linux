@@ -88,13 +88,14 @@ type AccessConfig struct {
 }
 
 type Operation struct {
-	Action     string    `json:"action"`
-	Running    bool      `json:"running"`
-	Successful bool      `json:"successful"`
-	StartedAt  time.Time `json:"started_at,omitempty"`
-	FinishedAt time.Time `json:"finished_at,omitempty"`
-	Requested  string    `json:"requested_by,omitempty"`
-	Output     string    `json:"output,omitempty"`
+	Action      string    `json:"action"`
+	Running     bool      `json:"running"`
+	Successful  bool      `json:"successful"`
+	StartedAt   time.Time `json:"started_at,omitempty"`
+	FinishedAt  time.Time `json:"finished_at,omitempty"`
+	Requested   string    `json:"requested_by,omitempty"`
+	RequestedIP string    `json:"requested_ip,omitempty"`
+	Output      string    `json:"output,omitempty"`
 }
 
 type operationStateFile struct {

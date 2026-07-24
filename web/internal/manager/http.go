@@ -57,7 +57,13 @@ func (m *Manager) Handler() http.Handler {
 	mux.HandleFunc("/api/services/web-port", m.withSession(m.webPortHandler))
 	mux.HandleFunc("/api/services/server-ports", m.withSession(m.serverPortsHandler))
 	mux.HandleFunc("/api/services/start-map", m.withSession(m.startMapHandler))
-	return m.auditMiddleware(m.securityHeaders(m.accessMiddleware(mux)))
+	return m.securityHeaders(
+		m.requestAddressMiddleware(
+			m.auditMiddleware(
+				m.accessMiddleware(mux),
+			),
+		),
+	)
 }
 
 func (m *Manager) securityHeaders(next http.Handler) http.Handler {
@@ -348,7 +354,16 @@ func (m *Manager) serverActionHandler(response http.ResponseWriter, request *htt
 		writeError(response, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := m.startOperation(body.Action, session.Username, auditClientIP(request)); err != nil {
+	startOperation := m.startOperation
+	if m.operationStart != nil {
+		startOperation = m.operationStart
+	}
+	if err := startOperation(
+		body.Action,
+		session.Username,
+		auditClientIP(request),
+		auditPeerIP(request),
+	); err != nil {
 		writeError(response, http.StatusConflict, err.Error())
 		return
 	}

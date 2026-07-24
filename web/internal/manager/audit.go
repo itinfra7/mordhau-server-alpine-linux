@@ -19,6 +19,7 @@ type auditRecord struct {
 	Event      string            `json:"event"`
 	Account    string            `json:"account"`
 	ClientIP   string            `json:"client_ip,omitempty"`
+	PeerIP     string            `json:"peer_ip,omitempty"`
 	Method     string            `json:"method,omitempty"`
 	Path       string            `json:"path,omitempty"`
 	Status     int               `json:"status,omitempty"`
@@ -87,6 +88,7 @@ func (m *Manager) writeAudit(record auditRecord) error {
 	record.Event = safeAuditText(record.Event, 64)
 	record.Account = safeAuditAccount(record.Account)
 	record.ClientIP = safeAuditText(record.ClientIP, 64)
+	record.PeerIP = safeAuditText(record.PeerIP, 64)
 	record.Method = safeAuditText(record.Method, 16)
 	record.Path = safeAuditText(record.Path, 256)
 	record.Details = safeAuditDetails(record.Details)
@@ -137,6 +139,7 @@ func (m *Manager) auditMiddleware(next http.Handler) http.Handler {
 			Event:      "http_access",
 			Account:    account,
 			ClientIP:   auditClientIP(request),
+			PeerIP:     auditPeerIP(request),
 			Method:     request.Method,
 			Path:       request.URL.Path,
 			Status:     writer.status,
@@ -156,6 +159,7 @@ func (m *Manager) auditRequestEvent(
 		Event:    event,
 		Account:  account,
 		ClientIP: auditClientIP(request),
+		PeerIP:   auditPeerIP(request),
 		Method:   request.Method,
 		Path:     request.URL.Path,
 		Details:  details,
@@ -176,8 +180,62 @@ func (m *Manager) auditActorEvent(
 	})
 }
 
+func (m *Manager) auditNetworkActorEvent(
+	account string,
+	clientIP string,
+	peerIP string,
+	event string,
+	details map[string]string,
+) {
+	m.audit(auditRecord{
+		Event:    event,
+		Account:  account,
+		ClientIP: clientIP,
+		PeerIP:   peerIP,
+		Details:  details,
+	})
+}
+
+func (m *Manager) rejectInvalidRequestAddress(
+	response http.ResponseWriter,
+	request *http.Request,
+	address requestAddress,
+) {
+	writer := &auditResponseWriter{ResponseWriter: response}
+	message := "invalid forwarded client address"
+	if address.failureReason == requestAddressInvalidPeer {
+		message = "invalid client address"
+	}
+	http.Error(writer, message, http.StatusBadRequest)
+
+	peerIP := ""
+	if address.peerIP.IsValid() {
+		peerIP = address.peerIP.String()
+	}
+	m.audit(auditRecord{
+		Event:   "http_access",
+		Account: "unauthenticated",
+		PeerIP:  peerIP,
+		Method:  request.Method,
+		Path:    request.URL.Path,
+		Status:  writer.status,
+		Bytes:   writer.bytes,
+		Details: map[string]string{
+			"address_error": address.failureReason,
+		},
+	})
+}
+
 func auditClientIP(request *http.Request) string {
 	ip, err := requestIP(request)
+	if err != nil {
+		return "unknown"
+	}
+	return ip.String()
+}
+
+func auditPeerIP(request *http.Request) string {
+	ip, err := requestPeerIP(request)
 	if err != nil {
 		return "unknown"
 	}

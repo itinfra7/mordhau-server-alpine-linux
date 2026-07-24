@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"sort"
@@ -20,12 +21,14 @@ import (
 )
 
 type Manager struct {
-	mu            sync.RWMutex
-	accounts      AccountFile
-	sessions      SessionFile
-	access        AccessConfig
-	op            Operation
-	operationPath string
+	mu             sync.RWMutex
+	accounts       AccountFile
+	sessions       SessionFile
+	access         AccessConfig
+	op             Operation
+	operationPath  string
+	operationStart func(action, username, clientIP, peerIP string) error
+	trustedProxies []netip.Prefix
 
 	metricsMu sync.RWMutex
 	metrics   Metrics
@@ -69,7 +72,7 @@ type loginAttempt struct {
 	BlockedTo time.Time
 }
 
-func New() (*Manager, error) {
+func New(trustedProxies ...netip.Prefix) (*Manager, error) {
 	for _, dir := range []string{
 		stateDir,
 		runtimeDir,
@@ -96,6 +99,13 @@ func New() (*Manager, error) {
 		operationPath:  operationStatePath,
 		rconLogPath:    rconEventLogPath,
 		modRefreshWake: make(chan struct{}, 1),
+	}
+	for _, prefix := range trustedProxies {
+		canonical, err := canonicalTrustedProxyPrefix(prefix)
+		if err != nil {
+			return nil, fmt.Errorf("invalid trusted proxy %q: %w", prefix, err)
+		}
+		m.trustedProxies = append(m.trustedProxies, canonical)
 	}
 	if err := m.initializeAuditLog(); err != nil {
 		return nil, fmt.Errorf("initialize web audit log: %w", err)

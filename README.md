@@ -25,6 +25,8 @@ The repository provides:
 - A server-only Unicode Bridge for acknowledged outbound multilingual messages
 - Web account and IPv4/IPv6 access-policy management with inclusive IPv4
   ranges and per-rule comments
+- Optional trusted reverse-proxy client-IP resolution with direct-access
+  fallback
 - Per-account JSON Lines web access and change auditing
 
 MORDHAU, SteamCMD, Wine, and their assets are downloaded from their respective
@@ -52,7 +54,8 @@ MORDHAU Dedicated Server, and Steam update staging.
 - `templates/server.sh`
   MORDHAU update, start, stop, restart, and status controller.
 - `templates/webserver.sh`
-  Foreground web-manager launcher with persistent port selection.
+  Foreground web-manager launcher with persistent port and trusted-proxy
+  selection.
 - `templates/openrc/`
   OpenRC service definitions.
 - `steamcmd/mordhau-update.txt`
@@ -74,11 +77,11 @@ MORDHAU Dedicated Server, and Steam update staging.
 ### Release archive
 
 ```sh
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v1.7.2/mordhau-server-alpine-linux-v1.7.2.tar.gz
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v1.7.2/SHA256SUMS
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v1.8.0/mordhau-server-alpine-linux-v1.8.0.tar.gz
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v1.8.0/SHA256SUMS
 sha256sum -c SHA256SUMS
-tar -xzf mordhau-server-alpine-linux-v1.7.2.tar.gz
-cd mordhau-server-alpine-linux-v1.7.2
+tar -xzf mordhau-server-alpine-linux-v1.8.0.tar.gz
+cd mordhau-server-alpine-linux-v1.8.0
 chmod +x mordhau-server-alpine-linux.sh
 ./mordhau-server-alpine-linux.sh
 ```
@@ -196,7 +199,8 @@ The web manager provides:
 - Responsive phone, tablet, and desktop layouts with notched-display safe
   areas and touch-sized controls
 - Start, stop, restart, and stopped-only update controls
-- Persistent latest lifecycle action, requester, result, timestamps, and output
+- Persistent latest lifecycle action, requester account and canonical client
+  IP, result, timestamps, and output
 - Boot startup mode controls for both OpenRC services
 - Persistent web-service port selection
 - Persistent initial-map selection
@@ -229,6 +233,55 @@ Each explicit network rule can store an optional single-line comment of up to
 160 Unicode characters. Comments are metadata only and do not affect address
 matching or rule precedence. Existing rules without a comment remain valid.
 
+## Trusted Reverse Proxies
+
+Direct access remains enabled and is the default. For a direct request, the
+manager uses the canonical TCP peer address and ignores `X-Forwarded-For`,
+`X-Real-IP`, and `Forwarded`, including malformed or forged values.
+
+Trusted reverse proxies are configured in:
+
+```text
+/root/mordhau/.manager/trusted-proxies
+```
+
+The installer creates this mode-`0600` file empty, so no proxy is trusted by
+default. Add one IP address or CIDR prefix per line and restart only the web
+service. For example:
+
+```sh
+printf '%s\n' '192.0.2.10/32' > /root/mordhau/.manager/trusted-proxies
+chmod 0600 /root/mordhau/.manager/trusted-proxies
+rc-service mordhau-web restart
+```
+
+The launcher passes each entry as a repeatable `--trusted-proxy` startup
+option. IPv4, IPv6, and IPv4-mapped IPv6 values are parsed structurally and
+used canonically.
+
+A request from a trusted TCP peer must contain exactly one
+`X-Forwarded-For` header holding one IP address. Missing or empty values,
+duplicate header fields, comma-separated chains, malformed addresses, IPv6
+zone identifiers, unspecified addresses, and multicast addresses receive
+HTTP 400 before session authentication. The manager uses that validated
+address for access rules, emergency access, login throttling, lifecycle
+request attribution, and audit records. The original TCP peer is retained
+separately as `peer_ip` in the root-only audit log.
+
+A compatible reverse proxy must replace, rather than append to, the forwarded
+client address:
+
+```nginx
+proxy_set_header X-Forwarded-For $remote_addr;
+proxy_set_header X-Real-IP $remote_addr;
+proxy_set_header Forwarded "";
+```
+
+TLS may terminate at the reverse proxy while the built-in listener continues
+to serve HTTP on the trusted internal network. Unproxied HTTP access to the
+configured `0.0.0.0:<port>` listener continues to work under the same network
+access policy.
+
 ## Mobile Layout
 
 The dashboard and login page use the same authenticated endpoints on desktop
@@ -253,8 +306,9 @@ The web manager writes a dedicated JSON Lines audit log to:
 
 The file is created with mode `0600`. Every record contains a local RFC 3339
 timestamp with second precision, an event name, and the responsible account.
-HTTP access records also contain the direct client IP address, method, path,
-response status, response size, and request duration.
+HTTP access records also contain the canonical client IP address, direct TCP
+peer IP address, method, path, response status, response size, and request
+duration.
 
 Dedicated events identify login success, login failure, logout, server
 actions and their completion, language changes, initial-map and port changes,
@@ -280,12 +334,12 @@ The latest lifecycle operation is stored in:
 /root/mordhau/.manager/operation.json
 ```
 
-The mode-`0600` state includes the fixed action, requesting account, start and
-finish times, result, and captured command output. The dashboard reloads that
-state for later sessions and after web-service restarts. If the web manager
-stops before a running operation records its result, the next start preserves
-the operation and marks it as interrupted instead of leaving it permanently
-running.
+The mode-`0600` state includes the fixed action, requesting account, canonical
+requesting client IP, start and finish times, result, and captured command
+output. The dashboard reloads that state for later sessions and after
+web-service restarts. If the web manager stops before a running operation
+records its result, the next start preserves the operation and marks it as
+interrupted instead of leaving it permanently running.
 
 Every accepted Live RCON event is appended as UTF-8 JSON Lines to:
 
@@ -516,8 +570,13 @@ Changing a boot mode does not change the current process state.
 - Browser requests explicitly marked as cross-site by Fetch Metadata are
   rejected without comparing the public URL to an internally rewritten Host
   header.
-- Access rules use the direct TCP peer address and do not trust forwarding
-  headers.
+- Direct requests use the TCP peer and ignore all forwarding headers.
+- Forwarded client addresses are accepted only from explicitly configured
+  trusted proxy prefixes. A trusted request requires one structurally valid,
+  single-address `X-Forwarded-For` value; invalid forms are rejected before
+  authentication.
+- Canonical client and TCP peer addresses are retained separately in request
+  context and root-only audit records.
 - The most specific CIDR block wins; inclusive IPv4 ranges are evaluated as
   exact minimal CIDR blocks. Deny wins an equal-prefix tie except for the
   active emergency exact-address allow.
@@ -572,14 +631,16 @@ rc-service mordhau-web status
 
 The Go tests cover random-password constraints, INI preservation, CIDR
 precedence, inclusive IPv4 range normalization, exact boundary matching,
-range/CIDR precedence, emergency access, proxy-safe request validation,
-network-rule comment normalization and backward-compatible JSON, audit-log
-permissions and secret exclusion, enabled/disabled INI entry round trips,
-RCON credential fallback order, idle keepalive framing, zero-byte versus
-partial-packet timeout handling, transport-status filtering, packet framing,
-Korean legacy decoding, current all-broadcast
-subscription syntax and response filtering, UTF-8 chat log parsing, partial
-writes, log rotation, lossy RCON chat suppression,
+range/CIDR precedence, resolved-client emergency access, default-empty trusted
+proxy configuration, direct-header spoofing resistance, strict single-value
+forwarded IPv4/IPv6 parsing, proxy-aware access control, audit and login-limit
+attribution, network-rule comment normalization and backward-compatible JSON,
+audit-log permissions and secret exclusion, enabled/disabled INI entry round
+trips, RCON credential fallback order, idle keepalive framing, zero-byte
+versus partial-packet timeout handling, transport-status filtering, packet
+framing, Korean legacy decoding, current all-broadcast subscription syntax
+and response filtering, UTF-8 chat log parsing, partial writes, log rotation,
+lossy RCON chat suppression,
 ASCII-only Unicode token commands, UTF-8 message staging, spool permissions and
 stale-file cleanup, bridge acknowledgements, input validation, start-map
 validation, server-port parsing and collision checks, mod.io URL and API-path
@@ -603,8 +664,9 @@ services, the Unicode Bridge, and the Go web manager. The bundled PAK replaces
 the repository-managed bridge version, and the required server-actor entry is
 added without duplicating existing entries. Existing accounts, access rules,
 generated credentials, INI files, backups, logs, language selection, initial
-map, server ports, mod.io settings, mod refresh interval, latest lifecycle
-result, RCON event history, and boot modes are preserved.
+map, server ports, trusted proxy settings, mod.io settings, mod refresh
+interval, latest lifecycle result, RCON event history, and boot modes are
+preserved.
 
 To roll back management code:
 

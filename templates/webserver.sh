@@ -5,12 +5,16 @@ set -eu
 ROOT=/root/mordhau
 BINARY="$ROOT/bin/mordhau-web"
 PORT_FILE="$ROOT/.manager/web-port"
+TRUSTED_PROXY_FILE="$ROOT/.manager/trusted-proxies"
 
 usage() {
     cat <<'EOF'
 Usage: /root/mordhau/webserver.sh --port <1-65535>
 
 Starts the MORDHAU management web server on 0.0.0.0:<port>.
+Trusted reverse-proxy addresses are loaded from
+/root/mordhau/.manager/trusted-proxies, one IP address or CIDR prefix per line.
+An absent or empty file trusts no proxy.
 
 Examples:
   /root/mordhau/webserver.sh --port 8080
@@ -59,4 +63,12 @@ printf '%s\n' "$port" > "$port_temp"
 chmod 600 "$port_temp"
 mv "$port_temp" "$PORT_FILE"
 
-exec "$BINARY" --listen "0.0.0.0:$port"
+set -- "$BINARY" --listen "0.0.0.0:$port"
+if [ -r "$TRUSTED_PROXY_FILE" ]; then
+    while IFS= read -r trusted_proxy || [ -n "$trusted_proxy" ]; do
+        [ -n "$trusted_proxy" ] || continue
+        set -- "$@" --trusted-proxy "$trusted_proxy"
+    done < "$TRUSTED_PROXY_FILE"
+fi
+
+exec "$@"

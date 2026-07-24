@@ -1,6 +1,7 @@
 package manager
 
 import (
+	"context"
 	"encoding/binary"
 	"errors"
 	"math/bits"
@@ -15,21 +16,187 @@ import (
 
 const maxAccessRuleCommentRunes = 160
 
+const (
+	requestAddressInvalidPeer       = "invalid_tcp_peer"
+	requestAddressMissingForwarded  = "missing_x_forwarded_for"
+	requestAddressMultipleForwarded = "multiple_x_forwarded_for"
+	requestAddressChainedForwarded  = "chained_x_forwarded_for"
+	requestAddressInvalidForwarded  = "invalid_x_forwarded_for"
+	requestAddressUnusableForwarded = "unusable_x_forwarded_for"
+)
+
 type accessNetwork struct {
 	canonical string
 	prefixes  []netip.Prefix
 }
 
-func requestIP(request *http.Request) (netip.Addr, error) {
-	host, _, err := net.SplitHostPort(request.RemoteAddr)
-	if err != nil {
-		host = request.RemoteAddr
+type requestAddressContextKey struct{}
+
+type requestAddress struct {
+	clientIP      netip.Addr
+	peerIP        netip.Addr
+	trustedProxy  bool
+	failureReason string
+}
+
+func ParseTrustedProxy(value string) (netip.Prefix, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return netip.Prefix{}, errors.New("trusted proxy must not be empty")
 	}
-	ip, err := netip.ParseAddr(strings.TrimSpace(host))
+	if address, err := netip.ParseAddr(value); err == nil {
+		if address.Zone() != "" {
+			return netip.Prefix{}, errors.New("trusted proxy must not contain an IPv6 zone")
+		}
+		address = address.Unmap()
+		return canonicalTrustedProxyPrefix(
+			netip.PrefixFrom(address, address.BitLen()),
+		)
+	}
+	prefix, err := netip.ParsePrefix(value)
+	if err != nil {
+		return netip.Prefix{}, errors.New("trusted proxy must be an IP address or CIDR prefix")
+	}
+	return canonicalTrustedProxyPrefix(prefix)
+}
+
+func canonicalTrustedProxyPrefix(prefix netip.Prefix) (netip.Prefix, error) {
+	if !prefix.IsValid() {
+		return netip.Prefix{}, errors.New("trusted proxy prefix is invalid")
+	}
+	address := prefix.Addr()
+	if address.Zone() != "" {
+		return netip.Prefix{}, errors.New("trusted proxy must not contain an IPv6 zone")
+	}
+	bits := prefix.Bits()
+	if address.Is4In6() {
+		if bits < 96 {
+			return netip.Prefix{}, errors.New(
+				"IPv4-mapped trusted proxy prefixes must be /96 or narrower",
+			)
+		}
+		address = address.Unmap()
+		bits -= 96
+	}
+	address = address.Unmap()
+	prefix = netip.PrefixFrom(address, bits).Masked()
+	if prefix.Addr().IsUnspecified() || prefix.Addr().IsMulticast() {
+		return netip.Prefix{}, errors.New(
+			"trusted proxy must not start with an unspecified or multicast address",
+		)
+	}
+	return prefix, nil
+}
+
+func remotePeerIP(request *http.Request) (netip.Addr, error) {
+	host, _, err := net.SplitHostPort(strings.TrimSpace(request.RemoteAddr))
+	if err != nil {
+		host = strings.TrimSpace(request.RemoteAddr)
+	}
+	ip, err := netip.ParseAddr(host)
 	if err != nil {
 		return netip.Addr{}, err
 	}
+	if ip.Zone() != "" {
+		ip = ip.WithZone("")
+	}
 	return ip.Unmap(), nil
+}
+
+func (m *Manager) isTrustedProxy(ip netip.Addr) bool {
+	ip = ip.Unmap()
+	for _, prefix := range m.trustedProxies {
+		if prefix.Addr().Is4() == ip.Is4() && prefix.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+func forwardedClientIP(request *http.Request) (netip.Addr, string) {
+	values := request.Header.Values("X-Forwarded-For")
+	switch len(values) {
+	case 0:
+		return netip.Addr{}, requestAddressMissingForwarded
+	case 1:
+	default:
+		return netip.Addr{}, requestAddressMultipleForwarded
+	}
+	value := strings.TrimSpace(values[0])
+	if value == "" {
+		return netip.Addr{}, requestAddressMissingForwarded
+	}
+	if strings.Contains(value, ",") {
+		return netip.Addr{}, requestAddressChainedForwarded
+	}
+	ip, err := netip.ParseAddr(value)
+	if err != nil || ip.Zone() != "" {
+		return netip.Addr{}, requestAddressInvalidForwarded
+	}
+	ip = ip.Unmap()
+	if ip.IsUnspecified() || ip.IsMulticast() {
+		return netip.Addr{}, requestAddressUnusableForwarded
+	}
+	return ip, ""
+}
+
+func (m *Manager) resolveRequestAddress(request *http.Request) requestAddress {
+	peerIP, err := remotePeerIP(request)
+	if err != nil {
+		return requestAddress{failureReason: requestAddressInvalidPeer}
+	}
+	address := requestAddress{
+		clientIP: peerIP,
+		peerIP:   peerIP,
+	}
+	if !m.isTrustedProxy(peerIP) {
+		return address
+	}
+	address.trustedProxy = true
+	clientIP, reason := forwardedClientIP(request)
+	if reason != "" {
+		address.failureReason = reason
+		return address
+	}
+	address.clientIP = clientIP
+	return address
+}
+
+func (m *Manager) requestAddressMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		address := m.resolveRequestAddress(request)
+		context := context.WithValue(
+			request.Context(),
+			requestAddressContextKey{},
+			address,
+		)
+		request = request.WithContext(context)
+		if address.failureReason != "" {
+			m.rejectInvalidRequestAddress(response, request, address)
+			return
+		}
+		next.ServeHTTP(response, request)
+	})
+}
+
+func requestIP(request *http.Request) (netip.Addr, error) {
+	if address, ok := request.Context().Value(requestAddressContextKey{}).(requestAddress); ok {
+		if address.failureReason != "" || !address.clientIP.IsValid() {
+			return netip.Addr{}, errors.New("request client address is invalid")
+		}
+		return address.clientIP, nil
+	}
+	return remotePeerIP(request)
+}
+
+func requestPeerIP(request *http.Request) (netip.Addr, error) {
+	if address, ok := request.Context().Value(requestAddressContextKey{}).(requestAddress); ok {
+		if !address.peerIP.IsValid() {
+			return netip.Addr{}, errors.New("request peer address is invalid")
+		}
+		return address.peerIP, nil
+	}
+	return remotePeerIP(request)
 }
 
 func normalizeAccessNetwork(value string) (accessNetwork, error) {
@@ -211,36 +378,45 @@ func (m *Manager) setBasePolicy(policy string, currentIP netip.Addr) error {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.purgeAccessLocked(time.Now())
+	now := time.Now()
+	m.purgeAccessLocked(now)
 	m.access.BasePolicy = policy
 	if policy == "all_deny" {
-		prefix := netip.PrefixFrom(currentIP.Unmap(), currentIP.Unmap().BitLen()).String()
-		expires := time.Now().Add(emergencyDuration)
-		found := false
-		for i := range m.access.Rules {
-			rule := &m.access.Rules[i]
-			if rule.Temporary && rule.Action == "allow" && rule.Network == prefix {
-				rule.ExpiresAt = &expires
-				found = true
-				break
-			}
-		}
-		if !found {
-			id, err := randomID()
-			if err != nil {
-				return err
-			}
-			m.access.Rules = append(m.access.Rules, AccessRule{
-				ID:        id,
-				Action:    "allow",
-				Network:   prefix,
-				Temporary: true,
-				ExpiresAt: &expires,
-				CreatedAt: time.Now(),
-			})
+		if err := ensureEmergencyAccess(&m.access, currentIP, now); err != nil {
+			return err
 		}
 	}
 	return writeJSONAtomic(accessPath, m.access, 0600)
+}
+
+func ensureEmergencyAccess(
+	config *AccessConfig,
+	currentIP netip.Addr,
+	now time.Time,
+) error {
+	currentIP = currentIP.Unmap()
+	prefix := netip.PrefixFrom(currentIP, currentIP.BitLen()).String()
+	expires := now.Add(emergencyDuration)
+	for i := range config.Rules {
+		rule := &config.Rules[i]
+		if rule.Temporary && rule.Action == "allow" && rule.Network == prefix {
+			rule.ExpiresAt = &expires
+			return nil
+		}
+	}
+	id, err := randomID()
+	if err != nil {
+		return err
+	}
+	config.Rules = append(config.Rules, AccessRule{
+		ID:        id,
+		Action:    "allow",
+		Network:   prefix,
+		Temporary: true,
+		ExpiresAt: &expires,
+		CreatedAt: now,
+	})
+	return nil
 }
 
 func (m *Manager) saveAccessRule(
