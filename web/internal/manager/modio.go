@@ -17,6 +17,7 @@ import (
 
 const (
 	modIOSettingsPath       = stateDir + "/modio.json"
+	modRefreshSettingsPath  = stateDir + "/mod-refresh.json"
 	modIOGameNameID         = "mordhau"
 	modIOGameSessionSection = "/Script/Mordhau.MordhauGameSession"
 	defaultModIOAPIBase     = "https://api.mod.io/v1"
@@ -110,6 +111,8 @@ type ModManagementView struct {
 	ConfigStaged   bool              `json:"config_staged"`
 	ServerRunning  bool              `json:"server_running"`
 	APIError       string            `json:"api_error,omitempty"`
+	Refresh        ModRefreshView    `json:"refresh"`
+	Revision       uint64            `json:"revision"`
 }
 
 type ModConfigChange struct {

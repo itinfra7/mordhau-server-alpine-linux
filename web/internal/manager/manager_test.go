@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -12,6 +13,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -671,6 +674,172 @@ func TestWebAuditLogRecordsAccountIPAndSecondPrecision(t *testing.T) {
 	}
 }
 
+func TestLifecycleOperationStateSurvivesManagerRestart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "operation.json")
+	started := time.Date(2026, 7, 24, 11, 12, 13, 0, time.UTC)
+	finished := started.Add(9 * time.Second)
+	manager := &Manager{
+		operationPath: path,
+		op: Operation{
+			Action:     "restart",
+			Successful: true,
+			StartedAt:  started,
+			FinishedAt: finished,
+			Requested:  "operator",
+			Output:     "update complete\nserver started",
+		},
+	}
+	manager.mu.Lock()
+	err := manager.saveOperationLocked()
+	manager.mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	reloaded := &Manager{operationPath: path}
+	if err := reloaded.loadOrCreateOperationState(); err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.op.Action != "restart" ||
+		!reloaded.op.Successful ||
+		reloaded.op.Requested != "operator" ||
+		reloaded.op.Output != "update complete\nserver started" ||
+		!reloaded.op.StartedAt.Equal(started) ||
+		!reloaded.op.FinishedAt.Equal(finished) {
+		t.Fatalf("unexpected reloaded operation: %+v", reloaded.op)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0600 {
+		t.Fatalf("operation state mode = %04o", info.Mode().Perm())
+	}
+}
+
+func TestRunningLifecycleOperationIsMarkedInterruptedOnReload(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "operation.json")
+	started := time.Now().Add(-time.Minute)
+	state := operationStateFile{
+		Version: operationStateVersion,
+		Operation: Operation{
+			Action:    "update",
+			Running:   true,
+			StartedAt: started,
+			Requested: "operator",
+		},
+	}
+	if err := writeJSONAtomic(path, state, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	manager := &Manager{operationPath: path}
+	if err := manager.loadOrCreateOperationState(); err != nil {
+		t.Fatal(err)
+	}
+	if manager.op.Running || manager.op.Successful ||
+		manager.op.FinishedAt.IsZero() ||
+		!strings.Contains(manager.op.Output, "stopped before this operation recorded a result") {
+		t.Fatalf("interrupted operation was not finalized: %+v", manager.op)
+	}
+
+	reloaded := &Manager{operationPath: path}
+	if err := reloaded.loadOrCreateOperationState(); err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.op.Running || reloaded.op.FinishedAt.IsZero() {
+		t.Fatalf("interrupted result was not persisted: %+v", reloaded.op)
+	}
+}
+
+func TestRCONHistorySurvivesManagerRestartWithUnicode(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "mordhau-rcon.log")
+	manager := &Manager{rconLogPath: path}
+	if err := manager.loadRCONEventLog(); err != nil {
+		t.Fatal(err)
+	}
+	manager.addRCONEvent("rcon", "한국어 Русский 简体中文 Français")
+	manager.addRCONEvent("system", "RCON connected")
+
+	reloaded := &Manager{rconLogPath: path}
+	if err := reloaded.loadRCONEventLog(); err != nil {
+		t.Fatal(err)
+	}
+	events := reloaded.rconHistory(rconBrowserHistoryLimit)
+	if len(events) != 2 {
+		t.Fatalf("reloaded event count = %d", len(events))
+	}
+	if events[0].Sequence != 1 ||
+		events[0].Text != "한국어 Русский 简体中文 Français" ||
+		events[1].Sequence != 2 ||
+		reloaded.rconSequence != 2 {
+		t.Fatalf("unexpected reloaded RCON history: %#v", events)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0600 {
+		t.Fatalf("RCON event log mode = %04o", info.Mode().Perm())
+	}
+}
+
+func TestRCONHistoryRecoversAfterTruncatedFinalRecord(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "mordhau-rcon.log")
+	manager := &Manager{rconLogPath: path}
+	if err := manager.loadRCONEventLog(); err != nil {
+		t.Fatal(err)
+	}
+	manager.addRCONEvent("rcon", "first")
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.WriteString(`{"sequence":2`); err != nil {
+		_ = file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	reloaded := &Manager{rconLogPath: path}
+	if err := reloaded.loadRCONEventLog(); err != nil {
+		t.Fatal(err)
+	}
+	reloaded.addRCONEvent("system", "second")
+
+	final := &Manager{rconLogPath: path}
+	if err := final.loadRCONEventLog(); err != nil {
+		t.Fatal(err)
+	}
+	events := final.rconHistory(rconBrowserHistoryLimit)
+	if len(events) != 2 ||
+		events[0].Text != "first" ||
+		events[1].Text != "second" ||
+		events[1].Sequence != 2 {
+		t.Fatalf("unexpected recovered RCON history: %#v", events)
+	}
+}
+
+func TestRCONHistoryReturnsLatestBrowserWindow(t *testing.T) {
+	manager := &Manager{}
+	for index := 1; index <= 450; index++ {
+		manager.addRCONEvent("rcon", fmt.Sprintf("event %d", index))
+	}
+	events := manager.rconHistory(rconBrowserHistoryLimit)
+	if len(events) != rconBrowserHistoryLimit {
+		t.Fatalf("browser history count = %d", len(events))
+	}
+	if events[0].Sequence != 51 || events[len(events)-1].Sequence != 450 {
+		t.Fatalf(
+			"browser history sequence range = %d..%d",
+			events[0].Sequence,
+			events[len(events)-1].Sequence,
+		)
+	}
+}
+
 func TestHTTPAccessAuditIncludesUnauthenticatedRequests(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "mordhau-web.log")
 	manager := &Manager{auditPath: path}
@@ -932,6 +1101,166 @@ func TestUnresolvedModDependenciesWarnOnlyForEnabledMods(t *testing.T) {
 	}
 }
 
+func TestSharedModCacheCollapsesConcurrentClients(t *testing.T) {
+	var calls atomic.Int32
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	manager := &Manager{
+		modRefreshSettings: modRefreshSettingsFile{
+			Version:         modRefreshSettingsVersion,
+			IntervalMinutes: defaultModRefreshMinutes,
+		},
+		modRefreshWake: make(chan struct{}, 1),
+		modManagementViewBuild: func() (ModManagementView, error) {
+			calls.Add(1)
+			once.Do(func() { close(entered) })
+			<-release
+			return ModManagementView{
+				Mods: []ConfiguredMod{},
+			}, nil
+		},
+	}
+
+	const clients = 12
+	results := make([]ModManagementView, clients)
+	errors := make([]error, clients)
+	start := make(chan struct{})
+	var wait sync.WaitGroup
+	for index := 0; index < clients; index++ {
+		wait.Add(1)
+		go func(index int) {
+			defer wait.Done()
+			<-start
+			results[index], errors[index] = manager.cachedModManagementView()
+		}(index)
+	}
+	close(start)
+	<-entered
+	close(release)
+	wait.Wait()
+
+	if calls.Load() != 1 {
+		t.Fatalf("concurrent clients caused %d metadata builds, want 1", calls.Load())
+	}
+	for index, err := range errors {
+		if err != nil {
+			t.Fatalf("client %d received an error: %v", index, err)
+		}
+		if results[index].Revision != 1 {
+			t.Fatalf("client %d received revision %d, want 1", index, results[index].Revision)
+		}
+	}
+
+	if _, err := manager.cachedModManagementView(); err != nil {
+		t.Fatal(err)
+	}
+	if calls.Load() != 1 {
+		t.Fatal("reading the shared cache performed another metadata lookup")
+	}
+}
+
+func TestConfigurationChangeRefreshFollowsInProgressBuild(t *testing.T) {
+	var calls atomic.Int32
+	firstEntered := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	manager := &Manager{
+		modRefreshSettings: modRefreshSettingsFile{
+			Version:         modRefreshSettingsVersion,
+			IntervalMinutes: defaultModRefreshMinutes,
+		},
+		modRefreshWake: make(chan struct{}, 1),
+		modManagementViewBuild: func() (ModManagementView, error) {
+			if calls.Add(1) == 1 {
+				close(firstEntered)
+				<-releaseFirst
+			}
+			return ModManagementView{Mods: []ConfiguredMod{}}, nil
+		},
+	}
+
+	firstDone := make(chan error, 1)
+	go func() {
+		_, err := manager.refreshModCache()
+		firstDone <- err
+	}()
+	<-firstEntered
+
+	changeDone := make(chan error, 1)
+	go func() {
+		_, err := manager.refreshModCacheAfterConfigurationChange()
+		changeDone <- err
+	}()
+	close(releaseFirst)
+	if err := <-firstDone; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-changeDone; err != nil {
+		t.Fatal(err)
+	}
+	if calls.Load() != 2 {
+		t.Fatalf("configuration change caused %d builds, want 2", calls.Load())
+	}
+}
+
+func TestSuccessfulModRefreshResetsIntervalAndFailureDoesNot(t *testing.T) {
+	var fail atomic.Bool
+	manager := &Manager{
+		modRefreshSettings: modRefreshSettingsFile{
+			Version:         modRefreshSettingsVersion,
+			IntervalMinutes: 60,
+		},
+		modRefreshWake: make(chan struct{}, 1),
+		modManagementViewBuild: func() (ModManagementView, error) {
+			view := ModManagementView{Mods: []ConfiguredMod{}}
+			if fail.Load() {
+				view.APIError = "temporary mod.io failure"
+			}
+			return view, nil
+		},
+	}
+
+	success, err := manager.refreshModCache()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if success.Refresh.LastSuccessAt == nil || success.Refresh.NextRefreshAt == nil {
+		t.Fatal("successful refresh did not publish success and next-refresh timestamps")
+	}
+	if got := success.Refresh.NextRefreshAt.Sub(*success.Refresh.LastSuccessAt); got != time.Hour {
+		t.Fatalf("next refresh delay = %s, want 1h", got)
+	}
+	lastSuccess := *success.Refresh.LastSuccessAt
+
+	fail.Store(true)
+	failed, err := manager.refreshModCache()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if failed.Refresh.LastSuccessAt == nil ||
+		!failed.Refresh.LastSuccessAt.Equal(lastSuccess) {
+		t.Fatal("failed refresh changed the last successful refresh time")
+	}
+	if failed.Refresh.LastError == "" || failed.Refresh.NextRefreshAt == nil {
+		t.Fatal("failed refresh did not publish its error and retry time")
+	}
+	retryDelay := time.Until(*failed.Refresh.NextRefreshAt)
+	if retryDelay <= 0 || retryDelay > maximumModRefreshRetry+time.Second {
+		t.Fatalf("failed refresh retry delay = %s", retryDelay)
+	}
+}
+
+func TestNextRefreshUsesLastSuccessfulRefresh(t *testing.T) {
+	now := time.Date(2026, 7, 24, 10, 0, 0, 0, time.UTC)
+	lastSuccess := now.Add(-10 * time.Minute)
+	if got := nextRefreshForInterval(lastSuccess, now, 60); !got.Equal(lastSuccess.Add(time.Hour)) {
+		t.Fatalf("next refresh = %s", got)
+	}
+	if got := nextRefreshForInterval(lastSuccess, now, 5); !got.Equal(now) {
+		t.Fatalf("overdue interval did not become immediately due: %s", got)
+	}
+}
+
 func TestDashboardThemeAndMessageMarkup(t *testing.T) {
 	indexData, err := staticFiles.ReadFile("static/index.html")
 	if err != nil {
@@ -940,7 +1269,7 @@ func TestDashboardThemeAndMessageMarkup(t *testing.T) {
 	index := string(indexData)
 	for _, expected := range []string{
 		`id="theme-toggle"`,
-		`src="/static/theme.js?v=1.3.1"`,
+		`src="/static/theme.js?v=1.4.0"`,
 		`<label for="rcon-message">Send Message</label>`,
 		`id="mods-refresh-minutes"`,
 		`min="1" max="10080"`,
@@ -953,6 +1282,7 @@ func TestDashboardThemeAndMessageMarkup(t *testing.T) {
 	for _, unwanted := range []string{
 		"Unicode server message",
 		"한국어 · Русский · 简体中文 · Français",
+		"stored in this browser",
 		"<script>\n",
 	} {
 		if strings.Contains(index, unwanted) {
@@ -964,7 +1294,7 @@ func TestDashboardThemeAndMessageMarkup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(loginData), `src="/static/theme.js?v=1.3.1"`) {
+	if !strings.Contains(string(loginData), `src="/static/theme.js?v=1.4.0"`) {
 		t.Fatal("login page does not initialize the persisted theme")
 	}
 
@@ -974,6 +1304,31 @@ func TestDashboardThemeAndMessageMarkup(t *testing.T) {
 	}
 	if !strings.Contains(string(themeData), `let theme = "light"`) {
 		t.Fatal("theme initializer does not default to light mode")
+	}
+
+	appData, err := staticFiles.ReadFile("static/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	appSource := string(appData)
+	for _, expected := range []string{
+		`/api/mods/refresh`,
+		`/api/mods/refresh/settings`,
+		`/api/rcon/history`,
+		`Last successful refresh:`,
+		`resolvedOptions().timeZone`,
+	} {
+		if !strings.Contains(appSource, expected) {
+			t.Fatalf("frontend is missing %q", expected)
+		}
+	}
+	for _, unwanted := range []string{
+		`getItem("mordhau-mod-refresh-minutes")`,
+		`setItem("mordhau-mod-refresh-minutes"`,
+	} {
+		if strings.Contains(appSource, unwanted) {
+			t.Fatal("mod refresh interval is still read from or written to browser-local state")
+		}
 	}
 }
 

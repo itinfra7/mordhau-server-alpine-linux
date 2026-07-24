@@ -20,11 +20,12 @@ import (
 )
 
 type Manager struct {
-	mu       sync.RWMutex
-	accounts AccountFile
-	sessions SessionFile
-	access   AccessConfig
-	op       Operation
+	mu            sync.RWMutex
+	accounts      AccountFile
+	sessions      SessionFile
+	access        AccessConfig
+	op            Operation
+	operationPath string
 
 	metricsMu sync.RWMutex
 	metrics   Metrics
@@ -35,12 +36,29 @@ type Manager struct {
 	rconStatus    string
 	rconEvents    []RCONEvent
 	rconSequence  uint64
+	rconLogMu     sync.Mutex
+	rconLogPath   string
 
 	loginMu       sync.Mutex
 	loginAttempts map[string]*loginAttempt
 
 	configMu sync.Mutex
 	modioMu  sync.Mutex
+
+	modsMu                 sync.RWMutex
+	modRefreshSettingsMu   sync.Mutex
+	modRefreshSettings     modRefreshSettingsFile
+	modCache               ModManagementView
+	modCacheReady          bool
+	modRevision            uint64
+	modRefreshing          bool
+	modRefreshDone         chan struct{}
+	modLastAttempt         time.Time
+	modLastSuccess         time.Time
+	modNextRefresh         time.Time
+	modLastError           string
+	modRefreshWake         chan struct{}
+	modManagementViewBuild func() (ModManagementView, error)
 
 	auditMu   sync.Mutex
 	auditPath string
@@ -72,12 +90,21 @@ func New() (*Manager, error) {
 	}
 
 	m := &Manager{
-		loginAttempts: make(map[string]*loginAttempt),
-		rconStatus:    "waiting for server",
-		auditPath:     webAuditLogPath,
+		loginAttempts:  make(map[string]*loginAttempt),
+		rconStatus:     "waiting for server",
+		auditPath:      webAuditLogPath,
+		operationPath:  operationStatePath,
+		rconLogPath:    rconEventLogPath,
+		modRefreshWake: make(chan struct{}, 1),
 	}
 	if err := m.initializeAuditLog(); err != nil {
 		return nil, fmt.Errorf("initialize web audit log: %w", err)
+	}
+	if err := m.loadOrCreateOperationState(); err != nil {
+		return nil, err
+	}
+	if err := m.loadRCONEventLog(); err != nil {
+		return nil, err
 	}
 	if err := m.loadOrCreateAccounts(); err != nil {
 		return nil, err
@@ -94,6 +121,9 @@ func New() (*Manager, error) {
 	if err := m.ensureRCONConfig(); err != nil {
 		return nil, err
 	}
+	if err := m.loadOrCreateModRefreshSettings(); err != nil {
+		return nil, err
+	}
 	return m, nil
 }
 
@@ -103,6 +133,7 @@ func (m *Manager) StartBackground(ctx context.Context) {
 	go m.rconLoop(ctx)
 	go m.chatLogLoop(ctx)
 	go m.cleanupLoop(ctx)
+	go m.modRefreshLoop(ctx)
 	go func() {
 		<-ctx.Done()
 		m.auditActorEvent("system", "local", "web_manager_stopping", nil)

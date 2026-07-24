@@ -21,6 +21,7 @@ The repository provides:
   management for Game.ini
 - Persistent initial-map and dedicated-server port selection
 - Authenticated RCON event streaming with UTF-8 player-chat integration
+- Persistent latest lifecycle results and append-only RCON event history
 - A server-only Unicode Bridge for acknowledged outbound multilingual messages
 - Web account and IPv4/IPv6 access-policy management
 - Per-account JSON Lines web access and change auditing
@@ -71,11 +72,11 @@ MORDHAU Dedicated Server, and Steam update staging.
 ### Release archive
 
 ```sh
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v1.3.1/mordhau-server-alpine-linux-v1.3.1.tar.gz
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v1.3.1/SHA256SUMS
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v1.4.0/mordhau-server-alpine-linux-v1.4.0.tar.gz
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v1.4.0/SHA256SUMS
 sha256sum -c SHA256SUMS
-tar -xzf mordhau-server-alpine-linux-v1.3.1.tar.gz
-cd mordhau-server-alpine-linux-v1.3.1
+tar -xzf mordhau-server-alpine-linux-v1.4.0.tar.gz
+cd mordhau-server-alpine-linux-v1.4.0
 chmod +x mordhau-server-alpine-linux.sh
 ./mordhau-server-alpine-linux.sh
 ```
@@ -189,6 +190,7 @@ The web manager provides:
 - Live CPU, memory, swap, and MORDHAU-filesystem utilization
 - A default light theme with a persistent light/dark toggle
 - Start, stop, restart, and stopped-only update controls
+- Persistent latest lifecycle action, requester, result, timestamps, and output
 - Boot startup mode controls for both OpenRC services
 - Persistent web-service port selection
 - Persistent initial-map selection
@@ -197,7 +199,7 @@ The web manager provides:
 - Optional mod.io API-key validation, mod lookup, per-mod recursive dependency
   status, unresolved-dependency warnings, and scoped `Mods=<Resource ID>`
   management
-- Browser-persistent mod metadata auto-refresh from 1 to 10,080 minutes,
+- Server-wide cached mod metadata auto-refresh from 1 to 10,080 minutes,
   defaulting to 60 minutes
 - Game.ini and Engine.ini section/item creation, editing, and removal
 - Reversible per-entry enable and disable controls
@@ -205,6 +207,8 @@ The web manager provides:
   running
 - RCON authentication, acknowledged `listen allon` subscription, reconnection
   across live Game.ini credential changes, and live events
+- Root-only RCON event persistence with recent-history loading for later
+  administrator sessions
 - A Send Message form with a root-only UTF-8 spool, ASCII token RCON
   transport, and acknowledgement before success is reported
 - Root-only web access and administrative change audit logging
@@ -224,17 +228,44 @@ response status, response size, and request duration.
 
 Dedicated events identify login success, login failure, logout, server
 actions and their completion, language changes, initial-map and port changes,
-mod configuration and mod.io connection changes, Game.ini and Engine.ini
-mutations, pending-configuration removal, Unicode server-message sends,
-account changes, network-policy changes, OpenRC boot-mode changes, and saved
-web-port changes. Requests without a valid session use the account name
-`unauthenticated`.
+mod configuration, mod.io connection changes, manual metadata refreshes,
+server-wide refresh-interval changes, Game.ini and Engine.ini mutations,
+pending-configuration removal, Unicode server-message sends, account changes,
+network-policy changes, OpenRC boot-mode changes, and saved web-port changes.
+Requests without a valid session use the account name `unauthenticated`.
 
 Passwords, request bodies, session cookies, CSRF tokens, RCON credentials,
 configuration values, and configuration revisions are not written to the
 audit log. Configuration events identify the file, operation, section, and
 key without recording its value. Unicode server-message audit events record
 only UTF-8 byte and character counts, not message text.
+
+## Persistent Dashboard History
+
+The latest lifecycle operation is stored in:
+
+```text
+/root/mordhau/.manager/operation.json
+```
+
+The mode-`0600` state includes the fixed action, requesting account, start and
+finish times, result, and captured command output. The dashboard reloads that
+state for later sessions and after web-service restarts. If the web manager
+stops before a running operation records its result, the next start preserves
+the operation and marks it as interrupted instead of leaving it permanently
+running.
+
+Every accepted Live RCON event is appended as UTF-8 JSON Lines to:
+
+```text
+/root/mordhau/log/mordhau-rcon.log
+```
+
+Each mode-`0600` record contains a monotonic sequence, timestamp, event kind,
+and text. The log is retained across web-service restarts. A newly connected
+administrator receives the latest 400 events once, then continues from the
+authenticated event stream without repeatedly transferring the entire
+on-disk history. The browser retains the same 400-event Live RCON window.
 
 ## Languages
 
@@ -355,11 +386,22 @@ shows a warning when a required dependency is disabled or absent. Disabled
 mods retain dependency information without producing unresolved-dependency
 warnings.
 
-The configured-mod list refreshes automatically every 60 minutes by default.
-The interval can be set from 1 to 10,080 whole minutes and is stored in the
-current browser. Refreshes are scheduled after the preceding lookup finishes,
-so recursive API requests do not overlap. A refresh due while the page is
-hidden is deferred until the page becomes visible.
+The server refreshes the configured-mod cache every 60 minutes by default.
+The interval can be set from 1 to 10,080 whole minutes and is shared by every
+administrator. The server performs one metadata/dependency refresh regardless
+of how many browsers are connected. Concurrent manual requests join the same
+in-progress refresh instead of starting additional mod.io requests.
+
+After a successful refresh, the full interval starts again from that success
+time. A failed attempt retains the previous successful timestamp and uses a
+separate retry delay capped at five minutes. The page displays the last
+successful refresh and next refresh or retry as absolute date/time values
+formatted in each browser's locale and time zone.
+
+Completed refreshes and interval changes increment a shared revision sent over
+the existing authenticated event stream. Connected administrator pages then
+read the server cache and update without another mod.io lookup. The interval
+is stored in `/root/mordhau/.manager/mod-refresh.json` with mode `0600`.
 
 The API key and API path are stored in
 `/root/mordhau/.manager/modio.json` with mode `0600`. The key is not returned
@@ -421,8 +463,8 @@ Changing a boot mode does not change the current process state.
 - The web manager runs as root because it controls Wine processes, OpenRC, and
   root-owned configuration files.
 - State files, sessions, generated credentials, the last working RCON
-  reconnect credential, pending configuration, and the web audit log use
-  root-only permissions.
+  reconnect credential, pending configuration, lifecycle results, the RCON
+  event log, and the web audit log use root-only permissions.
 - Session tokens are stored as SHA-256 digests.
 - Login attempts are rate-limited.
 - CSRF tokens and same-site HTTP-only cookies protect authenticated changes.
@@ -491,12 +533,16 @@ log parsing, partial writes, log rotation, lossy RCON chat suppression,
 ASCII-only Unicode token commands, UTF-8 message staging, spool permissions and
 stale-file cleanup, bridge acknowledgements, input validation, start-map
 validation, server-port parsing and collision checks, mod.io URL and API-path
-validation, dependency ordering, and scoped mod-entry mutation. The shell
-integration test covers PAK installation, active and staged Game.ini
+validation, dependency ordering, scoped mod-entry mutation, shared-cache
+deduplication under concurrent clients, successful-refresh interval resets,
+failure retry behavior, lifecycle-result persistence, interrupted-operation
+recovery, multilingual RCON history persistence, and truncated-log recovery.
+The shell integration test covers PAK installation, active and staged Game.ini
 registration, existing server-actor preservation, backup creation, and
 idempotent reinstallation. Static asset tests verify the default-light theme
-initializer, persistent theme and mod-refresh controls, and Live RCON message
-form.
+initializer, persistent theme, server-managed mod-refresh controls,
+browser-time-zone timestamps, initial RCON history loading, and the Live RCON
+message form.
 
 ## Update and Rollback
 
@@ -505,7 +551,8 @@ services, the Unicode Bridge, and the Go web manager. The bundled PAK replaces
 the repository-managed bridge version, and the required server-actor entry is
 added without duplicating existing entries. Existing accounts, access rules,
 generated credentials, INI files, backups, logs, language selection, initial
-map, server ports, mod.io settings, and boot modes are preserved.
+map, server ports, mod.io settings, mod refresh interval, latest lifecycle
+result, RCON event history, and boot modes are preserved.
 
 To roll back management code:
 

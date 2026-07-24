@@ -3,25 +3,27 @@ package manager
 import "time"
 
 const (
-	rootDir           = "/root/mordhau"
-	stateDir          = rootDir + "/.manager"
-	logDir            = rootDir + "/log"
-	runtimeDir        = stateDir + "/runtime"
-	pendingDir        = stateDir + "/pending"
-	backupDir         = stateDir + "/backups"
-	configDir         = rootDir + "/Mordhau/Saved/Config/WindowsServer"
-	gameLogPath       = rootDir + "/Mordhau/Saved/Logs/Mordhau.log"
-	accountsPath      = stateDir + "/accounts.json"
-	sessionsPath      = stateDir + "/sessions.json"
-	accessPath        = stateDir + "/access.json"
-	languagePath      = stateDir + "/language"
-	rconStatePath     = stateDir + "/rcon-last.json"
-	webAuditLogPath   = logDir + "/mordhau-web.log"
-	defaultAccount    = rootDir + "/default_web_account.txt"
-	serverScript      = rootDir + "/server.sh"
-	mordhauPIDPath    = runtimeDir + "/mordhau.pid"
-	defaultRCONPort   = 7778
-	emergencyDuration = 30 * time.Minute
+	rootDir            = "/root/mordhau"
+	stateDir           = rootDir + "/.manager"
+	logDir             = rootDir + "/log"
+	runtimeDir         = stateDir + "/runtime"
+	pendingDir         = stateDir + "/pending"
+	backupDir          = stateDir + "/backups"
+	configDir          = rootDir + "/Mordhau/Saved/Config/WindowsServer"
+	gameLogPath        = rootDir + "/Mordhau/Saved/Logs/Mordhau.log"
+	accountsPath       = stateDir + "/accounts.json"
+	sessionsPath       = stateDir + "/sessions.json"
+	accessPath         = stateDir + "/access.json"
+	languagePath       = stateDir + "/language"
+	rconStatePath      = stateDir + "/rcon-last.json"
+	operationStatePath = stateDir + "/operation.json"
+	webAuditLogPath    = logDir + "/mordhau-web.log"
+	rconEventLogPath   = logDir + "/mordhau-rcon.log"
+	defaultAccount     = rootDir + "/default_web_account.txt"
+	serverScript       = rootDir + "/server.sh"
+	mordhauPIDPath     = runtimeDir + "/mordhau.pid"
+	defaultRCONPort    = 7778
+	emergencyDuration  = 30 * time.Minute
 )
 
 var supportedLanguages = []Language{
@@ -94,6 +96,11 @@ type Operation struct {
 	Output     string    `json:"output,omitempty"`
 }
 
+type operationStateFile struct {
+	Version   int       `json:"version"`
+	Operation Operation `json:"operation"`
+}
+
 type Usage struct {
 	Total uint64  `json:"total"`
 	Used  uint64  `json:"used"`
@@ -127,6 +134,7 @@ type Snapshot struct {
 	RCONConnected bool        `json:"rcon_connected"`
 	RCONStatus    string      `json:"rcon_status"`
 	RCONEvents    []RCONEvent `json:"rcon_events"`
+	ModRevision   uint64      `json:"mod_revision"`
 	GeneratedAt   time.Time   `json:"generated_at"`
 }
 

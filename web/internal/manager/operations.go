@@ -3,6 +3,8 @@ package manager
 import (
 	"bytes"
 	"errors"
+	"fmt"
+	"log"
 	"os/exec"
 	"strings"
 	"time"
@@ -26,11 +28,17 @@ func (m *Manager) startOperation(action, username, clientIP string) error {
 		m.mu.Unlock()
 		return errors.New("another server operation is already running")
 	}
+	previous := m.op
 	m.op = Operation{
 		Action:    action,
 		Running:   true,
 		StartedAt: time.Now(),
 		Requested: username,
+	}
+	if err := m.saveOperationLocked(); err != nil {
+		m.op = previous
+		m.mu.Unlock()
+		return fmt.Errorf("save lifecycle operation state: %w", err)
 	}
 	m.mu.Unlock()
 	m.addRCONEvent("system", "Server operation started: "+action)
@@ -57,7 +65,11 @@ func (m *Manager) startOperation(action, username, clientIP string) error {
 		if err != nil {
 			result = "failed"
 		}
+		persistErr := m.saveOperationLocked()
 		m.mu.Unlock()
+		if persistErr != nil {
+			log.Printf("save completed lifecycle operation state: %v", persistErr)
+		}
 		m.addRCONEvent("system", "Server operation "+result+": "+action)
 		m.auditActorEvent(username, clientIP, "server_action_completed", map[string]string{
 			"action": action,

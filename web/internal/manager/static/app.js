@@ -9,9 +9,7 @@ const app = {
   modPlanReference: "",
   modsLoading: false,
   modsReloadRequested: false,
-  modRefreshMinutes: 60,
-  modRefreshTimer: null,
-  modRefreshPending: false,
+  modRevision: null,
   rconSequence: 0,
   rconLines: 0,
 };
@@ -19,8 +17,6 @@ const app = {
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
 const themeStorageKey = "mordhau-control-theme";
-const modRefreshStorageKey = "mordhau-mod-refresh-minutes";
-const defaultModRefreshMinutes = 60;
 const minimumModRefreshMinutes = 1;
 const maximumModRefreshMinutes = 10080;
 
@@ -45,6 +41,12 @@ function initializeTheme() {
   setTheme(document.documentElement.dataset.theme === "dark" ? "dark" : "light", false);
 }
 
+function clearLegacyModRefreshPreference() {
+  try {
+    localStorage.removeItem("mordhau-mod-refresh-minutes");
+  } catch (_) {}
+}
+
 function validModRefreshMinutes(value) {
   const minutes = Number(value);
   return Number.isInteger(minutes) &&
@@ -52,41 +54,6 @@ function validModRefreshMinutes(value) {
     minutes <= maximumModRefreshMinutes
     ? minutes
     : null;
-}
-
-function updateModRefreshDisplay() {
-  const input = $("#mods-refresh-minutes");
-  const status = $("#mods-refresh-status");
-  if (input) input.value = String(app.modRefreshMinutes);
-  if (status) {
-    status.textContent = `Every ${app.modRefreshMinutes} min · stored in this browser`;
-  }
-}
-
-function initializeModRefresh() {
-  let minutes = defaultModRefreshMinutes;
-  try {
-    const stored = validModRefreshMinutes(
-      localStorage.getItem(modRefreshStorageKey),
-    );
-    if (stored !== null) minutes = stored;
-  } catch (_) {}
-  app.modRefreshMinutes = minutes;
-  updateModRefreshDisplay();
-}
-
-function scheduleModRefresh() {
-  if (app.modRefreshTimer !== null) {
-    clearTimeout(app.modRefreshTimer);
-  }
-  app.modRefreshTimer = setTimeout(() => {
-    app.modRefreshTimer = null;
-    if (document.hidden) {
-      app.modRefreshPending = true;
-      return;
-    }
-    loadMods();
-  }, app.modRefreshMinutes * 60 * 1000);
 }
 
 async function api(path, options = {}) {
@@ -143,6 +110,12 @@ function setMeter(name, percent) {
 
 function renderSnapshot(snapshot) {
   app.snapshot = snapshot;
+  if (Number.isSafeInteger(snapshot.mod_revision)) {
+    const changed = app.modRevision !== null &&
+      app.modRevision !== snapshot.mod_revision;
+    app.modRevision = snapshot.mod_revision;
+    if (changed) loadMods();
+  }
   setMeter("cpu", snapshot.metrics.cpu_percent);
   setMeter("memory", snapshot.metrics.memory.percent);
   setMeter("swap", snapshot.metrics.swap.percent);
@@ -389,6 +362,48 @@ function formatModDate(seconds) {
   return new Date(seconds * 1000).toLocaleString();
 }
 
+function formatBrowserDate(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  let zone = "";
+  try {
+    zone = Intl.DateTimeFormat().resolvedOptions().timeZone || "";
+  } catch (_) {}
+  let formatted = "";
+  try {
+    formatted = date.toLocaleString(undefined, {
+      dateStyle: "medium",
+      timeStyle: "medium",
+    });
+  } catch (_) {
+    formatted = date.toLocaleString();
+  }
+  return zone ? `${formatted} (${zone})` : formatted;
+}
+
+function renderModRefresh(refresh) {
+  const minutes = validModRefreshMinutes(refresh && refresh.interval_minutes) || 60;
+  $("#mods-refresh-minutes").value = String(minutes);
+
+  const status = $("#mods-refresh-status");
+  const lastSuccess = formatBrowserDate(refresh && refresh.last_success_at);
+  const nextRefresh = formatBrowserDate(refresh && refresh.next_refresh_at);
+  const failed = Boolean(refresh && refresh.last_error);
+  const parts = [`Server interval: ${minutes} min`];
+  parts.push(lastSuccess
+    ? `Last successful refresh: ${lastSuccess}`
+    : "No successful refresh yet");
+  if (refresh && refresh.refreshing) {
+    parts.push("Refreshing now");
+  } else if (nextRefresh) {
+    parts.push(`${failed ? "Next retry" : "Next refresh"}: ${nextRefresh}`);
+  }
+  if (failed) parts.push(`Last attempt failed: ${refresh.last_error}`);
+  status.textContent = parts.join(" · ");
+  status.classList.toggle("error", failed);
+}
+
 function renderModIOSettings(settings) {
   const configured = Boolean(settings && settings.api_key_configured);
   const status = $("#modio-key-status");
@@ -502,6 +517,8 @@ function appendConfiguredModDependencies(details, configured, configuredByID) {
 }
 
 function renderConfiguredMods(data) {
+  if (Number.isSafeInteger(data.revision)) app.modRevision = data.revision;
+  renderModRefresh(data.refresh || {});
   renderModIOSettings(data.settings || {});
   const stage = $("#mods-config-stage");
   stage.textContent = data.config_staged ? "Staged" : "Active";
@@ -632,8 +649,6 @@ async function loadMods() {
     if (app.modsReloadRequested) {
       app.modsReloadRequested = false;
       loadMods();
-    } else {
-      scheduleModRefresh();
     }
   }
 }
@@ -1051,40 +1066,58 @@ function bindEvents() {
       toast(error.message, true);
     }
   });
-  $("#mods-refresh").addEventListener("click", loadMods);
-  $("#mods-refresh-minutes").addEventListener("change", (event) => {
+  $("#mods-refresh").addEventListener("click", async () => {
+    const button = $("#mods-refresh");
+    button.disabled = true;
+    try {
+      const data = await api("/api/mods/refresh", { method: "POST" });
+      renderConfiguredMods(data);
+      if (data.refresh && data.refresh.last_error) {
+        toast(`Mod metadata refresh completed with errors: ${data.refresh.last_error}`, true);
+      } else {
+        toast("Mod metadata refreshed.");
+      }
+    } catch (error) {
+      toast(error.message, true);
+    } finally {
+      button.disabled = false;
+    }
+  });
+  $("#mods-refresh-minutes").addEventListener("change", async (event) => {
     const minutes = validModRefreshMinutes(event.target.value);
     if (minutes === null) {
-      updateModRefreshDisplay();
+      await loadMods();
       toast(`Enter a whole number from ${minimumModRefreshMinutes} to ${maximumModRefreshMinutes} minutes.`, true);
       return;
     }
-    app.modRefreshMinutes = minutes;
     try {
-      localStorage.setItem(modRefreshStorageKey, String(minutes));
-    } catch (_) {}
-    updateModRefreshDisplay();
-    scheduleModRefresh();
-    toast(`Mod metadata will refresh every ${minutes} minute${minutes === 1 ? "" : "s"}.`);
-  });
-  document.addEventListener("visibilitychange", () => {
-    if (!document.hidden && app.modRefreshPending) {
-      app.modRefreshPending = false;
-      loadMods();
+      const data = await api("/api/mods/refresh/settings", {
+        method: "POST",
+        body: { minutes },
+      });
+      renderConfiguredMods(data);
+      toast(`Server-wide mod refresh interval set to ${minutes} minute${minutes === 1 ? "" : "s"}.`);
+    } catch (error) {
+      await loadMods();
+      toast(error.message, true);
     }
   });
 }
 
 async function initialize() {
   initializeTheme();
-  initializeModRefresh();
+  clearLegacyModRefreshPreference();
   bindEvents();
   try {
     const me = await api("/api/me");
     app.csrf = me.csrf;
     app.username = me.username;
     $("#current-user").textContent = `${me.username} · ${me.current_ip}`;
-    const snapshot = await api("/api/snapshot");
+    const [snapshot, rconHistory] = await Promise.all([
+      api("/api/snapshot"),
+      api("/api/rcon/history"),
+    ]);
+    appendRconEvents(rconHistory.events || []);
     renderSnapshot(snapshot);
     await Promise.all([loadConfig(), loadMods(), loadAccounts(), loadAccess(), loadServices()]);
     const stream = new EventSource("/api/events");

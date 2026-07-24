@@ -224,6 +224,7 @@ func (m *Manager) snapshot() Snapshot {
 		RCONConnected: connected,
 		RCONStatus:    status,
 		RCONEvents:    events,
+		ModRevision:   m.currentModRevision(),
 		GeneratedAt:   time.Now(),
 	}
 }

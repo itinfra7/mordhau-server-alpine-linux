@@ -29,12 +29,15 @@ func (m *Manager) Handler() http.Handler {
 	mux.HandleFunc("/api/snapshot", m.withSession(m.snapshotHandler))
 	mux.HandleFunc("/api/events", m.withSession(m.eventsHandler))
 	mux.HandleFunc("/api/server/action", m.withSession(m.serverActionHandler))
+	mux.HandleFunc("/api/rcon/history", m.withSession(m.rconHistoryHandler))
 	mux.HandleFunc("/api/rcon/message", m.withSession(m.rconMessageHandler))
 	mux.HandleFunc("/api/language", m.withSession(m.languageHandler))
 	mux.HandleFunc("/api/config", m.withSession(m.configHandler))
 	mux.HandleFunc("/api/config/mutate", m.withSession(m.configMutationHandler))
 	mux.HandleFunc("/api/config/discard", m.withSession(m.configDiscardHandler))
 	mux.HandleFunc("/api/mods", m.withSession(m.modsHandler))
+	mux.HandleFunc("/api/mods/refresh", m.withSession(m.modRefreshHandler))
+	mux.HandleFunc("/api/mods/refresh/settings", m.withSession(m.modRefreshSettingsHandler))
 	mux.HandleFunc("/api/mods/plan", m.withSession(m.modPlanHandler))
 	mux.HandleFunc("/api/mods/add", m.withSession(m.modAddHandler))
 	mux.HandleFunc("/api/mods/enabled", m.withSession(m.modEnabledHandler))
@@ -392,6 +395,21 @@ func (m *Manager) rconMessageHandler(
 	writeJSON(response, http.StatusOK, map[string]string{"status": "sent"})
 }
 
+func (m *Manager) rconHistoryHandler(
+	response http.ResponseWriter,
+	request *http.Request,
+	_ Session,
+) {
+	if request.Method != http.MethodGet {
+		response.Header().Set("Allow", http.MethodGet)
+		http.Error(response, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	writeJSON(response, http.StatusOK, map[string]any{
+		"events": m.rconHistory(rconBrowserHistoryLimit),
+	})
+}
+
 func (m *Manager) languageHandler(response http.ResponseWriter, request *http.Request, session Session) {
 	if request.Method != http.MethodPost {
 		http.Error(response, "method not allowed", http.StatusMethodNotAllowed)
@@ -481,11 +499,60 @@ func (m *Manager) modsHandler(response http.ResponseWriter, request *http.Reques
 		http.Error(response, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	view, err := m.modManagementView()
+	view, err := m.cachedModManagementView()
 	if err != nil {
 		writeError(response, http.StatusInternalServerError, err.Error())
 		return
 	}
+	writeJSON(response, http.StatusOK, view)
+}
+
+func (m *Manager) modRefreshHandler(
+	response http.ResponseWriter,
+	request *http.Request,
+	session Session,
+) {
+	if request.Method != http.MethodPost || !validCSRF(request, session) {
+		writeError(response, http.StatusForbidden, "invalid request")
+		return
+	}
+	view, err := m.refreshModCache()
+	result := "completed"
+	if err != nil || view.Refresh.LastError != "" {
+		result = "failed"
+	}
+	m.auditRequestEvent(request, session.Username, "mod_metadata_refresh_requested",
+		map[string]string{"result": result})
+	if err != nil {
+		writeError(response, http.StatusBadGateway, err.Error())
+		return
+	}
+	writeJSON(response, http.StatusOK, view)
+}
+
+func (m *Manager) modRefreshSettingsHandler(
+	response http.ResponseWriter,
+	request *http.Request,
+	session Session,
+) {
+	if request.Method != http.MethodPost || !validCSRF(request, session) {
+		writeError(response, http.StatusForbidden, "invalid request")
+		return
+	}
+	var body struct {
+		Minutes int `json:"minutes"`
+	}
+	if err := decodeJSON(response, request, &body); err != nil {
+		writeError(response, http.StatusBadRequest, err.Error())
+		return
+	}
+	view, err := m.setModRefreshInterval(body.Minutes)
+	if err != nil {
+		writeError(response, http.StatusBadRequest, err.Error())
+		return
+	}
+	m.auditRequestEvent(request, session.Username, "mod_refresh_interval_changed",
+		map[string]string{"minutes": strconv.Itoa(body.Minutes)})
 	writeJSON(response, http.StatusOK, view)
 }
 
@@ -535,6 +602,7 @@ func (m *Manager) modAddHandler(response http.ResponseWriter, request *http.Requ
 		writeError(response, status, err.Error())
 		return
 	}
+	_, _ = m.refreshModCacheAfterConfigurationChange()
 	m.auditRequestEvent(request, session.Username, "mod_configuration_changed", map[string]string{
 		"action":           "add",
 		"mod_id":           strconv.Itoa(plan.Target.ID),
@@ -569,6 +637,7 @@ func (m *Manager) modEnabledHandler(response http.ResponseWriter, request *http.
 		writeError(response, status, err.Error())
 		return
 	}
+	_, _ = m.refreshModCacheAfterConfigurationChange()
 	m.auditRequestEvent(request, session.Username, "mod_configuration_changed", map[string]string{
 		"action":  "set_enabled",
 		"mod_id":  strconv.Itoa(body.ID),
@@ -599,6 +668,7 @@ func (m *Manager) modRemoveHandler(response http.ResponseWriter, request *http.R
 		writeError(response, status, err.Error())
 		return
 	}
+	_, _ = m.refreshModCacheAfterConfigurationChange()
 	m.auditRequestEvent(request, session.Username, "mod_configuration_changed", map[string]string{
 		"action": "remove",
 		"mod_id": strconv.Itoa(body.ID),
@@ -625,6 +695,7 @@ func (m *Manager) modIOSettingsHandler(response http.ResponseWriter, request *ht
 		writeError(response, http.StatusBadRequest, err.Error())
 		return
 	}
+	_, _ = m.refreshModCacheAfterConfigurationChange()
 	m.auditRequestEvent(request, session.Username, "modio_settings_saved", map[string]string{
 		"api_base": settings.APIBase,
 		"game_id":  strconv.Itoa(settings.GameID),
@@ -645,6 +716,7 @@ func (m *Manager) modIOSettingsClearHandler(
 		writeError(response, http.StatusInternalServerError, err.Error())
 		return
 	}
+	_, _ = m.refreshModCacheAfterConfigurationChange()
 	m.auditRequestEvent(request, session.Username, "modio_settings_cleared", nil)
 	response.WriteHeader(http.StatusNoContent)
 }

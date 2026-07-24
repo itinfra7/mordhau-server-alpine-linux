@@ -1,7 +1,7 @@
-# MORDHAU Server Alpine Linux v1.3.1
+# MORDHAU Server Alpine Linux v1.4.0
 
-This release adds a configurable, browser-persistent Mods-page metadata
-refresh interval with a 60-minute default.
+This release moves mod metadata scheduling and caching to the server so every
+administrator shares one interval and one set of mod.io API requests.
 
 ## Included
 
@@ -16,6 +16,8 @@ refresh interval with a 60-minute default.
 - Authenticated Go web manager bound to IPv4 `0.0.0.0`
 - Default-light responsive interface with a persistent light/dark toggle
 - Live CPU, memory, swap, and server-filesystem metrics
+- Persistent latest lifecycle action, requester, result, timestamps, and
+  command output
 - Game.ini and Engine.ini structured editing with running-server staging
 - Reversible per-entry enable/disable controls that preserve keys, values,
   ordering, and ordinary comments
@@ -38,8 +40,16 @@ refresh interval with a 60-minute default.
   recursive dependency inspection
 - Per-mod dependency lists with enabled, disabled, and not-configured status
 - Unresolved-dependency warnings limited to enabled target mods
-- Non-overlapping mod metadata auto-refresh from 1 to 10,080 minutes, with
-  hidden-page deferral and a 60-minute default
+- Server-wide mod metadata auto-refresh from 1 to 10,080 minutes with a
+  60-minute default and root-only interval persistence
+- One metadata/dependency cache and one in-progress refresh shared by all
+  authenticated administrator sessions
+- Authenticated event-stream revision updates that refresh every connected
+  Mods page from the shared cache without additional mod.io lookups
+- Browser-locale and browser-time-zone display of the last successful refresh
+  and next refresh or retry
+- Full interval reset only after successful refreshes, with failed attempts
+  retaining the previous success time and using a capped retry delay
 - Scoped Game.ini `Mods=<Resource ID>` add, enable, disable, and remove actions
 - IPv4 and IPv6 address/CIDR access policies
 - Null-safe rendering for empty account, access-rule, mod, and dependency data
@@ -51,6 +61,9 @@ refresh interval with a 60-minute default.
   server actions, port and map changes, mod configuration, and administrative
   changes
 - RCON `listen allon` event streaming with multilingual decoding
+- Append-only root-only JSON Lines persistence for Live RCON events
+- Initial loading of the latest 400 RCON events for administrators who connect
+  after the events were received or after a web-service restart
 - RCON reconnection across direct Game.ini password changes while the game is
   running
 - Automatic web RCON use of the saved RCON launch port

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"os"
 	"path/filepath"
@@ -95,16 +96,18 @@ func (m *Manager) addRCONEvent(kind, text string) {
 	}
 	m.rconMu.Lock()
 	m.rconSequence++
-	m.rconEvents = append(m.rconEvents, RCONEvent{
+	event := RCONEvent{
 		Sequence: m.rconSequence,
 		Time:     time.Now(),
 		Text:     text,
 		Kind:     kind,
-	})
-	if len(m.rconEvents) > 1000 {
-		m.rconEvents = append([]RCONEvent(nil), m.rconEvents[len(m.rconEvents)-800:]...)
 	}
+	m.rconEvents = retainRCONEvent(m.rconEvents, event)
+	persistErr := m.appendRCONEventLog(event)
 	m.rconMu.Unlock()
+	if persistErr != nil {
+		log.Printf("append RCON event log: %v", persistErr)
+	}
 }
 
 func filteredRCONLines(text string) []string {
@@ -417,7 +420,8 @@ func executeRCONCommand(connection net.Conn, password string, command []byte) er
 			return err
 		}
 		if bytes.Contains(packet.Body, []byte(unicodeBridgeAcknowledged)) {
-			return connection.SetDeadline(time.Time{})
+			_ = connection.SetDeadline(time.Time{})
+			return nil
 		}
 	}
 	return errors.New("the Unicode server bridge did not acknowledge the message")

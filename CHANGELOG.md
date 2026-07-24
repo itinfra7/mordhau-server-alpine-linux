@@ -2,6 +2,48 @@
 
 All notable changes to this repository are documented in this file.
 
+## [1.4.0] - 2026-07-24
+
+### Added
+
+- Root-only server-wide mod refresh interval persistence with a 60-minute
+  default and a range of 1 to 10,080 whole minutes.
+- A single server-side mod metadata/dependency cache shared by every
+  authenticated administrator.
+- Shared mod-cache revisions in the authenticated event stream so connected
+  pages update after background, manual, and configuration-driven refreshes.
+- Last successful refresh and next refresh/retry timestamps formatted in each
+  browser's locale and time zone.
+- Root-only persistence for the latest lifecycle action, requester, result,
+  timestamps, and command output.
+- An append-only root-only JSON Lines log for Live RCON events, plus an
+  authenticated endpoint that loads the latest 400 events for later sessions.
+- Tests for concurrent-client request collapsing, cache reuse, success-based
+  interval resets, failure retries, lifecycle restart recovery, multilingual
+  RCON history reload, truncated-log recovery, and timestamp UI integration.
+
+### Changed
+
+- Move automatic refresh scheduling from each browser to one server process,
+  preventing administrator count from multiplying mod.io API requests.
+- Recalculate the full automatic interval only after a successful refresh.
+- Preserve the prior successful timestamp after a failed attempt and use a
+  separate retry delay capped at five minutes.
+- Store the selected interval in
+  `/root/mordhau/.manager/mod-refresh.json` instead of browser local storage.
+- Clear the obsolete browser-local interval preference when the updated page
+  loads.
+- Restore the latest lifecycle result and the retained Live RCON window when
+  the web manager or an administrator session starts.
+- Follow an already-running metadata lookup with one new refresh when mod
+  configuration or mod.io settings change, so the shared cache reflects the
+  committed configuration.
+
+### Fixed
+
+- Do not report an acknowledged Unicode Bridge RCON command as failed when the
+  peer closes immediately before the final connection deadline is cleared.
+
 ## [1.3.1] - 2026-07-24
 
 ### Added

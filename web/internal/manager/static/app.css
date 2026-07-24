@@ -497,7 +497,10 @@ input:focus, select:focus { border-color: rgba(233, 79, 81, .65); box-shadow: 0 
   grid-column: 1 / -1;
   color: var(--muted);
   font-size: .67rem;
+  line-height: 1.45;
+  text-align: right;
 }
+.mod-refresh-status.error { color: var(--dependency-warning-text); }
 .modio-settings-form {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -692,6 +695,7 @@ input:focus, select:focus { border-color: rgba(233, 79, 81, .65); box-shadow: 0 
   .modio-settings-form, .mod-plan-form { grid-template-columns: 1fr; }
   .modio-settings-form .control-row { grid-column: auto; }
   .mod-refresh-controls { justify-items: start; }
+  .mod-refresh-status { text-align: left; }
   .server-port-grid { grid-template-columns: 1fr 1fr; }
   .server-port-actions { align-items: stretch; flex-direction: column; }
   .console { height: 20rem; }
