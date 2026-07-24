@@ -74,11 +74,11 @@ MORDHAU Dedicated Server, and Steam update staging.
 ### Release archive
 
 ```sh
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v1.7.1/mordhau-server-alpine-linux-v1.7.1.tar.gz
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v1.7.1/SHA256SUMS
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v1.7.2/mordhau-server-alpine-linux-v1.7.2.tar.gz
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v1.7.2/SHA256SUMS
 sha256sum -c SHA256SUMS
-tar -xzf mordhau-server-alpine-linux-v1.7.1.tar.gz
-cd mordhau-server-alpine-linux-v1.7.1
+tar -xzf mordhau-server-alpine-linux-v1.7.2.tar.gz
+cd mordhau-server-alpine-linux-v1.7.2
 chmod +x mordhau-server-alpine-linux.sh
 ./mordhau-server-alpine-linux.sh
 ```
@@ -326,14 +326,18 @@ scorefeed, custom, and punishment events continue to come from authenticated
 RCON. The log follower handles partial writes and log rotation and starts at
 the end of an existing log to avoid replaying historical chat.
 
-The steady RCON reader uses a 90-second read deadline only as an idle wake-up.
-A deadline with no broadcast traffic keeps the authenticated connection and
-does not trigger a reconnect. Real connection loss still updates the status
-and retries. Transport connection and reconnection messages are omitted from
-Live RCON because the current state is already shown above the console.
-Historical transport-status records are also filtered when loading retained
-RCON history. Connection transitions and non-idle failures remain available
-in the root-only web audit log.
+The steady RCON reader uses a 90-second read deadline as an idle wake-up. If no
+packet byte arrives before that deadline, the manager sends the idempotent
+`listen allon` command to renew the subscription before MORDHAU's own idle
+connection timeout. The acknowledgement is consumed without adding it to Live
+RCON. A timeout after a partial packet remains a connection error because the
+stream may be incomplete. Real connection loss updates the status and retries.
+
+Transport connection and reconnection messages are omitted from Live RCON
+because the current state is already shown above the console. Historical
+transport-status records are also filtered when loading retained RCON history.
+Connection transitions and non-idle failures remain available in the
+root-only web audit log.
 
 The manager combines the current Game.ini RCON password with the saved RCON
 launch port. After each successful authentication, it stores the working
@@ -571,8 +575,9 @@ precedence, inclusive IPv4 range normalization, exact boundary matching,
 range/CIDR precedence, emergency access, proxy-safe request validation,
 network-rule comment normalization and backward-compatible JSON, audit-log
 permissions and secret exclusion, enabled/disabled INI entry round trips,
-RCON credential fallback order, idle-timeout retention, transport-status
-filtering, packet framing, Korean legacy decoding, current all-broadcast
+RCON credential fallback order, idle keepalive framing, zero-byte versus
+partial-packet timeout handling, transport-status filtering, packet framing,
+Korean legacy decoding, current all-broadcast
 subscription syntax and response filtering, UTF-8 chat log parsing, partial
 writes, log rotation, lossy RCON chat suppression,
 ASCII-only Unicode token commands, UTF-8 message staging, spool permissions and

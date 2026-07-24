@@ -820,6 +820,16 @@ func TestConsumeRCONContinuesAfterIdleTimeout(t *testing.T) {
 		done <- manager.consumeRCON(ctx, connection)
 	}()
 
+	keepalive, err := readRCONPacket(server)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if keepalive.ID != rconKeepalivePacketID ||
+		keepalive.Type != rconExecCommand ||
+		string(keepalive.Body) != rconListenAllCommand {
+		t.Fatalf("unexpected idle keepalive packet: %#v", keepalive)
+	}
+
 	if err := writeRCONPacket(server, rconPacket{
 		ID:   200,
 		Type: rconResponseValue,
@@ -956,6 +966,18 @@ func TestRCONBroadcastOptionsHelpIsHidden(t *testing.T) {
 	)
 	if len(lines) != 2 || lines[0] != "Chat: retained" || lines[1] != rconInvalidBroadcast {
 		t.Fatalf("unexpected visible RCON lines: %#v", lines)
+	}
+}
+
+func TestRCONSubscriptionAcknowledgementIsHidden(t *testing.T) {
+	manager := &Manager{}
+	manager.addRCONText(
+		rconListenAllSuccess + "\r\n" +
+			"Killfeed: retained\r\n",
+	)
+	if len(manager.rconEvents) != 1 ||
+		manager.rconEvents[0].Text != "Killfeed: retained" {
+		t.Fatalf("subscription acknowledgement leaked into RCON events: %#v", manager.rconEvents)
 	}
 }
 
@@ -1665,7 +1687,7 @@ func TestDashboardThemeAndMessageMarkup(t *testing.T) {
 	for _, expected := range []string{
 		`id="theme-toggle"`,
 		`content="width=device-width, initial-scale=1, viewport-fit=cover"`,
-		`src="/static/theme.js?v=1.7.1"`,
+		`src="/static/theme.js?v=1.7.2"`,
 		`<label for="rcon-message">Send Message</label>`,
 		`id="mods-refresh-minutes"`,
 		`min="1" max="10080"`,
@@ -1696,7 +1718,7 @@ func TestDashboardThemeAndMessageMarkup(t *testing.T) {
 		t.Fatal(err)
 	}
 	loginSource := string(loginData)
-	if !strings.Contains(loginSource, `src="/static/theme.js?v=1.7.1"`) {
+	if !strings.Contains(loginSource, `src="/static/theme.js?v=1.7.2"`) {
 		t.Fatal("login page does not initialize the persisted theme")
 	}
 	if !strings.Contains(loginSource, `viewport-fit=cover`) {

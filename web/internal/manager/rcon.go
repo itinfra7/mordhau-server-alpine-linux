@@ -31,16 +31,18 @@ const (
 	rconAuthResponse  = 2
 	rconAuth          = 3
 
-	rconListenAllCommand     = "listen allon"
-	rconListenAllSuccess     = "Now listening to all broadcast channels"
-	rconListenCustomCommand  = "listen custom"
-	rconListenCustomSuccess  = "Now listening to custom broadcasts"
-	rconInvalidBroadcast     = "Invalid broadcast option!"
-	rconBroadcastOptionsHelp = "Valid options include allon, alloff, chat, login, matchstate, killfeed, scorefeed, custom, and punishment"
-	rconConnectedEvent       = "RCON connected; all broadcasts enabled"
-	rconPreviousEvent        = "RCON reconnected with the running server's previous settings; all broadcasts enabled"
-	rconClosedEventPrefix    = "RCON connection closed:"
-	rconIdleReadTimeout      = 90 * time.Second
+	rconListenAllCommand      = "listen allon"
+	rconListenAllSuccess      = "Now listening to all broadcast channels"
+	rconListenCustomCommand   = "listen custom"
+	rconListenCustomSuccess   = "Now listening to custom broadcasts"
+	rconInvalidBroadcast      = "Invalid broadcast option!"
+	rconBroadcastOptionsHelp  = "Valid options include allon, alloff, chat, login, matchstate, killfeed, scorefeed, custom, and punishment"
+	rconConnectedEvent        = "RCON connected; all broadcasts enabled"
+	rconPreviousEvent         = "RCON reconnected with the running server's previous settings; all broadcasts enabled"
+	rconClosedEventPrefix     = "RCON connection closed:"
+	rconIdleReadTimeout       = 90 * time.Second
+	rconKeepaliveWriteTimeout = 5 * time.Second
+	rconKeepalivePacketID     = 103
 
 	unicodeBridgePayloadPrefix = "unicode.say "
 	unicodeBridgeCommandPrefix = "string " + unicodeBridgePayloadPrefix
@@ -155,7 +157,7 @@ func filteredRCONLines(text string) []string {
 
 func (m *Manager) addRCONText(text string) {
 	for _, line := range filteredRCONLines(text) {
-		if isRCONChatLine(line) {
+		if isRCONChatLine(line) || line == rconListenAllSuccess {
 			continue
 		}
 		m.addRCONEvent("rcon", line)
@@ -253,7 +255,7 @@ func (m *Manager) rconLoop(ctx context.Context) {
 		_ = connection.Close()
 		m.setRCONState(false, "RCON disconnected; retrying")
 		if ctx.Err() == nil && serverRunning() {
-			if err != nil && !errors.Is(err, io.EOF) {
+			if err != nil {
 				m.auditActorEvent("system", "local", "rcon_connection_closed", map[string]string{
 					"error": err.Error(),
 				})
@@ -626,6 +628,9 @@ func (m *Manager) consumeRCON(ctx context.Context, connection net.Conn) error {
 		packet, err := readRCONPacket(reader)
 		if err != nil {
 			if isRCONIdleTimeout(err, reader.read) {
+				if err := sendRCONKeepalive(connection); err != nil {
+					return fmt.Errorf("send idle RCON keepalive: %w", err)
+				}
 				continue
 			}
 			return err
@@ -636,6 +641,24 @@ func (m *Manager) consumeRCON(ctx context.Context, connection net.Conn) error {
 		text := decodeRCON(packet.Body, m.currentLanguage())
 		m.addRCONText(text)
 	}
+}
+
+func sendRCONKeepalive(connection net.Conn) error {
+	if err := connection.SetWriteDeadline(
+		time.Now().Add(rconKeepaliveWriteTimeout),
+	); err != nil {
+		return err
+	}
+	writeErr := writeRCONPacket(connection, rconPacket{
+		ID:   rconKeepalivePacketID,
+		Type: rconExecCommand,
+		Body: []byte(rconListenAllCommand),
+	})
+	clearErr := connection.SetWriteDeadline(time.Time{})
+	if writeErr != nil {
+		return writeErr
+	}
+	return clearErr
 }
 
 func writeRCONPacket(writer io.Writer, packet rconPacket) error {

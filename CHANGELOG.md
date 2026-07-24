@@ -2,6 +2,20 @@
 
 All notable changes to this repository are documented in this file.
 
+## [1.7.2] - 2026-07-24
+
+### Fixed
+
+- Renew an idle authenticated RCON subscription with the idempotent
+  `listen allon` command after a zero-byte 90-second read deadline, preventing
+  MORDHAU's later server-side idle close.
+- Suppress the keepalive subscription acknowledgement from Live RCON.
+- Continue treating a timeout after partial packet data as a real connection
+  failure to avoid accepting a desynchronized stream.
+- Audit EOF connection closures for retained transport diagnostics.
+- Add regression coverage for keepalive framing, acknowledgement suppression,
+  and zero-byte versus partial-packet timeout handling.
+
 ## [1.7.1] - 2026-07-24
 
 ### Fixed

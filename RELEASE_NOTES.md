@@ -1,8 +1,9 @@
-# MORDHAU Server Alpine Linux v1.7.1
+# MORDHAU Server Alpine Linux v1.7.2
 
-This release keeps healthy RCON subscriptions connected during broadcast-idle
-periods and removes redundant transport status from Live RCON while retaining
-network-rule comments, responsive layouts, and persistent dashboard state.
+This release renews healthy RCON subscriptions before MORDHAU's server-side
+idle close and removes redundant transport status from Live RCON while
+retaining network-rule comments, responsive layouts, and persistent dashboard
+state.
 
 ## Included
 
@@ -78,8 +79,11 @@ network-rule comments, responsive layouts, and persistent dashboard state.
   server actions, port and map changes, mod configuration, and administrative
   changes
 - RCON `listen allon` event streaming with multilingual decoding
-- Idle RCON read deadlines that retain the authenticated connection instead
-  of forcing a reconnect every 90 seconds without broadcast traffic
+- Idempotent `listen allon` keepalives after zero-byte 90-second RCON read
+  deadlines, preventing MORDHAU's later server-side idle close
+- Partial-packet timeout handling that reconnects instead of accepting an
+  incomplete stream
+- Keepalive acknowledgement suppression from Live RCON
 - RCON transport status shown above the console and recorded in the web audit
   log instead of being duplicated in Live RCON
 - Filtering of previously retained connection and timeout status records
