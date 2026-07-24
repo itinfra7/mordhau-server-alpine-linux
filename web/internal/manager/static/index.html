@@ -5,9 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="light dark">
   <title>MORDHAU Control</title>
-  <script src="/static/theme.js?v=1.6.0"></script>
-  <link rel="stylesheet" href="/static/app.css?v=1.6.0">
-  <script src="/static/app.js?v=1.6.0" defer></script>
+  <script src="/static/theme.js?v=1.6.1"></script>
+  <link rel="stylesheet" href="/static/app.css?v=1.6.1">
+  <script src="/static/app.js?v=1.6.1" defer></script>
 </head>
 <body>
   <div class="ambient ambient-one"></div>
@@ -365,7 +365,7 @@
         <p id="current-ip" class="hint"></p>
         <form id="new-rule-form" class="rule-create">
           <select id="new-rule-action"><option value="allow">Allow</option><option value="deny">Deny</option></select>
-          <input id="new-rule-network" placeholder="203.226.192.0-203.226.252.255"
+          <input id="new-rule-network" placeholder="10.0.0.4 | 10.0.0.0/24 | 10.0.0.4-10.0.0.9"
                  required autocapitalize="none" spellcheck="false">
           <button class="primary compact" type="submit">Add rule</button>
         </form>

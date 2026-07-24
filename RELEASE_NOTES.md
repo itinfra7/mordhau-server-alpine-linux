@@ -1,8 +1,9 @@
-# MORDHAU Server Alpine Linux v1.6.0
+# MORDHAU Server Alpine Linux v1.6.1
 
-This release adds exact inclusive IPv4 ranges to the management access policy
-while retaining CIDR precedence, responsive layouts, shared metadata, and
-persistent dashboard state.
+This release presents every supported network-rule input category directly in
+the rule placeholder while retaining exact inclusive IPv4 ranges, CIDR
+precedence, responsive layouts, shared metadata, and persistent dashboard
+state.
 
 ## Included
 
@@ -64,6 +65,8 @@ persistent dashboard state.
 - IPv4 and IPv6 address/CIDR access policies
 - Inclusive IPv4 ranges using `start-end` or `start~end`, canonical
   persistence, and exact minimal-CIDR evaluation
+- Network-rule placeholder examples for a single address, CIDR, and an
+  inclusive IPv4 range
 - Null-safe rendering for empty account, access-rule, mod, and dependency data
 - Account management, Argon2id password hashing, CSRF protection, and login
   throttling

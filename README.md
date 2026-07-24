@@ -74,11 +74,11 @@ MORDHAU Dedicated Server, and Steam update staging.
 ### Release archive
 
 ```sh
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v1.6.0/mordhau-server-alpine-linux-v1.6.0.tar.gz
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v1.6.0/SHA256SUMS
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v1.6.1/mordhau-server-alpine-linux-v1.6.1.tar.gz
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v1.6.1/SHA256SUMS
 sha256sum -c SHA256SUMS
-tar -xzf mordhau-server-alpine-linux-v1.6.0.tar.gz
-cd mordhau-server-alpine-linux-v1.6.0
+tar -xzf mordhau-server-alpine-linux-v1.6.1.tar.gz
+cd mordhau-server-alpine-linux-v1.6.1
 chmod +x mordhau-server-alpine-linux.sh
 ./mordhau-server-alpine-linux.sh
 ```

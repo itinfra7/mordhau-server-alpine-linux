@@ -1444,11 +1444,12 @@ func TestDashboardThemeAndMessageMarkup(t *testing.T) {
 	for _, expected := range []string{
 		`id="theme-toggle"`,
 		`content="width=device-width, initial-scale=1, viewport-fit=cover"`,
-		`src="/static/theme.js?v=1.6.0"`,
+		`src="/static/theme.js?v=1.6.1"`,
 		`<label for="rcon-message">Send Message</label>`,
 		`id="mods-refresh-minutes"`,
 		`min="1" max="10080"`,
 		`value="60"`,
+		`placeholder="10.0.0.4 | 10.0.0.0/24 | 10.0.0.4-10.0.0.9"`,
 		`start-end`,
 		`start~end`,
 	} {
@@ -1472,7 +1473,7 @@ func TestDashboardThemeAndMessageMarkup(t *testing.T) {
 		t.Fatal(err)
 	}
 	loginSource := string(loginData)
-	if !strings.Contains(loginSource, `src="/static/theme.js?v=1.6.0"`) {
+	if !strings.Contains(loginSource, `src="/static/theme.js?v=1.6.1"`) {
 		t.Fatal("login page does not initialize the persisted theme")
 	}
 	if !strings.Contains(loginSource, `viewport-fit=cover`) {

@@ -2,6 +2,13 @@
 
 All notable changes to this repository are documented in this file.
 
+## [1.6.1] - 2026-07-24
+
+### Fixed
+
+- Show single-address, CIDR, and inclusive IPv4-range examples together in
+  the Network access rule placeholder.
+
 ## [1.6.0] - 2026-07-24
 
 ### Added
