@@ -7,6 +7,11 @@ const app = {
   config: null,
   modPlan: null,
   modPlanReference: "",
+  modsLoading: false,
+  modsReloadRequested: false,
+  modRefreshMinutes: 60,
+  modRefreshTimer: null,
+  modRefreshPending: false,
   rconSequence: 0,
   rconLines: 0,
 };
@@ -14,6 +19,10 @@ const app = {
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
 const themeStorageKey = "mordhau-control-theme";
+const modRefreshStorageKey = "mordhau-mod-refresh-minutes";
+const defaultModRefreshMinutes = 60;
+const minimumModRefreshMinutes = 1;
+const maximumModRefreshMinutes = 10080;
 
 function setTheme(theme, persist = true) {
   const dark = theme === "dark";
@@ -34,6 +43,50 @@ function setTheme(theme, persist = true) {
 
 function initializeTheme() {
   setTheme(document.documentElement.dataset.theme === "dark" ? "dark" : "light", false);
+}
+
+function validModRefreshMinutes(value) {
+  const minutes = Number(value);
+  return Number.isInteger(minutes) &&
+    minutes >= minimumModRefreshMinutes &&
+    minutes <= maximumModRefreshMinutes
+    ? minutes
+    : null;
+}
+
+function updateModRefreshDisplay() {
+  const input = $("#mods-refresh-minutes");
+  const status = $("#mods-refresh-status");
+  if (input) input.value = String(app.modRefreshMinutes);
+  if (status) {
+    status.textContent = `Every ${app.modRefreshMinutes} min · stored in this browser`;
+  }
+}
+
+function initializeModRefresh() {
+  let minutes = defaultModRefreshMinutes;
+  try {
+    const stored = validModRefreshMinutes(
+      localStorage.getItem(modRefreshStorageKey),
+    );
+    if (stored !== null) minutes = stored;
+  } catch (_) {}
+  app.modRefreshMinutes = minutes;
+  updateModRefreshDisplay();
+}
+
+function scheduleModRefresh() {
+  if (app.modRefreshTimer !== null) {
+    clearTimeout(app.modRefreshTimer);
+  }
+  app.modRefreshTimer = setTimeout(() => {
+    app.modRefreshTimer = null;
+    if (document.hidden) {
+      app.modRefreshPending = true;
+      return;
+    }
+    loadMods();
+  }, app.modRefreshMinutes * 60 * 1000);
 }
 
 async function api(path, options = {}) {
@@ -564,11 +617,24 @@ function renderConfiguredMods(data) {
 }
 
 async function loadMods() {
+  if (app.modsLoading) {
+    app.modsReloadRequested = true;
+    return;
+  }
+  app.modsLoading = true;
   try {
     const data = await api("/api/mods");
     renderConfiguredMods(data);
   } catch (error) {
     toast(error.message, true);
+  } finally {
+    app.modsLoading = false;
+    if (app.modsReloadRequested) {
+      app.modsReloadRequested = false;
+      loadMods();
+    } else {
+      scheduleModRefresh();
+    }
   }
 }
 
@@ -986,10 +1052,32 @@ function bindEvents() {
     }
   });
   $("#mods-refresh").addEventListener("click", loadMods);
+  $("#mods-refresh-minutes").addEventListener("change", (event) => {
+    const minutes = validModRefreshMinutes(event.target.value);
+    if (minutes === null) {
+      updateModRefreshDisplay();
+      toast(`Enter a whole number from ${minimumModRefreshMinutes} to ${maximumModRefreshMinutes} minutes.`, true);
+      return;
+    }
+    app.modRefreshMinutes = minutes;
+    try {
+      localStorage.setItem(modRefreshStorageKey, String(minutes));
+    } catch (_) {}
+    updateModRefreshDisplay();
+    scheduleModRefresh();
+    toast(`Mod metadata will refresh every ${minutes} minute${minutes === 1 ? "" : "s"}.`);
+  });
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden && app.modRefreshPending) {
+      app.modRefreshPending = false;
+      loadMods();
+    }
+  });
 }
 
 async function initialize() {
   initializeTheme();
+  initializeModRefresh();
   bindEvents();
   try {
     const me = await api("/api/me");

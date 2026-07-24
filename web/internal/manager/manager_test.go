@@ -940,8 +940,11 @@ func TestDashboardThemeAndMessageMarkup(t *testing.T) {
 	index := string(indexData)
 	for _, expected := range []string{
 		`id="theme-toggle"`,
-		`src="/static/theme.js?v=1.3.0"`,
+		`src="/static/theme.js?v=1.3.1"`,
 		`<label for="rcon-message">Send Message</label>`,
+		`id="mods-refresh-minutes"`,
+		`min="1" max="10080"`,
+		`value="60"`,
 	} {
 		if !strings.Contains(index, expected) {
 			t.Fatalf("dashboard is missing %q", expected)
@@ -961,7 +964,7 @@ func TestDashboardThemeAndMessageMarkup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(loginData), `src="/static/theme.js?v=1.3.0"`) {
+	if !strings.Contains(string(loginData), `src="/static/theme.js?v=1.3.1"`) {
 		t.Fatal("login page does not initialize the persisted theme")
 	}
 

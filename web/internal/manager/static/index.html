@@ -5,9 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
   <title>MORDHAU Control</title>
-  <script src="/static/theme.js?v=1.3.0"></script>
-  <link rel="stylesheet" href="/static/app.css?v=1.3.0">
-  <script src="/static/app.js?v=1.3.0" defer></script>
+  <script src="/static/theme.js?v=1.3.1"></script>
+  <link rel="stylesheet" href="/static/app.css?v=1.3.1">
+  <script src="/static/app.js?v=1.3.1" defer></script>
 </head>
 <body>
   <div class="ambient ambient-one"></div>
@@ -292,7 +292,18 @@
               <p class="eyebrow">GAME.INI</p>
               <h2>Configured mods</h2>
             </div>
-            <button id="mods-refresh" class="ghost compact" type="button">Refresh metadata</button>
+            <div class="mod-refresh-controls">
+              <label class="mod-refresh-setting" for="mods-refresh-minutes">
+                <span>Auto-refresh</span>
+                <input id="mods-refresh-minutes" type="number" min="1" max="10080"
+                       step="1" value="60" inputmode="numeric">
+                <span>min</span>
+              </label>
+              <button id="mods-refresh" class="ghost compact" type="button">Refresh now</button>
+              <span id="mods-refresh-status" class="mod-refresh-status">
+                Every 60 min · stored in this browser
+              </span>
+            </div>
           </div>
           <div id="mods-api-error" class="policy-note hidden"></div>
           <p id="mods-invalid-warning" class="hint hidden"></p>

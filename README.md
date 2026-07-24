@@ -71,11 +71,11 @@ MORDHAU Dedicated Server, and Steam update staging.
 ### Release archive
 
 ```sh
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v1.3.0/mordhau-server-alpine-linux-v1.3.0.tar.gz
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v1.3.0/SHA256SUMS
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v1.3.1/mordhau-server-alpine-linux-v1.3.1.tar.gz
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v1.3.1/SHA256SUMS
 sha256sum -c SHA256SUMS
-tar -xzf mordhau-server-alpine-linux-v1.3.0.tar.gz
-cd mordhau-server-alpine-linux-v1.3.0
+tar -xzf mordhau-server-alpine-linux-v1.3.1.tar.gz
+cd mordhau-server-alpine-linux-v1.3.1
 chmod +x mordhau-server-alpine-linux.sh
 ./mordhau-server-alpine-linux.sh
 ```
@@ -197,6 +197,8 @@ The web manager provides:
 - Optional mod.io API-key validation, mod lookup, per-mod recursive dependency
   status, unresolved-dependency warnings, and scoped `Mods=<Resource ID>`
   management
+- Browser-persistent mod metadata auto-refresh from 1 to 10,080 minutes,
+  defaulting to 60 minutes
 - Game.ini and Engine.ini section/item creation, editing, and removal
 - Reversible per-entry enable and disable controls
 - Revision checks, active-file backups, and staged edits while the game is
@@ -353,6 +355,12 @@ shows a warning when a required dependency is disabled or absent. Disabled
 mods retain dependency information without producing unresolved-dependency
 warnings.
 
+The configured-mod list refreshes automatically every 60 minutes by default.
+The interval can be set from 1 to 10,080 whole minutes and is stored in the
+current browser. Refreshes are scheduled after the preceding lookup finishes,
+so recursive API requests do not overlap. A refresh due while the page is
+hidden is deferred until the page becomes visible.
+
 The API key and API path are stored in
 `/root/mordhau/.manager/modio.json` with mode `0600`. The key is not returned
 to the browser or written to the audit log. Requests are restricted to HTTPS
@@ -487,7 +495,8 @@ validation, dependency ordering, and scoped mod-entry mutation. The shell
 integration test covers PAK installation, active and staged Game.ini
 registration, existing server-actor preservation, backup creation, and
 idempotent reinstallation. Static asset tests verify the default-light theme
-initializer, persistent theme control markup, and Live RCON message form.
+initializer, persistent theme and mod-refresh controls, and Live RCON message
+form.
 
 ## Update and Rollback
 

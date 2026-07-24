@@ -1,7 +1,7 @@
-# MORDHAU Server Alpine Linux v1.3.0
+# MORDHAU Server Alpine Linux v1.3.1
 
-This release adds a default-light theme with a persistent dashboard toggle
-and per-mod dependency health information for configured mod.io resources.
+This release adds a configurable, browser-persistent Mods-page metadata
+refresh interval with a 60-minute default.
 
 ## Included
 
@@ -38,6 +38,8 @@ and per-mod dependency health information for configured mod.io resources.
   recursive dependency inspection
 - Per-mod dependency lists with enabled, disabled, and not-configured status
 - Unresolved-dependency warnings limited to enabled target mods
+- Non-overlapping mod metadata auto-refresh from 1 to 10,080 minutes, with
+  hidden-page deferral and a 60-minute default
 - Scoped Game.ini `Mods=<Resource ID>` add, enable, disable, and remove actions
 - IPv4 and IPv6 address/CIDR access policies
 - Null-safe rendering for empty account, access-rule, mod, and dependency data

@@ -2,6 +2,24 @@
 
 All notable changes to this repository are documented in this file.
 
+## [1.3.1] - 2026-07-24
+
+### Added
+
+- Configurable Mods-page metadata auto-refresh with a 60-minute default and a
+  validated range of 1 to 10,080 whole minutes.
+- Browser-local interval persistence and a visible summary of the active
+  refresh setting.
+
+### Changed
+
+- Schedule each automatic refresh only after the preceding mod.io lookup has
+  completed to prevent overlapping recursive dependency requests.
+- Defer a refresh that becomes due while the page is hidden until it becomes
+  visible again.
+- Reset the next automatic refresh after manual refreshes and mod
+  configuration changes.
+
 ## [1.3.0] - 2026-07-24
 
 ### Added
