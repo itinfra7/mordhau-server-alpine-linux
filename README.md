@@ -82,8 +82,13 @@ MORDHAU Dedicated Server, and Steam update staging.
 
 ### Release archive
 
+Each GitHub Release publishes the versioned source archive, release notes,
+full changelog, and archive checksum as separate assets. The source archive
+also contains `CHANGELOG.md`.
+
 ```sh
 wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v1.8.3/mordhau-server-alpine-linux-v1.8.3.tar.gz
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v1.8.3/CHANGELOG-v1.8.3.md
 wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v1.8.3/SHA256SUMS
 sha256sum -c SHA256SUMS
 tar -xzf mordhau-server-alpine-linux-v1.8.3.tar.gz

@@ -14,6 +14,8 @@ All notable changes to this repository are documented in this file.
   killfeed, scorefeed, and punishment events with source timestamps.
 - Add a terminal-style RCON/SAY selector and shared prompt below the Server
   Events window.
+- Publish the full tag-specific changelog as a versioned asset with every
+  GitHub Release.
 - Add an API-key-gated, default-off automatic restart setting for enabled
   mod.io modfile updates.
 - Persist active-mod modfile baselines and pending restart countdowns across
