@@ -86,6 +86,11 @@ Each GitHub Release publishes the versioned source archive, release notes,
 full changelog, and archive checksum as separate assets. The source archive
 also contains `CHANGELOG.md`.
 
+The Release page body contains only that version's changelog section, a link
+to the preceding Release, and a direct tag comparison. Cumulative feature
+history remains in the versioned changelog asset instead of being repeated in
+every Release body.
+
 ```sh
 wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v1.8.3/mordhau-server-alpine-linux-v1.8.3.tar.gz
 wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v1.8.3/CHANGELOG-v1.8.3.md

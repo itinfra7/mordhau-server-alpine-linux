@@ -25,6 +25,9 @@ All notable changes to this repository are documented in this file.
 
 ### Changed
 
+- Replace cumulative feature inventories in GitHub Release bodies with the
+  exact version section from `CHANGELOG.md`, preceding-Release navigation, and
+  direct tag comparison links.
 - Replace the permanent `listen allon` RCON subscription with a log-first
   server-event collector that handles missing files, partial writes,
   truncation, replacement, and restart-time player-state reconstruction.
