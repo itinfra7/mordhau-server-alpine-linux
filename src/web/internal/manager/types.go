@@ -127,18 +127,18 @@ type RCONEvent struct {
 }
 
 type Snapshot struct {
-	Metrics       Metrics     `json:"metrics"`
-	ServerRunning bool        `json:"server_running"`
-	ServerPID     int         `json:"server_pid,omitempty"`
-	Language      string      `json:"language"`
-	Languages     []Language  `json:"languages"`
-	PendingConfig bool        `json:"pending_config"`
-	Operation     Operation   `json:"operation"`
-	RCONConnected bool        `json:"rcon_connected"`
-	RCONStatus    string      `json:"rcon_status"`
-	RCONEvents    []RCONEvent `json:"rcon_events"`
-	ModRevision   uint64      `json:"mod_revision"`
-	GeneratedAt   time.Time   `json:"generated_at"`
+	Metrics              Metrics     `json:"metrics"`
+	ServerRunning        bool        `json:"server_running"`
+	ServerPID            int         `json:"server_pid,omitempty"`
+	Language             string      `json:"language"`
+	Languages            []Language  `json:"languages"`
+	PendingConfig        bool        `json:"pending_config"`
+	Operation            Operation   `json:"operation"`
+	EventSourceConnected bool        `json:"event_source_connected"`
+	EventSourceStatus    string      `json:"event_source_status"`
+	ServerEvents         []RCONEvent `json:"server_events"`
+	ModRevision          uint64      `json:"mod_revision"`
+	GeneratedAt          time.Time   `json:"generated_at"`
 }
 
 type PublicAccount struct {

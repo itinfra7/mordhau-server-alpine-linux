@@ -105,52 +105,42 @@
         <article class="card rcon-card">
           <div class="card-heading">
             <div>
-              <p class="eyebrow">LIVE RCON</p>
-              <h2>Server events</h2>
+              <p class="eyebrow">SERVER EVENTS</p>
+              <h2>Live server activity</h2>
             </div>
-            <span id="rcon-status" class="connection-pill">Waiting</span>
+            <span id="event-source-status" class="connection-pill">Waiting</span>
           </div>
-          <p class="hint">Authenticated <code>listen allon</code> events, UTF-8 game-log chat, and on-demand RCON command responses.</p>
-          <form id="rcon-command-form" class="rcon-send-form">
-            <label for="rcon-command">Execute RCON Command</label>
-            <div class="control-row">
+          <p class="hint">
+            UTF-8 events followed from <code>Mordhau.log</code>, with retained command responses
+            and server messages.
+          </p>
+          <div class="server-event-terminal">
+            <div id="server-event-console" class="console" aria-live="polite"></div>
+            <form id="server-prompt-form" class="server-prompt-form">
+              <label class="sr-only" for="server-prompt-mode">Prompt mode</label>
+              <select id="server-prompt-mode" aria-label="Prompt mode">
+                <option value="rcon">RCON</option>
+                <option value="say">SAY</option>
+              </select>
+              <span class="prompt-marker" aria-hidden="true">&gt;</span>
+              <label class="sr-only" for="server-prompt-input">Server prompt</label>
               <input
-                id="rcon-command"
+                id="server-prompt-input"
                 type="text"
                 maxlength="512"
                 autocomplete="off"
                 autocapitalize="none"
                 spellcheck="false"
                 enterkeyhint="send"
-                placeholder="playerlist"
+                placeholder="Enter RCON command"
                 required
               >
-              <button id="rcon-command-submit" class="secondary" type="submit">Execute</button>
-            </div>
-            <small>
-              Commands run with full RCON administrator authority. The requesting account,
-              command, and returned output are retained in the Live RCON history below.
-            </small>
-          </form>
-          <form id="rcon-message-form" class="rcon-send-form">
-            <label for="rcon-message">Send Message</label>
-            <div class="control-row">
-              <input
-                id="rcon-message"
-                type="text"
-                maxlength="512"
-                autocomplete="off"
-                enterkeyhint="send"
-                required
-              >
-              <button id="rcon-message-submit" class="primary" type="submit">Send</button>
-            </div>
-            <small>
-              Sent through the local server-only Unicode bridge. Connected players use the built-in
-              message path and do not download a client mod.
-            </small>
-          </form>
-          <div id="rcon-console" class="console" aria-live="polite"></div>
+              <button id="server-prompt-submit" class="primary" type="submit">Send</button>
+            </form>
+          </div>
+          <small id="server-prompt-help" class="prompt-help">
+            RCON commands run with full administrator authority; commands and responses are retained.
+          </small>
         </article>
 
         <article class="card service-card">

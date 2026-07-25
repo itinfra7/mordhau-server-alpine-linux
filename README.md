@@ -23,9 +23,11 @@ The repository provides:
 - Optional active-mod update detection with an in-game restart countdown and
   managed automatic restart
 - Persistent initial-map and dedicated-server port selection
-- Authenticated RCON event streaming with UTF-8 player-chat integration
-- Authenticated administrative RCON command execution with retained responses
-- Persistent latest lifecycle results and append-only RCON event history
+- UTF-8 server-event following from `Mordhau.log`, including player lifecycle,
+  chat, match-state, killfeed, scorefeed, and punishment records
+- A unified RCON/SAY prompt with retained administrative command responses and
+  acknowledged multilingual server messages
+- Persistent latest lifecycle results and append-only server-event history
 - A server-only Unicode Bridge for acknowledged outbound multilingual messages
 - Web account and IPv4/IPv6 access-policy management with inclusive IPv4
   ranges and per-rule comments
@@ -222,14 +224,16 @@ The web manager provides:
 - Reversible per-item and whole-section enable and disable controls
 - Revision checks, active-file backups, and staged edits while the game is
   running
-- RCON authentication, acknowledged `listen allon` subscription, reconnection
-  across live Game.ini credential changes, and live events
+- UTF-8 `Mordhau.log` following for player lifecycle, chat, match state,
+  killfeed, scorefeed, and punishment events, including partial-write and log
+  replacement handling
+- A terminal-style RCON/SAY prompt below the shared server-event window
 - Administrative RCON command execution with bounded response collection and
-  immediate output in the retained Live RCON stream
-- Root-only RCON event persistence with recent-history loading for later
+  immediate output in retained server-event history
+- SAY messages using a root-only UTF-8 spool, ASCII-token RCON transport, and
+  acknowledgement before success is reported
+- Root-only server-event persistence with recent-history loading for later
   administrator sessions
-- A Send Message form with a root-only UTF-8 spool, ASCII token RCON
-  transport, and acknowledgement before success is reported
 - Root-only web access and administrative change audit logging
 
 IPv4 ranges include both endpoints and are stored in canonical `start-end`
@@ -301,7 +305,7 @@ server and account status, while the section tabs remain horizontally
 scrollable.
 
 At phone widths, INI rows, account and network-rule actions, mod controls,
-dependency details, port fields, and Live RCON records stack vertically.
+dependency details, port fields, and server-event records stack vertically.
 Long technical values wrap within their cards. Viewport safe-area insets are
 applied for notched displays and standalone browser windows.
 
@@ -354,20 +358,21 @@ web-service restarts. If the web manager stops before a running operation
 records its result, the next start preserves the operation and marks it as
 interrupted instead of leaving it permanently running.
 
-Every accepted Live RCON event is appended as UTF-8 JSON Lines to:
+Every accepted server event is appended as UTF-8 JSON Lines to:
 
 ```text
 /root/mordhau/log/mordhau-rcon.log
 ```
 
-Each mode-`0600` record contains a monotonic sequence, timestamp, event kind,
-and text. The log is retained across web-service restarts. A newly connected
-administrator receives the latest 400 events once, then continues from the
-authenticated event stream without repeatedly transferring the entire
-on-disk history. The browser retains the same 400-event Live RCON window.
-Administrative commands, requesting account names, returned response lines,
-no-output results, failures, and output-truncation notices use this same
-history.
+The filename remains compatible with installations that used RCON broadcasts
+as the event source. Each mode-`0600` record contains a monotonic sequence,
+source or receipt timestamp, event kind, and text. The log is retained across
+web-service restarts. A newly connected administrator receives the latest 400
+events once, then continues from the authenticated event stream without
+repeatedly transferring the entire on-disk history. The browser retains the
+same 400-event Server Events window. Administrative commands, requesting
+account names, returned response lines, no-output results, failures,
+output-truncation notices, and SAY messages use this same history.
 
 ## Languages
 
@@ -384,54 +389,53 @@ The launch selector supports:
 - Korean (`ko`)
 - Traditional Chinese (`zh-Hant`)
 
-RCON packets are fully framed before text decoding. Valid UTF-8 is preserved;
-language-specific legacy decoding is used only for invalid UTF-8 payloads.
+The Server Events collector follows UTF-8 records from:
 
-MORDHAU can replace non-ASCII player chat before emitting its RCON chat
-broadcast, leaving no recoverable characters in that packet. The web manager
-therefore follows new player-chat records from the UTF-8 `Mordhau.log` and
-merges them into the live event stream. Direct RCON chat records are
-suppressed to prevent duplicate or lossy output; login, match-state, killfeed,
-scorefeed, custom, and punishment events continue to come from authenticated
-RCON. The log follower handles partial writes and log rotation and starts at
-the end of an existing log to avoid replaying historical chat.
+```text
+/root/mordhau/Mordhau/Saved/Logs/Mordhau.log
+```
 
-The steady RCON reader uses a 90-second read deadline as an idle wake-up. If no
-packet byte arrives before that deadline, the manager sends the idempotent
-`listen allon` command to renew the subscription before MORDHAU's own idle
-connection timeout. The acknowledgement is consumed without adding it to Live
-RCON. A timeout after a partial packet remains a connection error because the
-stream may be incomplete. Real connection loss updates the status and retries.
+It emits authenticated player login and logout, chat, match-state, killfeed,
+scorefeed, and punishment records. Login-request identities are correlated by
+player ID with later authentication and disconnect records, preserving a
+UTF-8 player name even if a secondary identity line is lossy. Source
+timestamps are retained. The follower handles partial writes, truncation, and
+managed log replacement. When the web service starts while the game is
+running, it scans existing records only to reconstruct connected-player state
+and does not replay the historical file into the dashboard.
 
-Transport connection and reconnection messages are omitted from Live RCON
-because the current state is already shown above the console. Historical
-transport-status records are also filtered when loading retained RCON history.
-Connection transitions and non-idle failures remain available in the
-root-only web audit log.
+`bLogChat`, `bLogKillfeed`, and `bLogScore` under
+`[/Script/Mordhau.MordhauGameMode]` are initialized to `True` when they are
+missing or false. An item or whole section explicitly disabled through the
+structured INI controls remains disabled; events governed by that setting are
+then absent until it is enabled again.
 
-Administrative commands use a separate authenticated loopback RCON connection
-so command responses cannot interfere with the steady `listen allon`
-subscription. The manager rejects control characters, invalid UTF-8, empty
-commands, commands longer than 512 characters or 2,048 bytes, and serializes
-concurrent web requests. It collects matching response packets until a short
-idle boundary, with an eight-second total deadline and limits of 128 KiB and
-398 response lines. Response bytes use the same selected-language decoding as
-Live RCON events. Command text and returned output are retained in the
-root-only RCON event log and are visible to every authenticated administrator.
+The manager does not maintain an RCON broadcast subscription. RCON is opened
+on demand for a command or SAY request and closed after its bounded response.
+This avoids an idle `listen allon` connection while retaining full
+administrative command access.
 
-The manager combines the current Game.ini RCON password with the saved RCON
-launch port. After each successful authentication, it stores the working
-loopback endpoint and credential in `/root/mordhau/.manager/rcon-last.json`
-with mode `0600`. If Game.ini or the saved port is edited while the game is
-running, the server continues using its in-memory settings until restart; the
-saved working settings allow the web manager to reconnect and keep
-`listen allon` active during that interval. The next game restart applies the
-edited values and replaces the saved reconnect state.
+Administrative commands reject control characters, invalid UTF-8, empty
+commands, commands longer than 512 characters or 2,048 bytes, and serialize
+concurrent web requests. The manager collects matching response packets until
+a short idle boundary, with an eight-second total deadline and limits of 128
+KiB and 398 response lines. RCON packets are fully framed before text
+decoding. Valid UTF-8 is preserved; selected-language legacy decoding is used
+only for invalid UTF-8 payloads. Command text and returned output are retained
+in root-only server-event history and are visible to every authenticated
+administrator.
 
-Outbound text from the Live RCON panel uses the bundled MORDHAU Unicode
-Bridge. The manager validates UTF-8, rejects control characters, limits each
-message to 512 Unicode characters and 2,048 UTF-8 bytes, and writes it to a
-mode-`0600` transient file under
+The manager combines the current Game.ini RCON password and port with the last
+working settings stored in `/root/mordhau/.manager/rcon-last.json` using mode
+`0600`. If Game.ini or the saved port is edited while the game is running, the
+server continues using its in-memory settings until restart, so the last
+working values remain available for on-demand commands and SAY messages. The
+next successful request after restart replaces the saved state.
+
+Outbound text from the Server Events prompt in SAY mode uses the bundled
+MORDHAU Unicode Bridge. The manager validates UTF-8, rejects control
+characters, limits each message to 512 Unicode characters and 2,048 UTF-8
+bytes, and writes it to a mode-`0600` transient file under
 `/root/mordhau/Mordhau/Saved/PlayerFiles`. The filename contains a random
 24-digit token. Only the ASCII command `string unicode.say <token>` passes
 through MORDHAU's RCON parser. The server actor validates the numeric token,
@@ -500,8 +504,9 @@ rc-service mordhau-web stop
 rc-service mordhau-web start
 ```
 
-Disabling `RconPassword` intentionally makes the web RCON stream unavailable
-after the next server start until the item is enabled again.
+Disabling `RconPassword` intentionally makes RCON commands and SAY unavailable
+after the next server start until the item is enabled again. `Mordhau.log`
+server events remain available.
 
 The generated files remain the source of truth for the installed MORDHAU
 version. The repository does not install a static gameplay-configuration
@@ -604,8 +609,8 @@ restart. The Steam query listener is used when Steam server advertising is
 enabled in MORDHAU configuration.
 
 The selected map and ports are stored with mode `0600` under
-`/root/mordhau/.manager`. The web RCON client automatically follows the saved
-RCON port.
+`/root/mordhau/.manager`. On-demand web RCON and SAY requests automatically
+follow the saved RCON port.
 
 ## OpenRC
 
@@ -633,9 +638,9 @@ Changing a boot mode does not change the current process state.
 - The web manager runs as root because it controls Wine processes, OpenRC, and
   root-owned configuration files.
 - State files, disabled INI items and sections, sessions, generated
-  credentials, the last working RCON reconnect credential, pending
-  configuration, lifecycle results, the RCON event log, and the web audit log
-  use root-only permissions.
+  credentials, the last working on-demand RCON credential, pending
+  configuration, lifecycle results, the server-event history, and the web
+  audit log use root-only permissions.
 - Session tokens are stored as SHA-256 digests.
 - Login attempts are rate-limited.
 - CSRF tokens and same-site HTTP-only cookies protect authenticated changes.
@@ -655,7 +660,8 @@ Changing a boot mode does not change the current process state.
 - RCON connects to `127.0.0.1` from the web manager.
 - Every authenticated web account can issue commands with full RCON
   administrator authority. Command arguments and responses are retained in
-  the root-only Live RCON history but excluded from the separate web audit log.
+  the root-only server-event history but excluded from the separate web audit
+  log.
 - Unicode message files and their spool directory are root-only. RCON carries
   only a numeric token; the bridge constructs a fixed filename prefix and
   extension and does not accept a path from the command.
@@ -712,28 +718,29 @@ forwarded IPv4/IPv6 parsing, proxy-aware access control, audit and login-limit
 attribution, network-rule comment normalization and backward-compatible JSON,
 audit-log permissions and secret exclusion, persistent item and whole-section
 INI disable/enable round trips, duplicate ordering, virtual-section recovery,
-legacy-marker migration, RCON credential fallback order, idle keepalive
-framing, administrative command validation, response packet collection,
-actor attribution and audit argument exclusion, zero-byte
-versus partial-packet timeout handling, transport-status filtering, packet
-framing, Korean legacy decoding, current all-broadcast subscription syntax
-and response filtering, UTF-8 chat log parsing, partial writes, log rotation,
-lossy RCON chat suppression,
+legacy-marker migration, required game-log setting initialization and
+explicit-disable preservation, RCON credential fallback order, administrative
+command validation, bounded response packet collection, actor attribution and
+audit argument exclusion, transport-status migration filtering, packet
+framing, Korean legacy decoding, UTF-8 chat parsing, player-ID-based Unicode
+login/logout identity correlation, match/kill/score/punishment parsing,
+missing-log creation, partial writes, truncation, and log replacement,
 ASCII-only Unicode token commands, UTF-8 message staging, spool permissions and
 stale-file cleanup, bridge acknowledgements, input validation, start-map
 validation, server-port parsing and collision checks, mod.io URL and API-path
 validation, dependency ordering, scoped mod-entry mutation, shared-cache
 deduplication under concurrent clients, successful-refresh interval resets,
 failure retry behavior, lifecycle-result persistence, interrupted-operation
-recovery, multilingual RCON history persistence, and truncated-log recovery.
+recovery, multilingual server-event history persistence, and truncated-history
+recovery.
 The shell integration test covers PAK installation, active and staged Game.ini
 registration, existing server-actor preservation, backup creation, and
 idempotent reinstallation. Static asset tests verify the default-light theme
 initializer, persistent theme, server-managed mod-refresh controls,
-browser-time-zone timestamps, initial RCON history loading, the Live RCON
-message and administrative-command forms, mobile viewport metadata, touch
-targets, input sizing, safe-area handling, narrow-screen control reflow, and
-mobile visibility of server and account status.
+browser-time-zone timestamps, initial server-event history loading, the
+unified RCON/SAY prompt, mobile viewport metadata, touch targets, input sizing,
+safe-area handling, narrow-screen control reflow, and mobile visibility of
+server and account status.
 
 ## Update and Rollback
 
@@ -743,7 +750,7 @@ the repository-managed bridge version, and the required server-actor entry is
 added without duplicating existing entries. Existing accounts, access rules,
 generated credentials, INI files, backups, logs, language selection, initial
 map, server ports, trusted proxy settings, mod.io settings, mod refresh
-interval, latest lifecycle result, RCON event history, and boot modes are
+interval, latest lifecycle result, server-event history, and boot modes are
 preserved.
 
 To roll back management code:

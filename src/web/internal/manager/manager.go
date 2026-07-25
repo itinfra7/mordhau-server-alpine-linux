@@ -34,15 +34,15 @@ type Manager struct {
 	metrics   Metrics
 	cpu       cpuSample
 
-	rconMu             sync.RWMutex
-	rconConnected      bool
-	rconStatus         string
-	rconEvents         []RCONEvent
-	rconSequence       uint64
-	rconLogMu          sync.Mutex
-	rconLogPath        string
-	rconCommandMu      sync.Mutex
-	rconCommandExecute func(command string) (rconCommandResult, error)
+	rconMu               sync.RWMutex
+	eventSourceConnected bool
+	eventSourceStatus    string
+	rconEvents           []RCONEvent
+	rconSequence         uint64
+	rconLogMu            sync.Mutex
+	rconLogPath          string
+	rconCommandMu        sync.Mutex
+	rconCommandExecute   func(command string) (rconCommandResult, error)
 
 	loginMu       sync.Mutex
 	loginAttempts map[string]*loginAttempt
@@ -103,13 +103,13 @@ func New(trustedProxies ...netip.Prefix) (*Manager, error) {
 	}
 
 	m := &Manager{
-		loginAttempts:  make(map[string]*loginAttempt),
-		rconStatus:     "waiting for server",
-		auditPath:      webAuditLogPath,
-		operationPath:  operationStatePath,
-		rconLogPath:    rconEventLogPath,
-		modRefreshWake: make(chan struct{}, 1),
-		modRestartWake: make(chan struct{}, 1),
+		loginAttempts:     make(map[string]*loginAttempt),
+		eventSourceStatus: "Waiting for server",
+		auditPath:         webAuditLogPath,
+		operationPath:     operationStatePath,
+		rconLogPath:       rconEventLogPath,
+		modRefreshWake:    make(chan struct{}, 1),
+		modRestartWake:    make(chan struct{}, 1),
 	}
 	for _, prefix := range trustedProxies {
 		canonical, err := canonicalTrustedProxyPrefix(prefix)
@@ -145,6 +145,9 @@ func New(trustedProxies ...netip.Prefix) (*Manager, error) {
 	if err := m.ensureRCONConfig(); err != nil {
 		return nil, err
 	}
+	if err := m.ensureServerEventLogConfig(); err != nil {
+		return nil, err
+	}
 	if err := m.loadOrCreateModRefreshSettings(); err != nil {
 		return nil, err
 	}
@@ -157,8 +160,7 @@ func New(trustedProxies ...netip.Prefix) (*Manager, error) {
 func (m *Manager) StartBackground(ctx context.Context) {
 	m.auditActorEvent("system", "local", "web_manager_started", nil)
 	go m.metricsLoop(ctx)
-	go m.rconLoop(ctx)
-	go m.chatLogLoop(ctx)
+	go m.gameLogLoop(ctx)
 	go m.cleanupLoop(ctx)
 	go m.modRefreshLoop(ctx)
 	go m.modRestartLoop(ctx)

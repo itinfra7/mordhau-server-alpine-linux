@@ -1173,6 +1173,59 @@ func (m *Manager) ensureRCONConfig() error {
 	return os.Chmod(path, 0600)
 }
 
+func (m *Manager) ensureServerEventLogConfig() error {
+	path := configPath("Game.ini", false)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read generated Game.ini: %w", err)
+	}
+	store, err := loadDisabledINIFile(false)
+	if err != nil {
+		return err
+	}
+	updated, changed := ensureServerEventLogValues(data, store)
+	if changed {
+		if err := backupConfig("Game.ini", data); err != nil {
+			return err
+		}
+		return writeFileAtomic(path, updated, 0600)
+	}
+	return os.Chmod(path, 0600)
+}
+
+func ensureServerEventLogValues(
+	data []byte,
+	store disabledINIFile,
+) ([]byte, bool) {
+	const section = "/Script/Mordhau.MordhauGameMode"
+	for _, disabledSection := range store.Sections {
+		if disabledSection.File == "Game.ini" &&
+			disabledSection.Name == section {
+			return data, false
+		}
+	}
+
+	document := parseIni(data)
+	changed := false
+	for _, key := range []string{"bLogKillfeed", "bLogChat", "bLogScore"} {
+		value, enabled, exists := iniEntryStateWithDisabled(
+			data,
+			store,
+			"Game.ini",
+			section,
+			key,
+		)
+		if exists && !enabled {
+			continue
+		}
+		if !exists || !strings.EqualFold(strings.TrimSpace(value), "true") {
+			setIniValue(&document, section, key, "True")
+			changed = true
+		}
+	}
+	return document.bytes(), changed
+}
+
 func pendingConfigExists() bool {
 	for _, path := range []string{
 		configPath("Game.ini", true),

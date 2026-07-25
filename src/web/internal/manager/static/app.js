@@ -10,8 +10,8 @@ const app = {
   modsLoading: false,
   modsReloadRequested: false,
   modRevision: null,
-  rconSequence: 0,
-  rconLines: 0,
+  eventSequence: 0,
+  eventLines: 0,
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -157,21 +157,20 @@ function renderSnapshot(snapshot) {
   }
   if (languageSelect.value !== snapshot.language) languageSelect.value = snapshot.language;
 
-  $("#rcon-status").textContent = snapshot.rcon_status;
-  $("#rcon-status").classList.toggle("connected", snapshot.rcon_connected);
-  $("#rcon-message-submit").disabled = operation.running || !snapshot.server_running;
-  $("#rcon-message").disabled = operation.running || !snapshot.server_running;
-  $("#rcon-command-submit").disabled = operation.running || !snapshot.server_running;
-  $("#rcon-command").disabled = operation.running || !snapshot.server_running;
-  appendRconEvents(snapshot.rcon_events || []);
+  $("#event-source-status").textContent = snapshot.event_source_status;
+  $("#event-source-status").classList.toggle("connected", snapshot.event_source_connected);
+  $("#server-prompt-submit").disabled = operation.running || !snapshot.server_running;
+  $("#server-prompt-input").disabled = operation.running || !snapshot.server_running;
+  $("#server-prompt-mode").disabled = operation.running || !snapshot.server_running;
+  appendServerEvents(snapshot.server_events || []);
 }
 
-function appendRconEvents(events) {
-  const consoleElement = $("#rcon-console");
+function appendServerEvents(events) {
+  const consoleElement = $("#server-event-console");
   let added = false;
   for (const event of events) {
-    if (event.sequence <= app.rconSequence) continue;
-    app.rconSequence = event.sequence;
+    if (event.sequence <= app.eventSequence) continue;
+    app.eventSequence = event.sequence;
     if (event.kind === "system" &&
         (event.text === "RCON connected; all broadcasts enabled" ||
          event.text === "RCON reconnected with the running server's previous settings; all broadcasts enabled" ||
@@ -188,12 +187,12 @@ function appendRconEvents(events) {
     text.textContent = event.text;
     line.append(timestamp, text);
     consoleElement.append(line);
-    app.rconLines += 1;
+    app.eventLines += 1;
     added = true;
   }
-  while (app.rconLines > 400 && consoleElement.firstChild) {
+  while (app.eventLines > 400 && consoleElement.firstChild) {
     consoleElement.firstChild.remove();
-    app.rconLines -= 1;
+    app.eventLines -= 1;
   }
   if (added) consoleElement.scrollTop = consoleElement.scrollHeight;
 }
@@ -207,19 +206,31 @@ async function serverAction(action) {
   }
 }
 
-async function sendUnicodeMessage(event) {
+async function submitServerPrompt(event) {
   event.preventDefault();
-  const input = $("#rcon-message");
-  const submit = $("#rcon-message-submit");
+  const mode = $("#server-prompt-mode").value;
+  const input = $("#server-prompt-input");
+  const submit = $("#server-prompt-submit");
   submit.disabled = true;
   try {
-    await api("/api/rcon/message", {
-      method: "POST",
-      body: { message: input.value },
-    });
+    if (mode === "say") {
+      await api("/api/rcon/message", {
+        method: "POST",
+        body: { message: input.value },
+      });
+      toast("Server message sent.");
+    } else {
+      const result = await api("/api/rcon/command", {
+        method: "POST",
+        body: { command: input.value },
+      });
+      appendServerEvents(result.events || []);
+      const lines = Number(result.response_lines) || 0;
+      const suffix = result.response_truncated ? " · output truncated" : "";
+      toast(`Command executed · ${lines} response line${lines === 1 ? "" : "s"}${suffix}.`);
+    }
     input.value = "";
     input.focus();
-    toast("Message sent.");
   } catch (error) {
     toast(error.message, true);
   } finally {
@@ -228,28 +239,16 @@ async function sendUnicodeMessage(event) {
   }
 }
 
-async function executeRCONCommand(event) {
-  event.preventDefault();
-  const input = $("#rcon-command");
-  const submit = $("#rcon-command-submit");
-  submit.disabled = true;
-  try {
-    const result = await api("/api/rcon/command", {
-      method: "POST",
-      body: { command: input.value },
-    });
-    appendRconEvents(result.events || []);
-    input.value = "";
-    input.focus();
-    const lines = Number(result.response_lines) || 0;
-    const suffix = result.response_truncated ? " · output truncated" : "";
-    toast(`Command executed · ${lines} response line${lines === 1 ? "" : "s"}${suffix}.`);
-  } catch (error) {
-    toast(error.message, true);
-  } finally {
-    const snapshot = app.snapshot;
-    submit.disabled = !snapshot || snapshot.operation.running || !snapshot.server_running;
-  }
+function updateServerPromptMode() {
+  const sayMode = $("#server-prompt-mode").value === "say";
+  const input = $("#server-prompt-input");
+  input.placeholder = sayMode ? "Enter server message" : "Enter RCON command";
+  input.autocapitalize = sayMode ? "sentences" : "none";
+  input.spellcheck = sayMode;
+  $("#server-prompt-help").textContent = sayMode
+    ? "SAY sends a multilingual message through the local server-only Unicode bridge."
+    : "RCON commands run with full administrator authority; commands and responses are retained.";
+  input.focus();
 }
 
 async function loadConfig() {
@@ -992,8 +991,8 @@ function bindEvents() {
   }));
   $$("[data-server-action]").forEach((button) =>
     button.addEventListener("click", () => serverAction(button.dataset.serverAction)));
-  $("#rcon-command-form").addEventListener("submit", executeRCONCommand);
-  $("#rcon-message-form").addEventListener("submit", sendUnicodeMessage);
+  $("#server-prompt-form").addEventListener("submit", submitServerPrompt);
+  $("#server-prompt-mode").addEventListener("change", updateServerPromptMode);
 
   $("#language-select").addEventListener("change", async (event) => {
     try {
@@ -1250,23 +1249,28 @@ async function initialize() {
   initializeTheme();
   clearLegacyModRefreshPreference();
   bindEvents();
+  updateServerPromptMode();
   try {
     const me = await api("/api/me");
     app.csrf = me.csrf;
     app.username = me.username;
     $("#current-user").textContent = `${me.username} · ${me.current_ip}`;
-    const [snapshot, rconHistory] = await Promise.all([
+    const [snapshot, eventHistory] = await Promise.all([
       api("/api/snapshot"),
-      api("/api/rcon/history"),
+      api("/api/server/events/history"),
     ]);
-    appendRconEvents(rconHistory.events || []);
+    appendServerEvents(eventHistory.events || []);
     renderSnapshot(snapshot);
     await Promise.all([loadConfig(), loadMods(), loadAccounts(), loadAccess(), loadServices()]);
     const stream = new EventSource("/api/events");
     stream.addEventListener("snapshot", (event) => {
       try { renderSnapshot(JSON.parse(event.data)); } catch (_) {}
     });
-    stream.onerror = () => $("#rcon-status").textContent = "Live stream reconnecting";
+    stream.onerror = () => {
+      const status = $("#event-source-status");
+      status.textContent = "Live stream reconnecting";
+      status.classList.remove("connected");
+    };
   } catch (error) {
     toast(error.message, true);
   }

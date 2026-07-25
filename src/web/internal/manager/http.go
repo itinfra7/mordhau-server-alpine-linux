@@ -29,6 +29,7 @@ func (m *Manager) Handler() http.Handler {
 	mux.HandleFunc("/api/snapshot", m.withSession(m.snapshotHandler))
 	mux.HandleFunc("/api/events", m.withSession(m.eventsHandler))
 	mux.HandleFunc("/api/server/action", m.withSession(m.serverActionHandler))
+	mux.HandleFunc("/api/server/events/history", m.withSession(m.rconHistoryHandler))
 	mux.HandleFunc("/api/rcon/history", m.withSession(m.rconHistoryHandler))
 	mux.HandleFunc("/api/rcon/message", m.withSession(m.rconMessageHandler))
 	mux.HandleFunc("/api/rcon/command", m.withSession(m.rconCommandHandler))

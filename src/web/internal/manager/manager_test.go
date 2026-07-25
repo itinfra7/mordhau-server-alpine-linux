@@ -2,7 +2,6 @@ package manager
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -24,36 +23,10 @@ import (
 	"golang.org/x/text/transform"
 )
 
-type timeoutOnceConnection struct {
-	net.Conn
-	once sync.Once
-}
-
-type testTimeoutError struct{}
-
-func (testTimeoutError) Error() string   { return "test idle timeout" }
-func (testTimeoutError) Timeout() bool   { return true }
-func (testTimeoutError) Temporary() bool { return true }
-
 func TestMetricsSampleInterval(t *testing.T) {
 	if metricsSampleInterval != time.Minute {
 		t.Fatalf("metrics sample interval = %s, want %s", metricsSampleInterval, time.Minute)
 	}
-}
-
-func (connection *timeoutOnceConnection) Read(buffer []byte) (int, error) {
-	timedOut := false
-	connection.once.Do(func() {
-		timedOut = true
-	})
-	if timedOut {
-		return 0, &net.OpError{
-			Op:  "read",
-			Net: "tcp",
-			Err: testTimeoutError{},
-		}
-	}
-	return connection.Conn.Read(buffer)
 }
 
 func TestRandomPasswordShape(t *testing.T) {
@@ -168,6 +141,49 @@ func TestDisabledRCONEntryRemainsIntentionallyDisabled(t *testing.T) {
 	}
 	if _, active := iniValue(data, "/Script/Mordhau.MordhauGameSession", "RconPassword"); active {
 		t.Fatal("disabled RCON password was exposed as active")
+	}
+}
+
+func TestServerEventLogValuesAreEnabledUnlessExplicitlyDisabled(t *testing.T) {
+	const section = "/Script/Mordhau.MordhauGameMode"
+	data := []byte("[" + section + "]\n" +
+		"bLogChat=False\n")
+	store := newDisabledINIFile()
+	store.Entries = append(store.Entries, disabledINIEntry{
+		ID:      "disabled-score",
+		File:    "Game.ini",
+		Section: section,
+		Key:     "bLogScore",
+		Value:   "False",
+	})
+
+	updated, changed := ensureServerEventLogValues(data, store)
+	if !changed {
+		t.Fatal("required game-log settings were not enabled")
+	}
+	for _, key := range []string{"bLogKillfeed", "bLogChat"} {
+		value, enabled := iniValue(updated, section, key)
+		if !enabled || !strings.EqualFold(value, "true") {
+			t.Fatalf("%s = %q, enabled %t", key, value, enabled)
+		}
+	}
+	if _, enabled := iniValue(updated, section, "bLogScore"); enabled {
+		t.Fatal("explicitly disabled score logging was re-enabled")
+	}
+
+	second, changed := ensureServerEventLogValues(updated, store)
+	if changed || !bytes.Equal(second, updated) {
+		t.Fatal("game-log setting enforcement was not idempotent")
+	}
+
+	store.Sections = append(store.Sections, disabledINISection{
+		ID:   "disabled-game-mode",
+		File: "Game.ini",
+		Name: section,
+	})
+	sectionDisabled, changed := ensureServerEventLogValues(data, store)
+	if changed || !bytes.Equal(sectionDisabled, data) {
+		t.Fatal("an explicitly disabled game-mode section was modified")
 	}
 }
 
@@ -1085,58 +1101,66 @@ func TestRCONKoreanFallbackProducesUTF8(t *testing.T) {
 }
 
 func TestMordhauChatLogLinePreservesUnicode(t *testing.T) {
-	line := `[2026.07.23-20.23.14:871][328]LogGameMode: Display: (ALL) Name, WithComma, 0123456789ABCDEF: "한국어 — Русский — 简体中文"`
+	line := `[2026.07.23-20.23.14:871][328]LogGameMode: Display: (ALL) Name, WithComma: "quoted", 0123456789ABCDEF: "한국어: "인용" — Русский — 简体中文"`
 	chat, ok := parseMordhauChatLogLine(line)
 	if !ok {
 		t.Fatal("valid MORDHAU chat log line was rejected")
 	}
-	expected := "Chat: 0123456789ABCDEF, Name, WithComma, (ALL) 한국어 — Русский — 简体中文"
+	expected := `Chat: 0123456789ABCDEF, Name, WithComma: "quoted", (ALL) 한국어: "인용" — Русский — 简体中文`
 	if chat != expected {
 		t.Fatalf("chat log conversion = %q", chat)
 	}
 }
 
-func TestChatLogFollowerReadsFileCreatedAfterStartup(t *testing.T) {
+func TestGameLogFollowerReadsFileCreatedAfterStartup(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "Mordhau.log")
-	follower := &chatLogFollower{path: path}
-	chats, err := follower.readNewChats()
+	follower := &gameLogFollower{path: path}
+	available, err := follower.initialize(func(string) {})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(chats) != 0 {
-		t.Fatalf("missing log returned chats: %#v", chats)
+	if available {
+		t.Fatal("missing game log was reported as available")
 	}
 
-	line := `[2026.07.23-20.00.00:000][1]LogGameMode: Display: (ALL) Player, 1: "첫 메시지"` + "\n"
+	line := `[2026.07.23-20.00.00:000][1]LogGameMode: Display: (ALL) Player, 0123456789ABCDEF: "첫 메시지"` + "\n"
 	if err := os.WriteFile(path, []byte(line), 0600); err != nil {
 		t.Fatal(err)
 	}
-	chats, err = follower.readNewChats()
+	lines, replaced, available, err := follower.readNewLines()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(chats) != 1 || chats[0] != "Chat: 1, Player, (ALL) 첫 메시지" {
-		t.Fatalf("newly created log chats = %#v", chats)
+	if !available || !replaced || len(lines) != 1 || lines[0] != strings.TrimSuffix(line, "\n") {
+		t.Fatalf(
+			"newly created game log = available %t, replaced %t, lines %#v",
+			available,
+			replaced,
+			lines,
+		)
 	}
 }
 
-func TestChatLogFollowerStartsAtEndAndFollowsRotation(t *testing.T) {
+func TestGameLogFollowerStartsAtEndAndFollowsPartialLinesAndRotation(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "Mordhau.log")
-	oldLine := `[2026.07.23-20.00.00:000][1]LogGameMode: Display: (ALL) Old, 1: "old"` + "\n"
+	oldLine := `[2026.07.23-20.00.00:000][1]LogGameMode: Display: (ALL) Old, 0123456789ABCDEF: "old"` + "\n"
 	if err := os.WriteFile(path, []byte(oldLine), 0600); err != nil {
 		t.Fatal(err)
 	}
 
-	follower := &chatLogFollower{path: path}
-	chats, err := follower.readNewChats()
+	follower := &gameLogFollower{path: path}
+	historical := make([]string, 0, 1)
+	available, err := follower.initialize(func(line string) {
+		historical = append(historical, line)
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(chats) != 0 {
-		t.Fatalf("initial historical chats were replayed: %#v", chats)
+	if !available || len(historical) != 1 || historical[0] != strings.TrimSuffix(oldLine, "\n") {
+		t.Fatalf("historical state scan = available %t, lines %#v", available, historical)
 	}
 
-	newLine := `[2026.07.23-20.00.01:000][2]LogGameMode: Display: (TEAM) Player, 2: "새 메시지"`
+	newLine := `[2026.07.23-20.00.01:000][2]LogGameMode: Display: (TEAM) Player, 1234567890ABCDEF: "새 메시지"`
 	file, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0600)
 	if err != nil {
 		t.Fatal(err)
@@ -1148,12 +1172,12 @@ func TestChatLogFollowerStartsAtEndAndFollowsRotation(t *testing.T) {
 	if err := file.Close(); err != nil {
 		t.Fatal(err)
 	}
-	chats, err = follower.readNewChats()
+	lines, _, _, err := follower.readNewLines()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(chats) != 0 {
-		t.Fatalf("partial log line was emitted: %#v", chats)
+	if len(lines) != 0 {
+		t.Fatalf("partial game-log line was emitted: %#v", lines)
 	}
 
 	file, err = os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0600)
@@ -1167,154 +1191,98 @@ func TestChatLogFollowerStartsAtEndAndFollowsRotation(t *testing.T) {
 	if err := file.Close(); err != nil {
 		t.Fatal(err)
 	}
-	chats, err = follower.readNewChats()
+	lines, replaced, available, err := follower.readNewLines()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(chats) != 1 || chats[0] != "Chat: 2, Player, (TEAM) 새 메시지" {
-		t.Fatalf("new chat lines = %#v", chats)
+	if !available || replaced || len(lines) != 1 || lines[0] != newLine {
+		t.Fatalf(
+			"completed game-log line = available %t, replaced %t, lines %#v",
+			available,
+			replaced,
+			lines,
+		)
 	}
 
 	if err := os.Rename(path, path+".previous"); err != nil {
 		t.Fatal(err)
 	}
-	rotatedLine := `[2026.07.23-20.00.02:000][3]LogGameMode: Display: (ALL) Player, 2: "회전 후 메시지"` + "\n"
+	rotatedLine := `[2026.07.23-20.00.02:000][3]LogGameMode: Display: (ALL) Player, 1234567890ABCDEF: "회전 후 메시지"` + "\n"
 	if err := os.WriteFile(path, []byte(rotatedLine), 0600); err != nil {
 		t.Fatal(err)
 	}
-	chats, err = follower.readNewChats()
+	lines, replaced, available, err = follower.readNewLines()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(chats) != 1 || chats[0] != "Chat: 2, Player, (ALL) 회전 후 메시지" {
-		t.Fatalf("rotated-log chats = %#v", chats)
+	if !available || !replaced || len(lines) != 1 ||
+		lines[0] != strings.TrimSuffix(rotatedLine, "\n") {
+		t.Fatalf(
+			"rotated game log = available %t, replaced %t, lines %#v",
+			available,
+			replaced,
+			lines,
+		)
 	}
 }
 
-func TestRCONChatUsesUnicodeLogSource(t *testing.T) {
-	manager := &Manager{}
-	manager.addRCONText("Chat: 2, Player, (ALL) ??\r\nKillfeed: retained\r\n")
-	if len(manager.rconEvents) != 1 || manager.rconEvents[0].Text != "Killfeed: retained" {
-		t.Fatalf("unexpected direct RCON events: %#v", manager.rconEvents)
+func TestGameLogProcessorPreservesUnicodePlayerLifecycle(t *testing.T) {
+	const playerID = "D5E9DEF6A65BDE65"
+	processor := newGameLogProcessor()
+	lines := []string{
+		`[2026.07.25-13.13.10:001][100]LogNet: Login request: ?Name=쿠아해병 userId: MordhauOnlineSubsystem:` + playerID + ` platform: Steam`,
+		`[2026.07.25-13.13.11:002][101]LogMordhauGameSession: Player authentication for ???? (` + playerID + `) completed successfully`,
+		`[2026.07.25-13.13.12:003][102]LogGameMode: Display: (ALL) 쿠아해병, ` + playerID + `: "한국어 — Русский — 简体中文"`,
+		`[2026.07.25-13.13.14:004][103]LogNet: UChannel::CleanUp: ChIndex == 0. Closing connection. [UNetConnection] RemoteAddr: 127.0.0.1:1234, Name: IpConnection_0, Driver: GameNetDriver GameNetDriver, IsServer: YES, UniqueId: MordhauOnlineSubsystem:` + playerID,
+	}
+
+	var events []gameLogEvent
+	for _, line := range lines {
+		events = append(events, processor.processLine(line)...)
+	}
+	if len(events) != 3 {
+		t.Fatalf("player lifecycle event count = %d: %#v", len(events), events)
+	}
+	if events[0].Kind != "login" ||
+		events[0].Text != "Login: 2026.07.25-13.13.11: 쿠아해병 ("+playerID+") logged in" {
+		t.Fatalf("login event = %#v", events[0])
+	}
+	if events[1].Kind != "chat" ||
+		events[1].Text != "Chat: "+playerID+", 쿠아해병, (ALL) 한국어 — Русский — 简体中文" {
+		t.Fatalf("chat event = %#v", events[1])
+	}
+	if events[2].Kind != "login" ||
+		events[2].Text != "Login: 2026.07.25-13.13.14: 쿠아해병 ("+playerID+") logged out" {
+		t.Fatalf("logout event = %#v", events[2])
+	}
+	for _, event := range events {
+		if event.Time.Location() != time.Local {
+			t.Fatalf("event time location = %s, want local", event.Time.Location())
+		}
 	}
 }
 
-func TestRCONAllBroadcastSubscriptionUsesCurrentSyntax(t *testing.T) {
-	client, server := net.Pipe()
-	defer client.Close()
-
-	serverResult := make(chan string, 1)
-	serverRelease := make(chan struct{})
-	go func() {
-		defer server.Close()
-		packet, err := readRCONPacket(server)
-		if err != nil {
-			serverResult <- err.Error()
-			return
+func TestGameLogProcessorEmitsMatchKillScoreAndPunishmentEvents(t *testing.T) {
+	processor := newGameLogProcessor()
+	lines := []string{
+		`[2026.07.25-13.20.00:001][200]LogGameMode: Display: Match State Changed from WaitingToStart to InProgress`,
+		`[2026.07.25-13.20.01:002][201]LogGameMode: Display: 2026.07.25-13.20.01: Attacker (AAAAAAAAAAAAAAAA) killed Defender (BBBBBBBBBBBBBBBB)`,
+		`[2026.07.25-13.20.02:003][202]LogGameMode: Display: 2026.07.25-13.20.02: Attacker (AAAAAAAAAAAAAAAA)'s score changed by 100 points and is now 200 points`,
+		`[2026.07.25-13.20.03:004][203]LogMordhauGameSession: Display: Kicked player Attacker (AAAAAAAAAAAAAAAA)`,
+	}
+	wantKinds := []string{"matchstate", "killfeed", "scorefeed", "punishment"}
+	wantText := []string{
+		"MatchState: In progress",
+		"Killfeed: 2026.07.25-13.20.01: Attacker (AAAAAAAAAAAAAAAA) killed Defender (BBBBBBBBBBBBBBBB)",
+		"Scorefeed: 2026.07.25-13.20.02: Attacker (AAAAAAAAAAAAAAAA)'s score changed by 100 points and is now 200 points",
+		"Punishment: Kicked player Attacker (AAAAAAAAAAAAAAAA)",
+	}
+	for index, line := range lines {
+		events := processor.processLine(line)
+		if len(events) != 1 || events[0].Kind != wantKinds[index] ||
+			events[0].Text != wantText[index] {
+			t.Fatalf("line %d events = %#v", index, events)
 		}
-		if packet.ID != 102 || packet.Type != rconExecCommand ||
-			string(packet.Body) != rconListenAllCommand {
-			serverResult <- "unexpected all-broadcast subscription packet"
-			return
-		}
-		if err := writeRCONPacket(server, rconPacket{
-			ID:   packet.ID,
-			Type: rconResponseValue,
-			Body: []byte(rconListenAllSuccess),
-		}); err != nil {
-			serverResult <- err.Error()
-			return
-		}
-		serverResult <- ""
-		<-serverRelease
-	}()
-
-	manager := &Manager{}
-	err := manager.enableAllRCONBroadcasts(client)
-	close(serverRelease)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result := <-serverResult; result != "" {
-		t.Fatal(result)
-	}
-}
-
-func TestConsumeRCONContinuesAfterIdleTimeout(t *testing.T) {
-	client, server := net.Pipe()
-	connection := &timeoutOnceConnection{Conn: client}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	done := make(chan error, 1)
-	manager := &Manager{}
-	go func() {
-		done <- manager.consumeRCON(ctx, connection)
-	}()
-
-	keepalive, err := readRCONPacket(server)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if keepalive.ID != rconKeepalivePacketID ||
-		keepalive.Type != rconExecCommand ||
-		string(keepalive.Body) != rconListenAllCommand {
-		t.Fatalf("unexpected idle keepalive packet: %#v", keepalive)
-	}
-
-	if err := writeRCONPacket(server, rconPacket{
-		ID:   200,
-		Type: rconResponseValue,
-		Body: []byte("Matchstate: active"),
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	deadline := time.Now().Add(time.Second)
-	for {
-		manager.rconMu.RLock()
-		events := append([]RCONEvent(nil), manager.rconEvents...)
-		manager.rconMu.RUnlock()
-		if len(events) == 1 {
-			if events[0].Text != "Matchstate: active" {
-				t.Fatalf("unexpected RCON event: %#v", events[0])
-			}
-			break
-		}
-		select {
-		case err := <-done:
-			t.Fatalf("consumeRCON returned after an idle timeout: %v", err)
-		default:
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("RCON packet was not consumed after the idle timeout")
-		}
-		time.Sleep(time.Millisecond)
-	}
-
-	cancel()
-	_ = server.Close()
-	_ = client.Close()
-	select {
-	case <-done:
-	case <-time.After(time.Second):
-		t.Fatal("consumeRCON did not stop after cancellation and connection close")
-	}
-}
-
-func TestPartialRCONReadTimeoutIsNotIdle(t *testing.T) {
-	err := &net.OpError{
-		Op:  "read",
-		Net: "tcp",
-		Err: testTimeoutError{},
-	}
-	if !isRCONIdleTimeout(err, 0) {
-		t.Fatal("a timeout before receiving packet bytes was not treated as idle")
-	}
-	if isRCONIdleTimeout(err, 1) {
-		t.Fatal("a timeout after receiving packet bytes was incorrectly treated as idle")
-	}
-	if isRCONIdleTimeout(io.EOF, 0) {
-		t.Fatal("EOF was incorrectly treated as an idle timeout")
 	}
 }
 
@@ -1397,18 +1365,6 @@ func TestRCONBroadcastOptionsHelpIsHidden(t *testing.T) {
 	)
 	if len(lines) != 2 || lines[0] != "Chat: retained" || lines[1] != rconInvalidBroadcast {
 		t.Fatalf("unexpected visible RCON lines: %#v", lines)
-	}
-}
-
-func TestRCONSubscriptionAcknowledgementIsHidden(t *testing.T) {
-	manager := &Manager{}
-	manager.addRCONText(
-		rconListenAllSuccess + "\r\n" +
-			"Killfeed: retained\r\n",
-	)
-	if len(manager.rconEvents) != 1 ||
-		manager.rconEvents[0].Text != "Killfeed: retained" {
-		t.Fatalf("subscription acknowledgement leaked into RCON events: %#v", manager.rconEvents)
 	}
 }
 
@@ -2125,7 +2081,7 @@ func TestNextRefreshUsesLastSuccessfulRefresh(t *testing.T) {
 	}
 }
 
-func TestDashboardThemeAndMessageMarkup(t *testing.T) {
+func TestDashboardThemeAndServerPromptMarkup(t *testing.T) {
 	indexData, err := staticFiles.ReadFile("static/index.html")
 	if err != nil {
 		t.Fatal(err)
@@ -2135,9 +2091,14 @@ func TestDashboardThemeAndMessageMarkup(t *testing.T) {
 		`id="theme-toggle"`,
 		`content="width=device-width, initial-scale=1, viewport-fit=cover"`,
 		`src="/static/theme.js?v=1.8.5-dev"`,
-		`<label for="rcon-message">Send Message</label>`,
-		`<label for="rcon-command">Execute RCON Command</label>`,
-		`id="rcon-command-submit"`,
+		`<p class="eyebrow">SERVER EVENTS</p>`,
+		`id="server-event-console"`,
+		`id="server-prompt-form"`,
+		`id="server-prompt-mode"`,
+		`<option value="rcon">RCON</option>`,
+		`<option value="say">SAY</option>`,
+		`id="server-prompt-input"`,
+		`id="server-prompt-submit"`,
 		`id="mods-refresh-minutes"`,
 		`min="1" max="10080"`,
 		`value="5"`,
@@ -2153,6 +2114,9 @@ func TestDashboardThemeAndMessageMarkup(t *testing.T) {
 		}
 	}
 	for _, unwanted := range []string{
+		"LIVE RCON",
+		"Execute RCON Command",
+		`<label for="rcon-message">Send Message</label>`,
 		"Unicode server message",
 		"한국어 · Русский · 简体中文 · Français",
 		"stored in this browser",
@@ -2191,7 +2155,7 @@ func TestDashboardThemeAndMessageMarkup(t *testing.T) {
 	for _, expected := range []string{
 		`/api/mods/refresh`,
 		`/api/mods/refresh/settings`,
-		`/api/rcon/history`,
+		`/api/server/events/history`,
 		`/api/rcon/command`,
 		`Last successful refresh:`,
 		`restart_on_update: enabled`,

@@ -205,8 +205,8 @@ func (m *Manager) snapshot() Snapshot {
 	m.mu.RUnlock()
 
 	m.rconMu.RLock()
-	connected := m.rconConnected
-	status := m.rconStatus
+	connected := m.eventSourceConnected
+	status := m.eventSourceStatus
 	start := 0
 	if len(m.rconEvents) > 120 {
 		start = len(m.rconEvents) - 120
@@ -216,17 +216,17 @@ func (m *Manager) snapshot() Snapshot {
 
 	pid, running := serverProcess()
 	return Snapshot{
-		Metrics:       metrics,
-		ServerRunning: running,
-		ServerPID:     pid,
-		Language:      m.currentLanguage(),
-		Languages:     append([]Language(nil), supportedLanguages...),
-		PendingConfig: pendingConfigExists(),
-		Operation:     operation,
-		RCONConnected: connected,
-		RCONStatus:    status,
-		RCONEvents:    events,
-		ModRevision:   m.currentModRevision(),
-		GeneratedAt:   time.Now(),
+		Metrics:              metrics,
+		ServerRunning:        running,
+		ServerPID:            pid,
+		Language:             m.currentLanguage(),
+		Languages:            append([]Language(nil), supportedLanguages...),
+		PendingConfig:        pendingConfigExists(),
+		Operation:            operation,
+		EventSourceConnected: connected,
+		EventSourceStatus:    status,
+		ServerEvents:         events,
+		ModRevision:          m.currentModRevision(),
+		GeneratedAt:          time.Now(),
 	}
 }

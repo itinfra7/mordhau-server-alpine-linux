@@ -2,7 +2,6 @@ package manager
 
 import (
 	"bytes"
-	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -31,8 +30,6 @@ const (
 	rconAuthResponse  = 2
 	rconAuth          = 3
 
-	rconListenAllCommand      = "listen allon"
-	rconListenAllSuccess      = "Now listening to all broadcast channels"
 	rconListenCustomCommand   = "listen custom"
 	rconListenCustomSuccess   = "Now listening to custom broadcasts"
 	rconInvalidBroadcast      = "Invalid broadcast option!"
@@ -40,9 +37,6 @@ const (
 	rconConnectedEvent        = "RCON connected; all broadcasts enabled"
 	rconPreviousEvent         = "RCON reconnected with the running server's previous settings; all broadcasts enabled"
 	rconClosedEventPrefix     = "RCON connection closed:"
-	rconIdleReadTimeout       = 90 * time.Second
-	rconKeepaliveWriteTimeout = 5 * time.Second
-	rconKeepalivePacketID     = 103
 	rconAdminCommandPacketID  = 4101
 	rconCommandTimeout        = 8 * time.Second
 	rconCommandIdleTimeout    = 750 * time.Millisecond
@@ -71,17 +65,6 @@ type rconPacket struct {
 	ID   int32
 	Type int32
 	Body []byte
-}
-
-type byteCountingReader struct {
-	reader io.Reader
-	read   int
-}
-
-func (reader *byteCountingReader) Read(buffer []byte) (int, error) {
-	count, err := reader.reader.Read(buffer)
-	reader.read += count
-	return count, err
 }
 
 type rconSettings struct {
@@ -115,23 +98,27 @@ func rconCandidates(current, cached *rconSettings) []rconSettings {
 	return candidates
 }
 
-func (m *Manager) setRCONState(connected bool, status string) {
-	m.rconMu.Lock()
-	m.rconConnected = connected
-	m.rconStatus = status
-	m.rconMu.Unlock()
+func (m *Manager) addRCONEvent(kind, text string) (RCONEvent, bool) {
+	return m.addRCONEventAt(time.Now(), kind, text)
 }
 
-func (m *Manager) addRCONEvent(kind, text string) (RCONEvent, bool) {
+func (m *Manager) addRCONEventAt(
+	eventTime time.Time,
+	kind string,
+	text string,
+) (RCONEvent, bool) {
 	text = strings.TrimSpace(strings.ReplaceAll(text, "\x00", ""))
 	if text == "" || isRCONTransportStatusEvent(kind, text) {
 		return RCONEvent{}, false
+	}
+	if eventTime.IsZero() {
+		eventTime = time.Now()
 	}
 	m.rconMu.Lock()
 	m.rconSequence++
 	event := RCONEvent{
 		Sequence: m.rconSequence,
-		Time:     time.Now(),
+		Time:     eventTime,
 		Text:     text,
 		Kind:     kind,
 	}
@@ -153,13 +140,6 @@ func isRCONTransportStatusEvent(kind, text string) bool {
 		strings.HasPrefix(text, rconClosedEventPrefix)
 }
 
-func isRCONIdleTimeout(err error, bytesRead int) bool {
-	var networkError net.Error
-	return bytesRead == 0 &&
-		errors.As(err, &networkError) &&
-		networkError.Timeout()
-}
-
 func filteredRCONLines(text string) []string {
 	lines := make([]string, 0)
 	for _, line := range strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n") {
@@ -170,118 +150,6 @@ func filteredRCONLines(text string) []string {
 		lines = append(lines, line)
 	}
 	return lines
-}
-
-func (m *Manager) addRCONText(text string) {
-	for _, line := range filteredRCONLines(text) {
-		if isRCONChatLine(line) || line == rconListenAllSuccess {
-			continue
-		}
-		m.addRCONEvent("rcon", line)
-	}
-}
-
-func (m *Manager) rconLoop(ctx context.Context) {
-	for {
-		if ctx.Err() != nil {
-			return
-		}
-		if !serverRunning() {
-			m.setRCONState(false, "waiting for server")
-			if !waitContext(ctx, 2*time.Second) {
-				return
-			}
-			continue
-		}
-
-		current, currentErr := activeRCONSettings()
-		var currentSettings *rconSettings
-		if currentErr == nil {
-			currentSettings = &current
-		}
-
-		cachedSettings, cachedErr := loadLastRCONSettings()
-		if cachedErr != nil && !errors.Is(cachedErr, os.ErrNotExist) {
-			cachedSettings = nil
-		}
-
-		candidates := rconCandidates(currentSettings, cachedSettings)
-		if len(candidates) == 0 {
-			status := "RCON settings are unavailable"
-			if currentErr != nil {
-				status = currentErr.Error()
-			}
-			m.setRCONState(false, status)
-			if !waitContext(ctx, 5*time.Second) {
-				return
-			}
-			continue
-		}
-
-		var connection net.Conn
-		var connectedSettings rconSettings
-		for _, candidate := range candidates {
-			address := net.JoinHostPort("127.0.0.1", strconv.Itoa(candidate.Port))
-			m.setRCONState(false, "connecting to "+address)
-			candidateConnection, err := net.DialTimeout("tcp", address, 5*time.Second)
-			if err != nil {
-				continue
-			}
-
-			err = authenticateRCON(candidateConnection, candidate.Password)
-			if err == nil {
-				err = m.enableAllRCONBroadcasts(candidateConnection)
-			}
-			if err != nil {
-				_ = candidateConnection.Close()
-				continue
-			}
-
-			connection = candidateConnection
-			connectedSettings = candidate
-			break
-		}
-
-		if connection == nil {
-			m.setRCONState(false, "RCON unavailable, authentication failed, or broadcast subscription failed; retrying")
-			if !waitContext(ctx, 5*time.Second) {
-				return
-			}
-			continue
-		}
-
-		if err := saveLastRCONSettings(connectedSettings); err != nil {
-			m.addRCONEvent("system", "RCON connected, but its reconnect state could not be saved")
-		}
-
-		usingCurrent := currentSettings != nil &&
-			sameRCONSettings(connectedSettings, *currentSettings)
-		if usingCurrent {
-			m.setRCONState(true, "connected; listening to all broadcasts")
-			m.auditActorEvent("system", "local", "rcon_connected", map[string]string{
-				"settings": "current",
-			})
-		} else {
-			m.setRCONState(true, "connected with previous running-server settings; saved changes apply after restart")
-			m.auditActorEvent("system", "local", "rcon_connected", map[string]string{
-				"settings": "previous_running_server",
-			})
-		}
-
-		err := m.consumeRCON(ctx, connection)
-		_ = connection.Close()
-		m.setRCONState(false, "RCON disconnected; retrying")
-		if ctx.Err() == nil && serverRunning() {
-			if err != nil {
-				m.auditActorEvent("system", "local", "rcon_connection_closed", map[string]string{
-					"error": err.Error(),
-				})
-			}
-			if !waitContext(ctx, 3*time.Second) {
-				return
-			}
-		}
-	}
 }
 
 func loadLastRCONSettings() (*rconSettings, error) {
@@ -748,102 +616,6 @@ func authenticateRCON(connection net.Conn, password string) error {
 		}
 	}
 	return errors.New("RCON did not return an authentication response")
-}
-
-func (m *Manager) enableAllRCONBroadcasts(connection net.Conn) error {
-	if err := connection.SetDeadline(time.Now().Add(8 * time.Second)); err != nil {
-		return err
-	}
-	if err := writeRCONPacket(connection, rconPacket{
-		ID:   102,
-		Type: rconExecCommand,
-		Body: []byte(rconListenAllCommand),
-	}); err != nil {
-		return err
-	}
-	for attempts := 0; attempts < 8; attempts++ {
-		packet, err := readRCONPacket(connection)
-		if err != nil {
-			return err
-		}
-		if packet.Type != rconResponseValue && len(packet.Body) == 0 {
-			continue
-		}
-		enabled := false
-		text := decodeRCON(packet.Body, m.currentLanguage())
-		for _, line := range filteredRCONLines(text) {
-			switch line {
-			case rconListenAllSuccess:
-				enabled = true
-			case rconInvalidBroadcast:
-				return errors.New("RCON rejected the all-broadcast subscription command")
-			default:
-				if !isRCONChatLine(line) {
-					m.addRCONEvent("rcon", line)
-				}
-			}
-		}
-		if enabled {
-			return connection.SetDeadline(time.Time{})
-		}
-	}
-	return errors.New("RCON did not confirm the all-broadcast subscription")
-}
-
-func waitContext(ctx context.Context, duration time.Duration) bool {
-	timer := time.NewTimer(duration)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return false
-	case <-timer.C:
-		return true
-	}
-}
-
-func (m *Manager) consumeRCON(ctx context.Context, connection net.Conn) error {
-	for {
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-		if err := connection.SetReadDeadline(time.Now().Add(rconIdleReadTimeout)); err != nil {
-			return err
-		}
-		reader := &byteCountingReader{reader: connection}
-		packet, err := readRCONPacket(reader)
-		if err != nil {
-			if isRCONIdleTimeout(err, reader.read) {
-				if err := sendRCONKeepalive(connection); err != nil {
-					return fmt.Errorf("send idle RCON keepalive: %w", err)
-				}
-				continue
-			}
-			return err
-		}
-		if packet.Type != rconResponseValue && len(packet.Body) == 0 {
-			continue
-		}
-		text := decodeRCON(packet.Body, m.currentLanguage())
-		m.addRCONText(text)
-	}
-}
-
-func sendRCONKeepalive(connection net.Conn) error {
-	if err := connection.SetWriteDeadline(
-		time.Now().Add(rconKeepaliveWriteTimeout),
-	); err != nil {
-		return err
-	}
-	writeErr := writeRCONPacket(connection, rconPacket{
-		ID:   rconKeepalivePacketID,
-		Type: rconExecCommand,
-		Body: []byte(rconListenAllCommand),
-	})
-	clearErr := connection.SetWriteDeadline(time.Time{})
-	if writeErr != nil {
-		return writeErr
-	}
-	return clearErr
 }
 
 func writeRCONPacket(writer io.Writer, packet rconPacket) error {
