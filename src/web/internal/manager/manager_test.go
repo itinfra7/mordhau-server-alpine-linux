@@ -2090,7 +2090,7 @@ func TestDashboardThemeAndServerPromptMarkup(t *testing.T) {
 	for _, expected := range []string{
 		`id="theme-toggle"`,
 		`content="width=device-width, initial-scale=1, viewport-fit=cover"`,
-		`src="/static/theme.js?v=1.8.5-dev"`,
+		`src="/static/theme.js?v=1.9.0"`,
 		`<p class="eyebrow">SERVER EVENTS</p>`,
 		`id="server-event-console"`,
 		`id="server-prompt-form"`,
@@ -2132,7 +2132,7 @@ func TestDashboardThemeAndServerPromptMarkup(t *testing.T) {
 		t.Fatal(err)
 	}
 	loginSource := string(loginData)
-	if !strings.Contains(loginSource, `src="/static/theme.js?v=1.8.5-dev"`) {
+	if !strings.Contains(loginSource, `src="/static/theme.js?v=1.9.0"`) {
 		t.Fatal("login page does not initialize the persisted theme")
 	}
 	if !strings.Contains(loginSource, `viewport-fit=cover`) {

@@ -92,12 +92,12 @@ history remains in the versioned changelog asset instead of being repeated in
 every Release body.
 
 ```sh
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v1.8.3/mordhau-server-alpine-linux-v1.8.3.tar.gz
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v1.8.3/CHANGELOG-v1.8.3.md
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v1.8.3/SHA256SUMS
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v1.9.0/mordhau-server-alpine-linux-v1.9.0.tar.gz
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v1.9.0/CHANGELOG-v1.9.0.md
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v1.9.0/SHA256SUMS
 sha256sum -c SHA256SUMS
-tar -xzf mordhau-server-alpine-linux-v1.8.3.tar.gz
-cd mordhau-server-alpine-linux-v1.8.3
+tar -xzf mordhau-server-alpine-linux-v1.9.0.tar.gz
+cd mordhau-server-alpine-linux-v1.9.0
 chmod +x src/mordhau-server-alpine-linux.sh
 ./src/mordhau-server-alpine-linux.sh
 ```

@@ -4,6 +4,8 @@ All notable changes to this repository are documented in this file.
 
 ## [Unreleased]
 
+## [1.9.0] - 2026-07-25
+
 ### Added
 
 - Add authenticated administrative RCON command execution from the Server
