@@ -702,6 +702,17 @@ function closeRuntimeEditor() {
   else dialog.removeAttribute("open");
 }
 
+function runtimePropertyMatchesQuery(property, query) {
+  if (!query) return true;
+  if (`${property.name} ${property.type} ${property.declaring_class}`
+      .toLocaleLowerCase()
+      .includes(query)) {
+    return true;
+  }
+  return typeof property.value === "string" &&
+    property.value.toLocaleLowerCase().includes(query);
+}
+
 function renderRuntimeProperties() {
   const view = app.runtimeTarget;
   const container = $("#runtime-properties");
@@ -720,10 +731,7 @@ function renderRuntimeProperties() {
   const properties = (view.properties || []).filter((property) => {
     if (classFilter && property.declaring_class !== classFilter) return false;
     if (editableOnly && !property.editable) return false;
-    if (!query) return true;
-    return `${property.name} ${property.type} ${property.declaring_class}`
-      .toLocaleLowerCase()
-      .includes(query);
+    return runtimePropertyMatchesQuery(property, query);
   });
   $("#runtime-property-count").textContent =
     `${properties.length} / ${view.property_count} properties`;

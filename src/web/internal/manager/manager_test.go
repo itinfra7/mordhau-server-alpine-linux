@@ -2090,7 +2090,7 @@ func TestDashboardThemeAndServerPromptMarkup(t *testing.T) {
 	for _, expected := range []string{
 		`id="theme-toggle"`,
 		`content="width=device-width, initial-scale=1, viewport-fit=cover"`,
-		`src="/static/theme.js?v=2.1.0"`,
+		`src="/static/theme.js?v=2.1.1"`,
 		`<p class="eyebrow">SERVER EVENTS</p>`,
 		`id="server-event-console"`,
 		`id="server-prompt-form"`,
@@ -2110,6 +2110,7 @@ func TestDashboardThemeAndServerPromptMarkup(t *testing.T) {
 		`id="runtime-edit-dialog"`,
 		`id="runtime-edit-select"`,
 		`id="runtime-edit-input"`,
+		`placeholder="Name, type, class, or current value"`,
 		`placeholder="10.0.0.4 | 10.0.0.0/24 | 10.0.0.4-10.0.0.9"`,
 		`id="new-rule-comment"`,
 		`maxlength="160"`,
@@ -2139,7 +2140,7 @@ func TestDashboardThemeAndServerPromptMarkup(t *testing.T) {
 		t.Fatal(err)
 	}
 	loginSource := string(loginData)
-	if !strings.Contains(loginSource, `src="/static/theme.js?v=2.1.0"`) {
+	if !strings.Contains(loginSource, `src="/static/theme.js?v=2.1.1"`) {
 		t.Fatal("login page does not initialize the persisted theme")
 	}
 	if !strings.Contains(loginSource, `viewport-fit=cover`) {
@@ -2169,6 +2170,8 @@ func TestDashboardThemeAndServerPromptMarkup(t *testing.T) {
 		`/api/runtime/property`,
 		`function runtimePlayerGroups(targets)`,
 		`function validateRuntimeEditor()`,
+		`function runtimePropertyMatchesQuery(property, query)`,
+		`property.value.toLocaleLowerCase().includes(query)`,
 		`loadRuntimeTarget({ manual: true })`,
 		`Last successful refresh:`,
 		`restart_on_update: enabled`,

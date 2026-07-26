@@ -4,6 +4,18 @@ All notable changes to this repository are documented in this file.
 
 ## [Unreleased]
 
+## [2.1.1] - 2026-07-26
+
+### Added
+
+- Extend Runtime property search to current exported values in addition to
+  property names, types, and declaring classes.
+
+### Validation
+
+- Verify the dashboard ships the value-aware Runtime query path and updated
+  search guidance.
+
 ## [2.1.0] - 2026-07-26
 
 ### Added

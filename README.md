@@ -106,12 +106,12 @@ history remains in the versioned changelog asset instead of being repeated in
 every Release body.
 
 ```sh
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.1.0/mordhau-server-alpine-linux-v2.1.0.tar.gz
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.1.0/CHANGELOG-v2.1.0.md
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.1.0/SHA256SUMS
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.1.1/mordhau-server-alpine-linux-v2.1.1.tar.gz
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.1.1/CHANGELOG-v2.1.1.md
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.1.1/SHA256SUMS
 sha256sum -c SHA256SUMS
-tar -xzf mordhau-server-alpine-linux-v2.1.0.tar.gz
-cd mordhau-server-alpine-linux-v2.1.0
+tar -xzf mordhau-server-alpine-linux-v2.1.1.tar.gz
+cd mordhau-server-alpine-linux-v2.1.1
 chmod +x src/mordhau-server-alpine-linux.sh
 ./src/mordhau-server-alpine-linux.sh
 ```
@@ -234,6 +234,8 @@ The web manager provides:
 - Runtime GameMode and GameState inspection followed by single-open
   connected-player groups labeled with nickname and PlayFab ID; each player
   group contains its PlayerController, PlayerState, and possessed Pawn
+- Runtime property filtering by name, type, declaring class, or current
+  exported value
 - Game-thread runtime property changes with expected-value conflict detection,
   type-aware controls and server-side validation, read-only type enforcement,
   replication metadata, net-dormancy flushing, and ForceNetUpdate
@@ -306,6 +308,11 @@ condition, and effective replication scope. Connected controllers also expose
 their current `PlayerNamePrivate` and PlayFab ID to the authenticated manager,
 which groups each player's controller, state, and Pawn under one accordion.
 Opening one player closes the previously open player.
+
+Runtime search matches property names, Unreal types, declaring classes, and
+the current exported value. A numeric query such as `100` therefore includes
+properties whose displayed value contains `100`, subject to the selected
+declaring-class and editable-only filters.
 
 The editor derives its control from the reflected property type. Boolean
 properties use an exact `True`/`False` selector. Enum-backed byte and enum
@@ -859,8 +866,9 @@ initializer, persistent theme, server-managed mod-refresh controls,
 browser-time-zone timestamps, initial server-event history loading, the
 unified RCON/SAY prompt, mobile viewport metadata, touch targets, input sizing,
 safe-area handling, player-grouped Runtime navigation, type-specific Runtime
-edit controls, manually indicated value refresh, narrow-screen control reflow,
-and mobile visibility of server and account status. The native build test
+edit controls, current-value search, manually indicated value refresh,
+narrow-screen control reflow, and mobile visibility of server and account
+status. The native build test
 compiles the Windows DLL twice, verifies deterministic output and its DXGI
 proxy export, and pins the PDB-derived property-export signature,
 enum-property layout, player identity fields, and net-dormancy entry point.
