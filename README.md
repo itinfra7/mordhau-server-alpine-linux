@@ -18,6 +18,11 @@ The repository provides:
   and persistent light/dark themes
 - A native, game-thread Unreal Reflection bridge for authenticated inspection
   and controlled editing of current server actor properties
+- Type-aware Runtime property controls with exact Boolean and enum choices,
+  width-correct integer bounds, finite floating-point validation, and
+  structured Unreal text checks
+- Connected-player Runtime navigation labeled with the current nickname and
+  PlayFab ID
 - A shared live PlayerController count collected once by the server and
   distributed to every authenticated administrator
 - Structured Game.ini and Engine.ini editing with persistent item and section
@@ -101,12 +106,12 @@ history remains in the versioned changelog asset instead of being repeated in
 every Release body.
 
 ```sh
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.0.0/mordhau-server-alpine-linux-v2.0.0.tar.gz
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.0.0/CHANGELOG-v2.0.0.md
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.0.0/SHA256SUMS
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.1.0/mordhau-server-alpine-linux-v2.1.0.tar.gz
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.1.0/CHANGELOG-v2.1.0.md
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.1.0/SHA256SUMS
 sha256sum -c SHA256SUMS
-tar -xzf mordhau-server-alpine-linux-v2.0.0.tar.gz
-cd mordhau-server-alpine-linux-v2.0.0
+tar -xzf mordhau-server-alpine-linux-v2.1.0.tar.gz
+cd mordhau-server-alpine-linux-v2.1.0
 chmod +x src/mordhau-server-alpine-linux.sh
 ./src/mordhau-server-alpine-linux.sh
 ```
@@ -226,11 +231,12 @@ The web manager provides:
   minute by one server-side collector and shared across administrator sessions
 - Current PlayerController count sampled once per second in the game process
   and shared through the authenticated event stream
-- Runtime GameMode, GameState, PlayerController, PlayerState, and possessed
-  Pawn inspection with inherited-class property grouping
+- Runtime GameMode and GameState inspection followed by single-open
+  connected-player groups labeled with nickname and PlayFab ID; each player
+  group contains its PlayerController, PlayerState, and possessed Pawn
 - Game-thread runtime property changes with expected-value conflict detection,
-  read-only type enforcement, replication metadata, net-dormancy flushing,
-  and ForceNetUpdate
+  type-aware controls and server-side validation, read-only type enforcement,
+  replication metadata, net-dormancy flushing, and ForceNetUpdate
 - A default light theme with a persistent light/dark toggle
 - Responsive phone, tablet, and desktop layouts with notched-display safe
   areas and touch-sized controls
@@ -296,14 +302,29 @@ PlayerController, each controller's PlayerState, and its possessed Pawn from
 the current `UWorld`. Properties are grouped by the actual runtime class and
 each superclass. The web view includes Unreal property type and flags, static
 array index, exported text value, RepIndex, RepNotify function, lifetime
-condition, and effective replication scope.
+condition, and effective replication scope. Connected controllers also expose
+their current `PlayerNamePrivate` and PlayFab ID to the authenticated manager,
+which groups each player's controller, state, and Pawn under one accordion.
+Opening one player closes the previously open player.
+
+The editor derives its control from the reflected property type. Boolean
+properties use an exact `True`/`False` selector. Enum-backed byte and enum
+properties use choices read from the property-associated `UEnum`. Signed and
+unsigned integer controls enforce the corresponding 8-, 16-, 32-, or 64-bit
+range without converting 64-bit values through browser floating-point
+numbers. Float and double controls accept only finite decimal or scientific
+notation within their type range. Name, string, text, struct, array, set, and
+map values use controls appropriate to their exported representation, with
+balanced structured-text checks where applicable.
 
 Changes are serialized by the Go server and executed after `UWorld::Tick` on
 the game thread. Every change contains the value originally loaded by the
 browser; a concurrent change causes a conflict instead of overwriting newer
-state. The bridge imports the replacement through Unreal's property system,
-verifies the resulting value, and restores the original value after an import
-failure. For a replication-eligible Actor field it then calls
+state. Before forwarding a change, the Go server resolves the property
+metadata again and enforces the same type, range, and enum constraints as the
+browser. The bridge then imports the replacement through Unreal's property
+system, verifies the resulting value, and restores the original value after
+an import failure. For a replication-eligible Actor field it then calls
 `AActor::FlushNetDormancy` followed by `AActor::ForceNetUpdate`.
 
 Object and class references, interfaces, delegates, field paths, deprecated
@@ -828,24 +849,28 @@ failure retry behavior, lifecycle-result persistence, interrupted-operation
 recovery, multilingual server-event history persistence, and truncated-history
 recovery. Runtime tests cover server-wide status sampling, stale and stopped
 bridge state, target-view request serialization and cache reuse, target-ID
-validation, and multilingual property values.
+validation, player-identity placement, multilingual property values,
+type-derived editor selection, exact enum choices, integer boundary handling,
+finite floating-point parsing, and structured-text delimiter validation.
 The shell integration test covers PAK installation, active and staged Game.ini
 registration, existing server-actor preservation, backup creation, and
 idempotent reinstallation. Static asset tests verify the default-light theme
 initializer, persistent theme, server-managed mod-refresh controls,
 browser-time-zone timestamps, initial server-event history loading, the
 unified RCON/SAY prompt, mobile viewport metadata, touch targets, input sizing,
-safe-area handling, Runtime target and property controls, narrow-screen control
-reflow, and mobile visibility of server and account status. The native build
-test compiles the Windows DLL twice, verifies deterministic output and its DXGI
-proxy export, and pins the PDB-derived property-export signature and
-net-dormancy entry point.
+safe-area handling, player-grouped Runtime navigation, type-specific Runtime
+edit controls, manually indicated value refresh, narrow-screen control reflow,
+and mobile visibility of server and account status. The native build test
+compiles the Windows DLL twice, verifies deterministic output and its DXGI
+proxy export, and pins the PDB-derived property-export signature,
+enum-property layout, player identity fields, and net-dormancy entry point.
 
 Connected-client Runtime validation covers the PlayerController count changing
 from zero to one, discovery of the associated PlayerController, PlayerState,
-and possessed Pawn, authoritative readback after a property write, client
-delivery of a `Net`/`OnRep` PlayerState string property, and restoration of the
-original value.
+and possessed Pawn under the controller nickname and PlayFab ID, reflected
+type-editor metadata and enum sentinel filtering, authoritative readback after
+a property write, client delivery of a `Net`/`OnRep` PlayerState string
+property, and restoration of the original value.
 
 ## Update and Rollback
 

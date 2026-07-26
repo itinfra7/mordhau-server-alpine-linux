@@ -39,7 +39,11 @@ reuses the same index.
 Properties are enumerated from the actual runtime class through its complete
 superclass chain. Responses include the declaring class, property type,
 static-array index, offset, flags, replication index, replication condition,
-RepNotify function, exported value, and editability.
+RepNotify function, exported value, and editability. Enum-backed byte and enum
+properties also include their `UEnum` value names. Each controller target
+includes the current `PlayerState.PlayerNamePrivate` value and the PlayFab ID
+exported by `MordhauPlayerState.PlayFabPlayer`, allowing the manager to group
+the three player-owned runtime targets under one identity.
 
 ## Property Changes and Replication
 
@@ -49,6 +53,12 @@ rejects the request if the current value has changed, imports the replacement
 on the game thread, and verifies the resulting exported value. For a
 replication-eligible Actor field, it then calls
 `AActor::FlushNetDormancy` and `AActor::ForceNetUpdate`.
+
+Before a request reaches the bridge, the Go manager resolves the property
+metadata and enforces exact Boolean and enum choices, signed or unsigned
+integer width, finite float or double syntax and range, and balanced Unreal
+structured text. Unreal's property importer remains the final authority and
+the original value is restored when import or verification fails.
 
 Object references, class references, interfaces, delegates, field paths,
 deprecated fields, editor-only fields, function parameters, engine-internal
@@ -75,8 +85,9 @@ The containing directory uses mode `0700`. The Go manager serializes commands,
 uses atomic request writes, validates response request IDs, limits response
 sizes, and caches target views briefly so simultaneous administrators do not
 multiply game-thread work. The status file is sampled once per second by the
-bridge; the Go manager then shares the cached PlayerController count through
-the existing authenticated event stream.
+bridge and contains the current controller count and authenticated
+player-navigation identities. The Go manager then shares the cached
+PlayerController count through the existing authenticated event stream.
 
 ## Build
 

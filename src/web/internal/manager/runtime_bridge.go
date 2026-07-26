@@ -6,7 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
+	"math/big"
 	"os"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -19,11 +23,16 @@ const (
 	runtimeBridgeResponseLimit  = 9 << 20
 	runtimeBridgeValueLimit     = 120 << 10
 	runtimeTargetCacheLifetime  = time.Second
+	runtimeBridgeStatusLimit    = 4 << 20
+	runtimeEnumValueLimit       = 1024
 )
 
 var (
 	errRuntimeBridgeUnavailable = errors.New("runtime bridge is unavailable")
 	errInvalidRuntimeRequest    = errors.New("invalid runtime request")
+	runtimeDecimalPattern       = regexp.MustCompile(
+		`^[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?$`,
+	)
 )
 
 type runtimeBridgeStatusFile struct {
@@ -137,7 +146,8 @@ func (m *Manager) sampleRuntimeBridgeStatus() {
 		return
 	}
 	statusAge := now.Sub(info.ModTime())
-	if !info.Mode().IsRegular() || info.Size() < 2 || info.Size() > 1<<20 ||
+	if !info.Mode().IsRegular() || info.Size() < 2 ||
+		info.Size() > runtimeBridgeStatusLimit ||
 		statusAge < -runtimeBridgeStaleAfter {
 		summary.Status = "invalid_status"
 		m.setRuntimeState(summary, nil)
@@ -177,6 +187,8 @@ func (m *Manager) sampleRuntimeBridgeStatus() {
 			target.Class == "" ||
 			!utf8.ValidString(target.Class) ||
 			len(target.Class) > 191 ||
+			!validRuntimePlayerName(target.PlayerName) ||
+			!validRuntimePlayFabID(target.PlayFabID) ||
 			target.PlayerSlot < -1 ||
 			target.PlayerSlot > 1023 {
 			summary.Status = "invalid_status"
@@ -193,6 +205,8 @@ func (m *Manager) sampleRuntimeBridgeStatus() {
 		case "game_mode":
 			gameModeTargets++
 			if target.PlayerSlot != -1 ||
+				target.PlayerName != "" ||
+				target.PlayFabID != "" ||
 				(status.GameModeClass != "" && target.Class != status.GameModeClass) {
 				summary.Status = "invalid_status"
 				m.setRuntimeState(summary, nil)
@@ -200,13 +214,21 @@ func (m *Manager) sampleRuntimeBridgeStatus() {
 			}
 		case "game_state":
 			gameStateTargets++
-			if target.PlayerSlot != -1 {
+			if target.PlayerSlot != -1 ||
+				target.PlayerName != "" ||
+				target.PlayFabID != "" {
 				summary.Status = "invalid_status"
 				m.setRuntimeState(summary, nil)
 				return
 			}
 		default:
 			if target.PlayerSlot < 0 {
+				summary.Status = "invalid_status"
+				m.setRuntimeState(summary, nil)
+				return
+			}
+			if target.Kind != "player_controller" &&
+				(target.PlayerName != "" || target.PlayFabID != "") {
 				summary.Status = "invalid_status"
 				m.setRuntimeState(summary, nil)
 				return
@@ -321,10 +343,330 @@ func validRuntimeIdentifier(value string) bool {
 	return true
 }
 
+func validRuntimePlayerName(value string) bool {
+	return len(value) <= 511 &&
+		utf8.ValidString(value) &&
+		strings.IndexByte(value, 0) < 0
+}
+
+func validRuntimePlayFabID(value string) bool {
+	if len(value) > 127 {
+		return false
+	}
+	for _, character := range value {
+		if (character >= 'a' && character <= 'z') ||
+			(character >= 'A' && character <= 'Z') ||
+			(character >= '0' && character <= '9') ||
+			character == '-' || character == '_' ||
+			character == '.' || character == ':' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
 func validRuntimeValue(value string) bool {
 	return len(value) <= runtimeBridgeValueLimit &&
 		utf8.ValidString(value) &&
 		strings.IndexByte(value, 0) < 0
+}
+
+func validRuntimeEnumValues(propertyType string, values []string) bool {
+	if len(values) == 0 {
+		return true
+	}
+	if propertyType != "ByteProperty" && propertyType != "EnumProperty" {
+		return false
+	}
+	if len(values) > runtimeEnumValueLimit {
+		return false
+	}
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		if value == "" || len(value) > 255 ||
+			!utf8.ValidString(value) ||
+			strings.IndexByte(value, 0) >= 0 {
+			return false
+		}
+		if _, exists := seen[value]; exists {
+			return false
+		}
+		seen[value] = struct{}{}
+	}
+	return true
+}
+
+func runtimeIntegerEditor(kind, min, max string) RuntimeEditor {
+	return RuntimeEditor{
+		Kind: kind,
+		Min:  min,
+		Max:  max,
+		Step: "1",
+	}
+}
+
+func runtimeEnumContains(values []string, current string) bool {
+	for _, value := range values {
+		if value == current {
+			return true
+		}
+	}
+	return false
+}
+
+func runtimeEnumValueIsSentinel(value string) bool {
+	return value == "MAX" || strings.HasSuffix(value, "_MAX")
+}
+
+func filterRuntimeEnumValues(values []string) []string {
+	filtered := make([]string, 0, len(values))
+	for _, value := range values {
+		if !runtimeEnumValueIsSentinel(value) {
+			filtered = append(filtered, value)
+		}
+	}
+	return filtered
+}
+
+func normalizeRuntimeProperty(property *RuntimeProperty) {
+	if property == nil {
+		return
+	}
+	property.EnumValues = filterRuntimeEnumValues(property.EnumValues)
+	if !property.Editable || property.Value == nil {
+		property.Editor = RuntimeEditor{Kind: "read_only"}
+		return
+	}
+	switch property.Type {
+	case "BoolProperty":
+		property.Editor = RuntimeEditor{Kind: "boolean"}
+	case "ByteProperty":
+		if len(property.EnumValues) > 0 {
+			if runtimeEnumContains(property.EnumValues, *property.Value) {
+				property.Editor = RuntimeEditor{Kind: "select"}
+			} else {
+				property.Editable = false
+				property.ReadOnlyReason = "current_enum_value_unavailable"
+				property.Editor = RuntimeEditor{Kind: "read_only"}
+			}
+		} else if validRuntimeInteger(*property.Value, "0", "255") {
+			property.Editor = runtimeIntegerEditor("integer", "0", "255")
+		} else {
+			property.Editable = false
+			property.ReadOnlyReason = "enum_values_unavailable"
+			property.Editor = RuntimeEditor{Kind: "read_only"}
+		}
+	case "EnumProperty":
+		if runtimeEnumContains(property.EnumValues, *property.Value) {
+			property.Editor = RuntimeEditor{Kind: "select"}
+		} else {
+			property.Editable = false
+			property.ReadOnlyReason = "enum_values_unavailable"
+			property.Editor = RuntimeEditor{Kind: "read_only"}
+		}
+	case "Int8Property":
+		property.Editor = runtimeIntegerEditor("integer", "-128", "127")
+	case "Int16Property":
+		property.Editor = runtimeIntegerEditor("integer", "-32768", "32767")
+	case "IntProperty":
+		property.Editor = runtimeIntegerEditor(
+			"integer",
+			"-2147483648",
+			"2147483647",
+		)
+	case "Int64Property":
+		property.Editor = runtimeIntegerEditor(
+			"integer",
+			"-9223372036854775808",
+			"9223372036854775807",
+		)
+	case "UInt16Property":
+		property.Editor = runtimeIntegerEditor("integer", "0", "65535")
+	case "UInt32Property":
+		property.Editor = runtimeIntegerEditor("integer", "0", "4294967295")
+	case "UInt64Property":
+		property.Editor = runtimeIntegerEditor(
+			"integer",
+			"0",
+			"18446744073709551615",
+		)
+	case "FloatProperty":
+		property.Editor = RuntimeEditor{
+			Kind: "number",
+			Min:  "-3.4028234663852886e+38",
+			Max:  "3.4028234663852886e+38",
+			Step: "any",
+		}
+	case "DoubleProperty":
+		property.Editor = RuntimeEditor{
+			Kind: "number",
+			Min:  "-1.7976931348623157e+308",
+			Max:  "1.7976931348623157e+308",
+			Step: "any",
+		}
+	case "NameProperty":
+		property.Editor = RuntimeEditor{
+			Kind: "name",
+			Help: "Enter one Unreal name without control characters.",
+		}
+	case "StrProperty":
+		property.Editor = RuntimeEditor{Kind: "string"}
+	case "TextProperty":
+		property.Editor = RuntimeEditor{
+			Kind: "unreal_text",
+			Help: "Enter a valid Unreal FText export such as INVTEXT(\"text\").",
+		}
+	case "StructProperty", "ArrayProperty", "SetProperty", "MapProperty":
+		property.Editor = RuntimeEditor{
+			Kind: "unreal_text",
+			Help: "Enter balanced Unreal exported-text syntax; Unreal validates the complete value before applying it.",
+		}
+	default:
+		property.Editable = false
+		property.ReadOnlyReason = "unsupported_editor_type"
+		property.Editor = RuntimeEditor{Kind: "read_only"}
+	}
+}
+
+func validRuntimeInteger(value, minimum, maximum string) bool {
+	if value == "" {
+		return false
+	}
+	start := 0
+	if value[0] == '-' || value[0] == '+' {
+		start = 1
+	}
+	if start == len(value) {
+		return false
+	}
+	for index := start; index < len(value); index++ {
+		if value[index] < '0' || value[index] > '9' {
+			return false
+		}
+	}
+	parsed, ok := new(big.Int).SetString(value, 10)
+	if !ok {
+		return false
+	}
+	minimumValue, minimumOK := new(big.Int).SetString(minimum, 10)
+	maximumValue, maximumOK := new(big.Int).SetString(maximum, 10)
+	return minimumOK && maximumOK &&
+		parsed.Cmp(minimumValue) >= 0 &&
+		parsed.Cmp(maximumValue) <= 0
+}
+
+func validRuntimeNumber(value string, bits int) bool {
+	if !runtimeDecimalPattern.MatchString(value) {
+		return false
+	}
+	number, err := strconv.ParseFloat(value, bits)
+	mantissa := value
+	if exponent := strings.IndexAny(mantissa, "eE"); exponent >= 0 {
+		mantissa = mantissa[:exponent]
+	}
+	textIsZero := strings.IndexAny(mantissa, "123456789") < 0
+	return err == nil &&
+		!math.IsInf(number, 0) &&
+		!math.IsNaN(number) &&
+		(number != 0 || textIsZero)
+}
+
+func validRuntimeName(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, character := range value {
+		if character < 0x20 || character == 0x7f {
+			return false
+		}
+	}
+	return true
+}
+
+func validBalancedRuntimeText(value string) bool {
+	stack := make([]rune, 0, 16)
+	var quote rune
+	escaped := false
+	for _, character := range value {
+		if quote != 0 {
+			if escaped {
+				escaped = false
+				continue
+			}
+			if character == '\\' {
+				escaped = true
+				continue
+			}
+			if character == quote {
+				quote = 0
+			}
+			continue
+		}
+		if character == '"' || character == '\'' {
+			quote = character
+			continue
+		}
+		switch character {
+		case '(', '[', '{':
+			stack = append(stack, character)
+		case ')', ']', '}':
+			if len(stack) == 0 {
+				return false
+			}
+			open := stack[len(stack)-1]
+			stack = stack[:len(stack)-1]
+			if (open == '(' && character != ')') ||
+				(open == '[' && character != ']') ||
+				(open == '{' && character != '}') {
+				return false
+			}
+		}
+	}
+	return quote == 0 && !escaped && len(stack) == 0
+}
+
+func validateRuntimePropertyValue(
+	property RuntimeProperty,
+	value string,
+) error {
+	if !property.Editable || property.Value == nil {
+		return fmt.Errorf("%w: runtime property is read-only", errInvalidRuntimeRequest)
+	}
+	valid := false
+	switch property.Editor.Kind {
+	case "boolean":
+		valid = value == "True" || value == "False"
+	case "select":
+		for _, option := range property.EnumValues {
+			if value == option {
+				valid = true
+				break
+			}
+		}
+	case "integer":
+		valid = validRuntimeInteger(value, property.Editor.Min, property.Editor.Max)
+	case "number":
+		bits := 64
+		if property.Type == "FloatProperty" {
+			bits = 32
+		}
+		valid = validRuntimeNumber(value, bits)
+	case "name":
+		valid = validRuntimeName(value)
+	case "string":
+		valid = true
+	case "unreal_text":
+		valid = validBalancedRuntimeText(value)
+	}
+	if !valid {
+		return fmt.Errorf(
+			"%w: value does not match %s",
+			errInvalidRuntimeRequest,
+			property.Type,
+		)
+	}
+	return nil
 }
 
 func runtimeHex(value string) string {
@@ -450,6 +792,22 @@ func (m *Manager) runtimeTarget(
 		view.Target.Class == "" ||
 		!utf8.ValidString(view.Target.Class) ||
 		len(view.Target.Class) > 191 ||
+		!validRuntimePlayerName(view.Target.PlayerName) ||
+		!validRuntimePlayFabID(view.Target.PlayFabID) ||
+		view.Target.PlayerSlot < -1 ||
+		view.Target.PlayerSlot > 1023 ||
+		((view.Target.Kind == "game_mode" ||
+			view.Target.Kind == "game_state") &&
+			(view.Target.PlayerSlot != -1 ||
+				view.Target.PlayerName != "" ||
+				view.Target.PlayFabID != "")) ||
+		((view.Target.Kind == "player_controller" ||
+			view.Target.Kind == "player_state" ||
+			view.Target.Kind == "pawn") &&
+			view.Target.PlayerSlot < 0) ||
+		(view.Target.Kind != "player_controller" &&
+			(view.Target.PlayerName != "" ||
+				view.Target.PlayFabID != "")) ||
 		view.PropertyCount != len(view.Properties) ||
 		view.PropertyCount < 0 ||
 		view.PropertyCount > 8192 ||
@@ -467,7 +825,8 @@ func (m *Manager) runtimeTarget(
 	if view.ClassChain[0] != view.Target.Class {
 		return RuntimeTargetView{}, errors.New("runtime bridge returned a mismatched target class")
 	}
-	for _, property := range view.Properties {
+	for index := range view.Properties {
+		property := &view.Properties[index]
 		if _, exists := classes[property.DeclaringClass]; !exists ||
 			!validRuntimeIdentifier(property.Name) ||
 			!validRuntimeIdentifier(property.Type) ||
@@ -479,9 +838,11 @@ func (m *Manager) runtimeTarget(
 			property.ElementSize > 0x1000000 ||
 			property.Offset < 0 ||
 			property.Offset > 0x1000000 ||
-			(property.Value != nil && !validRuntimeValue(*property.Value)) {
+			(property.Value != nil && !validRuntimeValue(*property.Value)) ||
+			!validRuntimeEnumValues(property.Type, property.EnumValues) {
 			return RuntimeTargetView{}, errors.New("runtime bridge returned an invalid property")
 		}
+		normalizeRuntimeProperty(property)
 	}
 	m.runtimeMu.Lock()
 	if m.runtimeTargetCache == nil {
@@ -519,8 +880,31 @@ func (m *Manager) changeRuntimeProperty(
 			errInvalidRuntimeRequest,
 		)
 	}
+	targetView, err := m.runtimeTarget(ctx, change.TargetID)
+	if err != nil {
+		return RuntimePropertyChangeView{}, err
+	}
+	var property *RuntimeProperty
+	for index := range targetView.Properties {
+		candidate := &targetView.Properties[index]
+		if candidate.DeclaringClass == change.DeclaringClass &&
+			candidate.Name == change.Name &&
+			candidate.ArrayIndex == change.ArrayIndex {
+			property = candidate
+			break
+		}
+	}
+	if property == nil {
+		return RuntimePropertyChangeView{}, fmt.Errorf(
+			"%w: runtime property was not found",
+			errInvalidRuntimeRequest,
+		)
+	}
+	if err := validateRuntimePropertyValue(*property, change.NewValue); err != nil {
+		return RuntimePropertyChangeView{}, err
+	}
 	var view RuntimePropertyChangeView
-	err := m.runtimeBridgeExchange(
+	err = m.runtimeBridgeExchange(
 		ctx,
 		func(requestID string) string {
 			return strings.Join([]string{

@@ -158,6 +158,8 @@ type RuntimeTarget struct {
 	Kind       string `json:"kind"`
 	Class      string `json:"class"`
 	PlayerSlot int    `json:"player_slot"`
+	PlayerName string `json:"player_name,omitempty"`
+	PlayFabID  string `json:"playfab_id,omitempty"`
 }
 
 type RuntimeReplication struct {
@@ -182,7 +184,17 @@ type RuntimeProperty struct {
 	ReadOnlyReason    string             `json:"read_only_reason"`
 	RepNotifyFunction string             `json:"rep_notify_function"`
 	Value             *string            `json:"value"`
+	EnumValues        []string           `json:"enum_values,omitempty"`
+	Editor            RuntimeEditor      `json:"editor"`
 	Replication       RuntimeReplication `json:"replication"`
+}
+
+type RuntimeEditor struct {
+	Kind string `json:"kind"`
+	Min  string `json:"min,omitempty"`
+	Max  string `json:"max,omitempty"`
+	Step string `json:"step,omitempty"`
+	Help string `json:"help,omitempty"`
 }
 
 type RuntimeStatusView struct {

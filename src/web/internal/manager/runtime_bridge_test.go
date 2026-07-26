@@ -34,6 +34,8 @@ func TestRuntimeBridgeStatusIsCollectedOnceForSnapshots(t *testing.T) {
 				Kind:       "player_controller",
 				Class:      "BP_TestController_C",
 				PlayerSlot: 0,
+				PlayerName: "테스트 사용자",
+				PlayFabID:  "ABCDEF0123456789",
 			},
 			{
 				ID:         "player_controller:12:22",
@@ -63,7 +65,9 @@ func TestRuntimeBridgeStatusIsCollectedOnceForSnapshots(t *testing.T) {
 	}
 	view := manager.runtimeStatusView()
 	if !view.Ready || len(view.Targets) != 3 ||
-		view.Targets[1].Kind != "player_controller" {
+		view.Targets[1].Kind != "player_controller" ||
+		view.Targets[1].PlayerName != "테스트 사용자" ||
+		view.Targets[1].PlayFabID != "ABCDEF0123456789" {
 		t.Fatalf("unexpected runtime target view: %+v", view)
 	}
 }
@@ -189,5 +193,192 @@ func TestRuntimeInputValidationPreservesUnicode(t *testing.T) {
 		if encoded == "" || strings.Contains(encoded, value) {
 			t.Fatalf("runtime value was not encoded: %q", value)
 		}
+	}
+}
+
+func TestRuntimeBridgeStatusRejectsIdentityOnNonControllerTarget(t *testing.T) {
+	directory := t.TempDir()
+	statusPath := filepath.Join(directory, "status.json")
+	status := runtimeBridgeStatusFile{
+		Version:               1,
+		Ready:                 true,
+		PlayerControllerCount: 1,
+		TargetCount:           2,
+		Targets: []RuntimeTarget{
+			{
+				ID:         "player_controller:11:21",
+				Kind:       "player_controller",
+				Class:      "BP_TestController_C",
+				PlayerSlot: 0,
+			},
+			{
+				ID:         "player_state:12:22",
+				Kind:       "player_state",
+				Class:      "BP_TestPlayerState_C",
+				PlayerSlot: 0,
+				PlayerName: "must-not-be-here",
+			},
+		},
+	}
+	if err := writeJSONAtomic(statusPath, status, 0600); err != nil {
+		t.Fatal(err)
+	}
+	manager := &Manager{
+		runtimeStatusPath:    statusPath,
+		runtimeServerProcess: func() (int, bool) { return 123, true },
+	}
+	manager.sampleRuntimeBridgeStatus()
+	if summary := manager.runtimeSummaryView(); summary.Ready ||
+		summary.Status != "invalid_status" {
+		t.Fatalf("invalid identity placement accepted: %+v", summary)
+	}
+}
+
+func TestRuntimePropertyEditorsAndValidation(t *testing.T) {
+	value := func(text string) *string { return &text }
+	testCases := []struct {
+		name     string
+		property RuntimeProperty
+		valid    []string
+		invalid  []string
+		kind     string
+		editable bool
+	}{
+		{
+			name: "boolean",
+			property: RuntimeProperty{
+				Type: "BoolProperty", Editable: true, Value: value("False"),
+			},
+			valid:    []string{"True", "False"},
+			invalid:  []string{"true", "1", ""},
+			kind:     "boolean",
+			editable: true,
+		},
+		{
+			name: "signed integer",
+			property: RuntimeProperty{
+				Type: "Int8Property", Editable: true, Value: value("1"),
+			},
+			valid:    []string{"-128", "0", "+127"},
+			invalid:  []string{"-129", "128", "1.0", " 1"},
+			kind:     "integer",
+			editable: true,
+		},
+		{
+			name: "uint64",
+			property: RuntimeProperty{
+				Type: "UInt64Property", Editable: true, Value: value("0"),
+			},
+			valid:    []string{"0", "18446744073709551615"},
+			invalid:  []string{"-1", "18446744073709551616"},
+			kind:     "integer",
+			editable: true,
+		},
+		{
+			name: "float",
+			property: RuntimeProperty{
+				Type: "FloatProperty", Editable: true, Value: value("1.000000"),
+			},
+			valid:    []string{"0", "-1.25", "3.4e+38"},
+			invalid:  []string{"NaN", "Inf", "0x1p2", "3.5e+38", "1e-46"},
+			kind:     "number",
+			editable: true,
+		},
+		{
+			name: "enum",
+			property: RuntimeProperty{
+				Type:       "EnumProperty",
+				Editable:   true,
+				Value:      value("Disabled"),
+				EnumValues: []string{"Disabled", "Enabled"},
+			},
+			valid:    []string{"Disabled", "Enabled"},
+			invalid:  []string{"2", "enabled", ""},
+			kind:     "select",
+			editable: true,
+		},
+		{
+			name: "structured text",
+			property: RuntimeProperty{
+				Type: "StructProperty", Editable: true, Value: value("(X=1,Y=2)"),
+			},
+			valid:    []string{"", "(X=1,Y=(A=\"한국어\"))"},
+			invalid:  []string{"(X=1", "(X='unterminated)"},
+			kind:     "unreal_text",
+			editable: true,
+		},
+		{
+			name: "empty string",
+			property: RuntimeProperty{
+				Type: "StrProperty", Editable: true, Value: value("text"),
+			},
+			valid:    []string{"", "Русский"},
+			kind:     "string",
+			editable: true,
+		},
+		{
+			name: "enum metadata missing",
+			property: RuntimeProperty{
+				Type: "EnumProperty", Editable: true, Value: value("Disabled"),
+			},
+			kind:     "read_only",
+			editable: false,
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			property := testCase.property
+			normalizeRuntimeProperty(&property)
+			if property.Editor.Kind != testCase.kind ||
+				property.Editable != testCase.editable {
+				t.Fatalf("unexpected editor: %+v", property)
+			}
+			for _, candidate := range testCase.valid {
+				if err := validateRuntimePropertyValue(property, candidate); err != nil {
+					t.Fatalf("valid value %q rejected: %v", candidate, err)
+				}
+			}
+			for _, candidate := range testCase.invalid {
+				if err := validateRuntimePropertyValue(property, candidate); err == nil {
+					t.Fatalf("invalid value %q accepted", candidate)
+				}
+			}
+		})
+	}
+}
+
+func TestRuntimeEnumSentinelsAreNotSelectable(t *testing.T) {
+	value := "Enabled"
+	property := RuntimeProperty{
+		Type:       "EnumProperty",
+		Editable:   true,
+		Value:      &value,
+		EnumValues: []string{"Disabled", "Enabled", "E_MAX", "MAX"},
+	}
+
+	normalizeRuntimeProperty(&property)
+	if property.Editor.Kind != "select" || !property.Editable {
+		t.Fatalf("unexpected enum editor: %+v", property)
+	}
+	if got := strings.Join(property.EnumValues, ","); got != "Disabled,Enabled" {
+		t.Fatalf("selectable enum values = %q", got)
+	}
+	for _, sentinel := range []string{"E_MAX", "MAX"} {
+		if err := validateRuntimePropertyValue(property, sentinel); err == nil {
+			t.Fatalf("enum sentinel %q was accepted", sentinel)
+		}
+	}
+
+	value = "E_MAX"
+	property = RuntimeProperty{
+		Type:       "EnumProperty",
+		Editable:   true,
+		Value:      &value,
+		EnumValues: []string{"Disabled", "Enabled", "E_MAX"},
+	}
+	normalizeRuntimeProperty(&property)
+	if property.Editable || property.Editor.Kind != "read_only" {
+		t.Fatalf("sentinel current value should be read-only: %+v", property)
 	}
 }

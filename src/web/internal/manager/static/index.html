@@ -5,9 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="light dark">
   <title>MORDHAU Control</title>
-  <script src="/static/theme.js?v=2.0.0"></script>
-  <link rel="stylesheet" href="/static/app.css?v=2.0.0">
-  <script src="/static/app.js?v=2.0.0" defer></script>
+  <script src="/static/theme.js?v=2.1.0"></script>
+  <link rel="stylesheet" href="/static/app.css?v=2.1.0">
+  <script src="/static/app.js?v=2.1.0" defer></script>
 </head>
 <body>
   <div class="ambient ambient-one"></div>
@@ -233,8 +233,8 @@
             <span id="runtime-status" class="connection-pill">Loading</span>
           </div>
           <p class="hint">
-            Current GameMode, GameState, PlayerController, PlayerState, and possessed Pawn
-            instances are discovered from the running server.
+            Current GameMode and GameState are followed by connected players. Expand a
+            player to inspect that player's controller, state, and possessed Pawn.
           </p>
           <button id="runtime-refresh-targets" class="ghost compact" type="button">Refresh targets</button>
           <div id="runtime-targets" class="runtime-target-list"></div>
@@ -484,11 +484,15 @@
       </div>
       <p id="runtime-edit-meta" class="hint"></p>
       <label class="runtime-value-field">
-        <span>Unreal exported text value</span>
+        <span id="runtime-edit-value-label">Value</span>
+        <select id="runtime-edit-select" class="hidden"></select>
+        <input id="runtime-edit-input" class="hidden" type="text" maxlength="122880"
+               autocomplete="off" autocapitalize="none" spellcheck="false">
         <textarea id="runtime-edit-value" rows="8" maxlength="122880"
-                  autocomplete="off" autocapitalize="none" spellcheck="false"
-                  required></textarea>
+                  autocomplete="off" autocapitalize="none"
+                  spellcheck="false"></textarea>
       </label>
+      <p id="runtime-edit-help" class="hint runtime-edit-help"></p>
       <div id="runtime-edit-replication" class="policy-note"></div>
       <div class="control-row runtime-edit-actions">
         <button id="runtime-edit-save" class="primary" type="submit">Apply now</button>

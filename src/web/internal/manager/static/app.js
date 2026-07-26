@@ -15,9 +15,12 @@ const app = {
   runtimeStatus: null,
   runtimeTarget: null,
   runtimeSelectedID: "",
+  runtimeExpandedPlayerKey: "",
   runtimeEditing: null,
+  runtimeSaving: false,
   runtimeLoading: false,
   runtimeReloadRequested: false,
+  runtimeManualRefreshing: false,
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -275,18 +278,66 @@ function updateServerPromptMode() {
 const runtimeKindLabels = {
   game_mode: "Game Mode",
   game_state: "Game State",
-  player_controller: "Player Controllers",
-  player_state: "Player States",
-  pawn: "Possessed Pawns",
+  player_controller: "Player Controller",
+  player_state: "Player State",
+  pawn: "Possessed Pawn",
 };
 
 function runtimeTargetLabel(target) {
-  const base = runtimeKindLabels[target.kind] || target.kind;
-  return target.player_slot >= 0 ? `${base.replace(/s$/, "")} #${target.player_slot + 1}` : base;
+  return runtimeKindLabels[target.kind] || target.kind;
 }
 
 function runtimePanelActive() {
   return $("#panel-runtime").classList.contains("active");
+}
+
+function runtimePlayerGroups(targets) {
+  const players = new Map();
+  for (const target of targets || []) {
+    if (!Number.isInteger(target.player_slot) || target.player_slot < 0) continue;
+    if (!players.has(target.player_slot)) {
+      players.set(target.player_slot, {
+        slot: target.player_slot,
+        name: "",
+        playFabID: "",
+        targets: new Map(),
+      });
+    }
+    const player = players.get(target.player_slot);
+    player.targets.set(target.kind, target);
+    if (target.player_name) player.name = target.player_name;
+    if (target.playfab_id) player.playFabID = target.playfab_id;
+  }
+  return [...players.values()].sort((left, right) => left.slot - right.slot);
+}
+
+function runtimePlayerKey(player) {
+  const controller = player.targets.get("player_controller");
+  return player.playFabID || controller?.id || `slot:${player.slot}`;
+}
+
+function runtimeTargetButton(target, label = runtimeTargetLabel(target)) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "runtime-target-button";
+  button.classList.toggle("active", target.id === app.runtimeSelectedID);
+  const name = document.createElement("strong");
+  name.textContent = label;
+  const className = document.createElement("small");
+  className.textContent = target.class;
+  button.append(name, className);
+  button.addEventListener("click", async () => {
+    app.runtimeSelectedID = target.id;
+    app.runtimeTarget = null;
+    if (target.player_slot >= 0) {
+      const player = runtimePlayerGroups(app.runtimeStatus?.targets)
+        .find((candidate) => candidate.slot === target.player_slot);
+      if (player) app.runtimeExpandedPlayerKey = runtimePlayerKey(player);
+    }
+    renderRuntimeTargets();
+    await loadRuntimeTarget();
+  });
+  return button;
 }
 
 function renderRuntimeTargets() {
@@ -306,39 +357,65 @@ function renderRuntimeTargets() {
     return;
   }
 
-  const grouped = new Map();
-  for (const target of status.targets) {
-    if (!grouped.has(target.kind)) grouped.set(target.kind, []);
-    grouped.get(target.kind).push(target);
-  }
-  for (const kind of ["game_mode", "game_state", "player_controller", "player_state", "pawn"]) {
-    const targets = grouped.get(kind);
-    if (!targets || !targets.length) continue;
+  for (const kind of ["game_mode", "game_state"]) {
+    const target = status.targets.find((candidate) => candidate.kind === kind);
+    if (!target) continue;
     const group = document.createElement("section");
     group.className = "runtime-target-group";
-    const heading = document.createElement("h3");
-    heading.className = "runtime-target-group-title";
-    heading.textContent = runtimeKindLabels[kind] || kind;
-    group.append(heading);
-    for (const target of targets) {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "runtime-target-button";
-      button.classList.toggle("active", target.id === app.runtimeSelectedID);
-      const name = document.createElement("strong");
-      name.textContent = runtimeTargetLabel(target);
-      const className = document.createElement("small");
-      className.textContent = target.class;
-      button.append(name, className);
-      button.addEventListener("click", async () => {
-        app.runtimeSelectedID = target.id;
-        app.runtimeTarget = null;
-        renderRuntimeTargets();
-        await loadRuntimeTarget();
-      });
-      group.append(button);
-    }
+    group.append(runtimeTargetButton(target));
     targetList.append(group);
+  }
+
+  const players = runtimePlayerGroups(status.targets);
+  if (!players.length) return;
+  const heading = document.createElement("h3");
+  heading.className = "runtime-target-group-title runtime-player-list-title";
+  heading.textContent = "Connected players";
+  targetList.append(heading);
+
+  const liveKeys = new Set(players.map(runtimePlayerKey));
+  if (!liveKeys.has(app.runtimeExpandedPlayerKey)) {
+    app.runtimeExpandedPlayerKey = "";
+  }
+  for (const player of players) {
+    const key = runtimePlayerKey(player);
+    const expanded = app.runtimeExpandedPlayerKey === key;
+    const section = document.createElement("section");
+    section.className = `runtime-player${expanded ? " expanded" : ""}`;
+
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "runtime-player-toggle";
+    toggle.setAttribute("aria-expanded", String(expanded));
+    const identity = document.createElement("span");
+    identity.className = "runtime-player-identity";
+    const playerName = document.createElement("strong");
+    playerName.textContent = player.name || `Player ${player.slot + 1}`;
+    const playFabID = document.createElement("small");
+    playFabID.textContent = player.playFabID
+      ? `PlayFabID · ${player.playFabID}`
+      : "PlayFabID unavailable";
+    identity.append(playerName, playFabID);
+    const marker = document.createElement("span");
+    marker.className = "runtime-player-marker";
+    marker.textContent = "⌄";
+    marker.setAttribute("aria-hidden", "true");
+    toggle.append(identity, marker);
+    toggle.addEventListener("click", () => {
+      app.runtimeExpandedPlayerKey = expanded ? "" : key;
+      renderRuntimeTargets();
+    });
+    section.append(toggle);
+
+    const children = document.createElement("div");
+    children.className = "runtime-player-targets";
+    children.hidden = !expanded;
+    for (const kind of ["player_controller", "player_state", "pawn"]) {
+      const target = player.targets.get(kind);
+      if (target) children.append(runtimeTargetButton(target));
+    }
+    section.append(children);
+    targetList.append(section);
   }
 }
 
@@ -420,6 +497,183 @@ function populateRuntimeClassFilter(classChain) {
   }
 }
 
+function runtimeEditControl() {
+  return [
+    $("#runtime-edit-select"),
+    $("#runtime-edit-input"),
+    $("#runtime-edit-value"),
+  ].find((control) => !control.classList.contains("hidden"));
+}
+
+function validRuntimeIntegerText(value, minimum, maximum) {
+  if (!/^[+-]?[0-9]+$/.test(value)) return false;
+  try {
+    const parsed = BigInt(value);
+    return parsed >= BigInt(minimum) && parsed <= BigInt(maximum);
+  } catch (_) {
+    return false;
+  }
+}
+
+function validRuntimeNumberText(value, minimum, maximum, bits) {
+  if (!/^[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?$/.test(value)) {
+    return false;
+  }
+  const parsed = Number(value);
+  const mantissa = value.split(/[eE]/, 1)[0];
+  const textIsZero = !/[1-9]/.test(mantissa);
+  if (!Number.isFinite(parsed) ||
+      (parsed === 0 && !textIsZero) ||
+      parsed < Number(minimum) ||
+      parsed > Number(maximum)) {
+    return false;
+  }
+  if (bits === 32) {
+    const narrowed = Math.fround(parsed);
+    return Number.isFinite(narrowed) &&
+      !(narrowed === 0 && parsed !== 0);
+  }
+  return true;
+}
+
+function validBalancedRuntimeText(value) {
+  const stack = [];
+  let quote = "";
+  let escaped = false;
+  const closing = { ")": "(", "]": "[", "}": "{" };
+  for (const character of value) {
+    if (quote) {
+      if (escaped) {
+        escaped = false;
+      } else if (character === "\\") {
+        escaped = true;
+      } else if (character === quote) {
+        quote = "";
+      }
+      continue;
+    }
+    if (character === '"' || character === "'") {
+      quote = character;
+    } else if (character === "(" || character === "[" || character === "{") {
+      stack.push(character);
+    } else if (closing[character]) {
+      if (stack.pop() !== closing[character]) return false;
+    }
+  }
+  return !quote && !escaped && stack.length === 0;
+}
+
+function runtimeEditValidationMessage(property, value) {
+  const editor = property.editor || {};
+  switch (editor.kind) {
+    case "boolean":
+      return value === "True" || value === "False"
+        ? ""
+        : "Choose True or False.";
+    case "select":
+      return (property.enum_values || []).includes(value)
+        ? ""
+        : "Choose one of the available Unreal enum values.";
+    case "integer":
+      return validRuntimeIntegerText(value, editor.min, editor.max)
+        ? ""
+        : `Enter a whole number from ${editor.min} to ${editor.max}.`;
+    case "number":
+      return validRuntimeNumberText(
+        value,
+        editor.min,
+        editor.max,
+        property.type === "FloatProperty" ? 32 : 64,
+      )
+        ? ""
+        : `Enter a finite number from ${editor.min} to ${editor.max}.`;
+    case "name":
+      return value && !/[\u0000-\u001f\u007f]/u.test(value)
+        ? ""
+        : "Enter one non-empty Unreal name without control characters.";
+    case "string":
+      return "";
+    case "unreal_text":
+      return validBalancedRuntimeText(value)
+        ? ""
+        : "Quotes, parentheses, brackets, or braces are not balanced.";
+    default:
+      return "This property does not have a safe editor.";
+  }
+}
+
+function validateRuntimeEditor() {
+  const editing = app.runtimeEditing;
+  const control = runtimeEditControl();
+  if (!editing || !control) return false;
+  const message = runtimeEditValidationMessage(editing.property, control.value);
+  control.setCustomValidity(message);
+  const help = $("#runtime-edit-help");
+  help.textContent = message || editing.editorHelp;
+  help.classList.toggle("form-error", Boolean(message));
+  $("#runtime-edit-save").disabled = app.runtimeSaving || Boolean(message);
+  return !message;
+}
+
+function configureRuntimeEditor(property) {
+  const select = $("#runtime-edit-select");
+  const input = $("#runtime-edit-input");
+  const textarea = $("#runtime-edit-value");
+  for (const control of [select, input, textarea]) {
+    control.classList.add("hidden");
+    control.disabled = true;
+    control.setCustomValidity("");
+  }
+  select.replaceChildren();
+  input.inputMode = "text";
+
+  const editor = property.editor || {};
+  let control = textarea;
+  let label = "Unreal exported text value";
+  let help = editor.help || "";
+  if (editor.kind === "boolean") {
+    control = select;
+    label = "Boolean value";
+    for (const value of ["True", "False"]) {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = value;
+      select.append(option);
+    }
+  } else if (editor.kind === "select") {
+    control = select;
+    label = "Enum value";
+    for (const value of property.enum_values || []) {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = value;
+      select.append(option);
+    }
+  } else if (editor.kind === "integer") {
+    control = input;
+    label = "Integer value";
+    input.inputMode = editor.min?.startsWith("-") ? "text" : "numeric";
+    help = `Whole number from ${editor.min} to ${editor.max}.`;
+  } else if (editor.kind === "number") {
+    control = input;
+    label = "Numeric value";
+    input.inputMode = "decimal";
+    help = `Finite number from ${editor.min} to ${editor.max}. Decimal and scientific notation are accepted.`;
+  } else if (editor.kind === "name") {
+    control = input;
+    label = "Unreal name";
+  } else if (editor.kind === "string") {
+    label = "String value";
+  }
+  control.classList.remove("hidden");
+  control.disabled = false;
+  control.value = property.value;
+  $("#runtime-edit-value-label").textContent = label;
+  app.runtimeEditing.editorHelp = help;
+  validateRuntimeEditor();
+  return control;
+}
+
 function openRuntimeEditor(property) {
   if (!app.runtimeTarget || !property.editable || typeof property.value !== "string") return;
   app.runtimeEditing = {
@@ -430,7 +684,6 @@ function openRuntimeEditor(property) {
   const suffix = property.array_dim > 1 ? `[${property.array_index}]` : "";
   $("#runtime-edit-title").textContent = `${property.name}${suffix}`;
   $("#runtime-edit-meta").textContent = `${property.declaring_class} · ${property.type}`;
-  $("#runtime-edit-value").value = property.value;
   $("#runtime-edit-replication").textContent =
     `${replicationLabel(property.replication)} · condition ${property.replication.condition}. ` +
     (property.replication.scope === "server_only"
@@ -439,7 +692,7 @@ function openRuntimeEditor(property) {
   const dialog = $("#runtime-edit-dialog");
   if (typeof dialog.showModal === "function") dialog.showModal();
   else dialog.setAttribute("open", "");
-  $("#runtime-edit-value").focus();
+  configureRuntimeEditor(property).focus();
 }
 
 function closeRuntimeEditor() {
@@ -458,7 +711,7 @@ function renderRuntimeProperties() {
     return;
   }
   $("#runtime-target-title").textContent = `${runtimeTargetLabel(view.target)} · ${view.target.class}`;
-  $("#runtime-refresh-properties").disabled = false;
+  $("#runtime-refresh-properties").disabled = app.runtimeManualRefreshing;
   populateRuntimeClassFilter(view.class_chain);
 
   const query = $("#runtime-property-search").value.trim().toLocaleLowerCase();
@@ -537,17 +790,25 @@ function renderRuntimeProperties() {
   }
 }
 
-async function loadRuntimeTarget({ silent = false } = {}) {
+function setRuntimeManualRefresh(active) {
+  app.runtimeManualRefreshing = active;
+  const button = $("#runtime-refresh-properties");
+  button.disabled = active || !app.runtimeSelectedID;
+  button.textContent = active ? "Refreshing…" : "Refresh values";
+  button.setAttribute("aria-busy", String(active));
+}
+
+async function loadRuntimeTarget({ silent = false, manual = false } = {}) {
   if (!app.runtimeSelectedID) {
     clearRuntimeInspector();
     return;
   }
   if (app.runtimeLoading) {
-    app.runtimeReloadRequested = true;
+    if (manual) app.runtimeReloadRequested = true;
     return;
   }
   app.runtimeLoading = true;
-  $("#runtime-refresh-properties").disabled = true;
+  if (manual) setRuntimeManualRefresh(true);
   try {
     const view = await api(`/api/runtime/target?id=${encodeURIComponent(app.runtimeSelectedID)}`);
     if (view.target?.id === app.runtimeSelectedID) {
@@ -561,10 +822,10 @@ async function loadRuntimeTarget({ silent = false } = {}) {
     }
   } finally {
     app.runtimeLoading = false;
-    $("#runtime-refresh-properties").disabled = !app.runtimeSelectedID;
+    if (manual) setRuntimeManualRefresh(false);
     if (app.runtimeReloadRequested) {
       app.runtimeReloadRequested = false;
-      loadRuntimeTarget({ silent: true });
+      loadRuntimeTarget({ manual: true });
     }
   }
 }
@@ -573,7 +834,13 @@ async function submitRuntimeEdit(event) {
   event.preventDefault();
   const editing = app.runtimeEditing;
   if (!editing) return;
+  const control = runtimeEditControl();
+  if (!control || !validateRuntimeEditor()) {
+    control?.reportValidity();
+    return;
+  }
   const save = $("#runtime-edit-save");
+  app.runtimeSaving = true;
   save.disabled = true;
   try {
     const result = await api("/api/runtime/property", {
@@ -584,12 +851,12 @@ async function submitRuntimeEdit(event) {
         name: editing.property.name,
         array_index: editing.property.array_index,
         expected_value: editing.expectedValue,
-        new_value: $("#runtime-edit-value").value,
+        new_value: control.value,
       },
     });
     closeRuntimeEditor();
     toast(`Runtime property applied · ${replicationLabel(result.property.replication)}.`);
-    await loadRuntimeTarget();
+    await loadRuntimeTarget({ silent: true });
   } catch (error) {
     toast(error.message, true);
     if (error.status === 409) {
@@ -597,7 +864,9 @@ async function submitRuntimeEdit(event) {
       await loadRuntimeTarget({ silent: true });
     }
   } finally {
-    save.disabled = false;
+    app.runtimeSaving = false;
+    if (app.runtimeEditing) validateRuntimeEditor();
+    else save.disabled = false;
   }
 }
 
@@ -1358,13 +1627,22 @@ function bindEvents() {
     await loadRuntimeTargets({ selectDefault: !app.runtimeSelectedID });
     if (app.runtimeSelectedID) await loadRuntimeTarget();
   });
-  $("#runtime-refresh-properties").addEventListener("click", () => loadRuntimeTarget());
+  $("#runtime-refresh-properties").addEventListener("click", () =>
+    loadRuntimeTarget({ manual: true }));
   $("#runtime-property-search").addEventListener("input", renderRuntimeProperties);
   $("#runtime-class-filter").addEventListener("change", renderRuntimeProperties);
   $("#runtime-editable-only").addEventListener("change", renderRuntimeProperties);
   $("#runtime-edit-form").addEventListener("submit", submitRuntimeEdit);
   $("#runtime-edit-close").addEventListener("click", closeRuntimeEditor);
   $("#runtime-edit-cancel").addEventListener("click", closeRuntimeEditor);
+  for (const control of [
+    $("#runtime-edit-select"),
+    $("#runtime-edit-input"),
+    $("#runtime-edit-value"),
+  ]) {
+    control.addEventListener("input", validateRuntimeEditor);
+    control.addEventListener("change", validateRuntimeEditor);
+  }
   $("#runtime-edit-dialog").addEventListener("cancel", () => {
     app.runtimeEditing = null;
   });

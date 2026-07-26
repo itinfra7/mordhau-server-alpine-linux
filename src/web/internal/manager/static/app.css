@@ -547,6 +547,66 @@ input:focus, select:focus, textarea:focus { border-color: rgba(233, 79, 81, .65)
   letter-spacing: .1em;
   text-transform: uppercase;
 }
+.runtime-player-list-title {
+  margin-top: .75rem;
+}
+.runtime-player {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: var(--surface-soft);
+}
+.runtime-player.expanded {
+  border-color: var(--line-strong);
+  box-shadow: 0 0 0 2px var(--surface-inset);
+}
+.runtime-player-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .7rem;
+  width: 100%;
+  padding: .72rem;
+  border: 0;
+  border-radius: 0;
+  color: var(--text);
+  background: transparent;
+  text-align: left;
+}
+.runtime-player-toggle:hover { background: var(--hover-bg); }
+.runtime-player-identity {
+  display: grid;
+  min-width: 0;
+  gap: .2rem;
+}
+.runtime-player-identity strong {
+  overflow: hidden;
+  font-size: .8rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.runtime-player-identity small {
+  overflow: hidden;
+  color: var(--muted);
+  font: .65rem/1.35 ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.runtime-player-marker {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 1rem;
+  transition: transform .16s ease;
+}
+.runtime-player.expanded .runtime-player-marker { transform: rotate(180deg); }
+.runtime-player-targets {
+  display: grid;
+  gap: .35rem;
+  padding: 0 .45rem .45rem;
+  border-top: 1px solid var(--line-soft);
+}
+.runtime-player-targets[hidden] { display: none; }
+.runtime-player-targets .runtime-target-button:first-child { margin-top: .45rem; }
 .runtime-target-button {
   display: grid;
   gap: .22rem;
@@ -705,11 +765,17 @@ input:focus, select:focus, textarea:focus { border-color: rgba(233, 79, 81, .65)
   color: var(--label);
   font-size: .78rem;
 }
+.runtime-value-field input,
+.runtime-value-field select,
 .runtime-value-field textarea {
   width: 100%;
-  min-height: 10rem;
   font: .76rem/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
+.runtime-value-field textarea {
+  min-height: 10rem;
+}
+.runtime-edit-help { margin: .45rem 0 .8rem; }
+.runtime-edit-help.form-error { min-height: 0; color: var(--error-text); }
 .runtime-edit-actions { justify-content: flex-end; margin-top: 1rem; }
 
 .inline-form, .account-create, .rule-create { display: flex; align-items: end; gap: .55rem; margin: 1rem 0; }
@@ -1015,7 +1081,7 @@ input:focus, select:focus, textarea:focus { border-color: rgba(233, 79, 81, .65)
   .configured-mods-card { grid-column: auto; }
   .runtime-layout { grid-template-columns: 1fr; }
   .runtime-target-card { position: static; }
-  .runtime-target-list { grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); }
+  .runtime-target-list { grid-template-columns: 1fr; }
   .runtime-target-group + .runtime-target-group { margin-top: 0; }
   .runtime-filter-bar { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }

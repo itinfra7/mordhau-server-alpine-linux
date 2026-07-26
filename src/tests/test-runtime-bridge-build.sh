@@ -31,5 +31,35 @@ grep -Fq \
 grep -Fq \
     'RVA_AACTOR_FLUSH_NET_DORMANCY = 0x02A24C30' \
     "$PROJECT_ROOT/src/runtime-bridge/runtime_bridge.c"
+grep -Fq \
+    'FBYTEPROPERTY_ENUM = 0x0078' \
+    "$PROJECT_ROOT/src/runtime-bridge/runtime_bridge.c"
+grep -Fq \
+    'FENUMPROPERTY_ENUM = 0x0080' \
+    "$PROJECT_ROOT/src/runtime-bridge/runtime_bridge.c"
+grep -Fq \
+    'UENUM_NAMES_DATA = 0x0040' \
+    "$PROJECT_ROOT/src/runtime-bridge/runtime_bridge.c"
+grep -Fq \
+    'UENUM_NAMES_COUNT = 0x0048' \
+    "$PROJECT_ROOT/src/runtime-bridge/runtime_bridge.c"
+grep -Fq \
+    'UENUM_NAMES_CAPACITY = 0x004C' \
+    "$PROJECT_ROOT/src/runtime-bridge/runtime_bridge.c"
+grep -Fq \
+    'UENUM_NAME_VALUE_SIZE = 16' \
+    "$PROJECT_ROOT/src/runtime-bridge/runtime_bridge.c"
+grep -Fq \
+    '"PlayerNamePrivate"' \
+    "$PROJECT_ROOT/src/runtime-bridge/runtime_bridge.c"
+grep -Fq \
+    '"PlayFabId"' \
+    "$PROJECT_ROOT/src/runtime-bridge/runtime_bridge.c"
+grep -Fq \
+    'is_registered_uobject(enum_object)' \
+    "$PROJECT_ROOT/src/runtime-bridge/runtime_bridge.c"
+grep -Fq \
+    'enum_value_is_sentinel(short_name)' \
+    "$PROJECT_ROOT/src/runtime-bridge/runtime_bridge.c"
 
 printf '%s\n' 'Runtime bridge build test passed.'

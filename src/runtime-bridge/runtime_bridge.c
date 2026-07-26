@@ -46,14 +46,21 @@ enum {
     FPROPERTY_OFFSET_INTERNAL = 0x004C,
     FPROPERTY_REP_NOTIFY_FUNC = 0x0050,
     FPROPERTY_VTABLE_EXPORT_TEXT_ITEM = 21,
+    FBYTEPROPERTY_ENUM = 0x0078,
+    FENUMPROPERTY_ENUM = 0x0080,
+    UENUM_NAMES_DATA = 0x0040,
+    UENUM_NAMES_COUNT = 0x0048,
+    UENUM_NAMES_CAPACITY = 0x004C,
+    UENUM_NAME_VALUE_SIZE = 16,
     OBJECTS_PER_CHUNK = 65536,
     UOBJECT_ITEM_SIZE = 24,
     MAX_RUNTIME_TARGETS = 3072,
     MAX_RESPONSE_BYTES = 8 * 1024 * 1024,
-    MAX_STATUS_BYTES = 512 * 1024,
+    MAX_STATUS_BYTES = 2 * 1024 * 1024,
     MAX_REQUEST_BYTES = 512 * 1024,
     MAX_TEXT_VALUE_BYTES = 120 * 1024,
     MAX_PROPERTIES_PER_TARGET = 8192,
+    MAX_ENUM_VALUES = 1024,
 };
 
 #define CPF_NET UINT64_C(32)
@@ -140,6 +147,8 @@ typedef struct {
     char kind[32];
     char class_name[192];
     int player_slot;
+    char player_name[512];
+    char playfab_id[128];
 } RuntimeTarget;
 
 static INIT_ONCE g_proxy_once = INIT_ONCE_STATIC_INIT;
@@ -730,6 +739,36 @@ static int get_object_identity(
     return 1;
 }
 
+static int is_registered_uobject(void *object)
+{
+    uint8_t *global;
+    uint8_t **chunks;
+    uint8_t *chunk;
+    uint8_t *item;
+    int32_t index;
+    int32_t num_elements;
+
+    if (object == NULL || g_image_base == NULL) {
+        return 0;
+    }
+    index = *(int32_t *)((uint8_t *)object + UOBJECT_INTERNAL_INDEX);
+    global = g_image_base + RVA_GUOBJECT_ARRAY;
+    num_elements = *(int32_t *)(global + 0x24);
+    if (index < 0 || index >= num_elements || num_elements > 4000000) {
+        return 0;
+    }
+    chunks = *(uint8_t ***)(global + 0x10);
+    if (chunks == NULL) {
+        return 0;
+    }
+    chunk = chunks[index / OBJECTS_PER_CHUNK];
+    if (chunk == NULL) {
+        return 0;
+    }
+    item = chunk + ((size_t)(index % OBJECTS_PER_CHUNK) * UOBJECT_ITEM_SIZE);
+    return *(void **)item == object;
+}
+
 static int object_class_name(void *object, char *out, size_t out_capacity)
 {
     uint8_t *class_object;
@@ -828,6 +867,87 @@ static int append_runtime_target(
     return target_count + 1;
 }
 
+static int copy_quoted_ascii_field(
+    const char *text,
+    const char *field_name,
+    char *out,
+    size_t out_capacity
+)
+{
+    char marker[96];
+    const char *value;
+    size_t length = 0;
+
+    if (text == NULL || field_name == NULL || out == NULL ||
+        out_capacity < 2 ||
+        snprintf(marker, sizeof(marker), "%s=\"", field_name) <= 0) {
+        return 0;
+    }
+    value = strstr(text, marker);
+    if (value == NULL) {
+        return 0;
+    }
+    value += strlen(marker);
+    while (*value != '\0' && *value != '"' && length + 1 < out_capacity) {
+        unsigned char character = (unsigned char)*value++;
+
+        if (!((character >= 'a' && character <= 'z') ||
+              (character >= 'A' && character <= 'Z') ||
+              (character >= '0' && character <= '9') ||
+              character == '-' || character == '_' ||
+              character == '.' || character == ':')) {
+            out[0] = '\0';
+            return 0;
+        }
+        out[length++] = (char)character;
+    }
+    if (*value != '"' || length == 0 || length + 1 >= out_capacity) {
+        out[0] = '\0';
+        return 0;
+    }
+    out[length] = '\0';
+    return 1;
+}
+
+static void populate_runtime_player_identity(
+    RuntimeTarget *controller_target,
+    void *player_state
+)
+{
+    uint8_t *property;
+    char playfab_player[4096];
+
+    if (controller_target == NULL || player_state == NULL ||
+        strcmp(controller_target->kind, "player_controller") != 0) {
+        return;
+    }
+    property = find_property(player_state, "PlayerNamePrivate");
+    if (property != NULL) {
+        export_property_utf8(
+            property,
+            player_state,
+            0,
+            controller_target->player_name,
+            sizeof(controller_target->player_name)
+        );
+    }
+    property = find_property(player_state, "PlayFabPlayer");
+    if (property != NULL &&
+        export_property_utf8(
+            property,
+            player_state,
+            0,
+            playfab_player,
+            sizeof(playfab_player))) {
+        copy_quoted_ascii_field(
+            playfab_player,
+            "PlayFabId",
+            controller_target->playfab_id,
+            sizeof(controller_target->playfab_id)
+        );
+    }
+}
+
 static int collect_runtime_targets(
     void *world,
     RuntimeTarget *targets,
@@ -882,11 +1002,13 @@ static int collect_runtime_targets(
         void *controller = resolve_weak_object(&controllers->data[index]);
         void *player_state;
         void *pawn;
+        int controller_target_index;
 
         if (controller == NULL) {
             continue;
         }
         ++players;
+        controller_target_index = count;
         count = append_runtime_target(
             targets,
             target_capacity,
@@ -904,6 +1026,13 @@ static int collect_runtime_targets(
             "player_state",
             players - 1
         );
+        if (controller_target_index < count &&
+            targets[controller_target_index].object == controller) {
+            populate_runtime_player_identity(
+                &targets[controller_target_index],
+                player_state
+            );
+        }
         pawn = object_property_value(controller, "Pawn");
         if (pawn == NULL) {
             pawn = object_property_value(controller, "AcknowledgedPawn");
@@ -1269,9 +1398,18 @@ static void append_target_json(
     json_append_string(builder, target->class_name);
     json_append_format(
         builder,
-        ",\"player_slot\":%d}",
+        ",\"player_slot\":%d",
         target->player_slot
     );
+    if (target->player_name[0] != '\0') {
+        json_append(builder, ",\"player_name\":");
+        json_append_string(builder, target->player_name);
+    }
+    if (target->playfab_id[0] != '\0') {
+        json_append(builder, ",\"playfab_id\":");
+        json_append_string(builder, target->playfab_id);
+    }
+    json_append(builder, "}");
 }
 
 static void build_error_response(
@@ -1312,6 +1450,108 @@ static void append_replication_json(
     json_append(builder, ",\"condition\":");
     json_append_string(builder, replication_condition_name(condition));
     json_append_format(builder, ",\"rep_index\":%u}", (unsigned)rep_index);
+}
+
+static void *property_enum_object(
+    uint8_t *property,
+    const char *type_name
+)
+{
+    void *enum_object = NULL;
+    char class_name[64] = "";
+
+    if (property == NULL || type_name == NULL) {
+        return NULL;
+    }
+    if (strcmp(type_name, "ByteProperty") == 0) {
+        enum_object = *(void **)(property + FBYTEPROPERTY_ENUM);
+    } else if (strcmp(type_name, "EnumProperty") == 0) {
+        enum_object = *(void **)(property + FENUMPROPERTY_ENUM);
+    }
+    if (!is_registered_uobject(enum_object) ||
+        object_class_name(enum_object, class_name, sizeof(class_name)) <= 0 ||
+        (strcmp(class_name, "Enum") != 0 &&
+         strcmp(class_name, "UserDefinedEnum") != 0)) {
+        return NULL;
+    }
+    return enum_object;
+}
+
+static const char *short_enum_value_name(char *name)
+{
+    char *cursor;
+    char *short_name;
+
+    if (name == NULL) {
+        return "";
+    }
+    short_name = name;
+    cursor = name;
+    while ((cursor = strstr(cursor, "::")) != NULL) {
+        short_name = cursor + 2;
+        cursor += 2;
+    }
+    return short_name;
+}
+
+static int enum_value_is_sentinel(const char *name)
+{
+    size_t length;
+
+    if (name == NULL) {
+        return 1;
+    }
+    length = strlen(name);
+    return strcmp(name, "MAX") == 0 ||
+        (length >= 4 && strcmp(name + length - 4, "_MAX") == 0);
+}
+
+static void append_enum_values_json(
+    JsonBuilder *builder,
+    uint8_t *property,
+    const char *type_name
+)
+{
+    uint8_t *enum_object;
+    uint8_t *names;
+    int32_t count;
+    int32_t capacity;
+    int index;
+    int emitted = 0;
+
+    json_append(builder, "\"enum_values\":[");
+    enum_object = (uint8_t *)property_enum_object(property, type_name);
+    if (enum_object != NULL) {
+        names = *(uint8_t **)(enum_object + UENUM_NAMES_DATA);
+        count = *(int32_t *)(enum_object + UENUM_NAMES_COUNT);
+        capacity = *(int32_t *)(enum_object + UENUM_NAMES_CAPACITY);
+        if (names != NULL && count > 0 && count <= MAX_ENUM_VALUES &&
+            capacity >= count && capacity <= MAX_ENUM_VALUES * 4) {
+            for (index = 0; index < count; ++index) {
+                char enum_name[256] = "";
+                const char *short_name;
+
+                if (fname_to_utf8(
+                        (const FName *)(
+                            names + ((size_t)index * UENUM_NAME_VALUE_SIZE)
+                        ),
+                        enum_name,
+                        sizeof(enum_name)) <= 0) {
+                    continue;
+                }
+                short_name = short_enum_value_name(enum_name);
+                if (short_name[0] == '\0' ||
+                    enum_value_is_sentinel(short_name)) {
+                    continue;
+                }
+                if (emitted++ > 0) {
+                    json_append(builder, ",");
+                }
+                json_append_string(builder, short_name);
+            }
+        }
+    }
+    json_append(builder, "]");
 }
 
 static int append_property_json(
@@ -1401,6 +1641,11 @@ static int append_property_json(
         json_append_string(builder, g_value_buffer);
     } else {
         json_append(builder, "null");
+    }
+    if (strcmp(type_name, "ByteProperty") == 0 ||
+        strcmp(type_name, "EnumProperty") == 0) {
+        json_append(builder, ",");
+        append_enum_values_json(builder, property, type_name);
     }
     json_append(builder, ",");
     append_replication_json(
