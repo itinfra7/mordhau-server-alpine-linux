@@ -4,6 +4,12 @@ All notable changes to this repository are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Seed missing Engine.ini `IpNetDriver` values with
+  `NetServerMaxTickRate=60` and `ConnectionTimeout=10.0` during installer
+  initialization while preserving existing and intentionally disabled values.
+
 ## [2.1.1] - 2026-07-26
 
 ### Added

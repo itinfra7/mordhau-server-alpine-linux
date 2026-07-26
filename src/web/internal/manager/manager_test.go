@@ -187,6 +187,67 @@ func TestServerEventLogValuesAreEnabledUnlessExplicitlyDisabled(t *testing.T) {
 	}
 }
 
+func TestEngineNetworkDefaultsOnlyFillMissingValues(t *testing.T) {
+	const section = "/Script/OnlineSubsystemUtils.IpNetDriver"
+	data := []byte("[" + section + "]\r\n" +
+		"NetServerMaxTickRate=30\r\n" +
+		"\r\n[Other]\r\nRetained=Yes\r\n")
+	store := newDisabledINIFile()
+
+	updated, changed := ensureEngineNetworkDefaultValues(data, store)
+	if !changed {
+		t.Fatal("missing connection timeout was not added")
+	}
+	tickRate, tickRateEnabled := iniValue(updated, section, "NetServerMaxTickRate")
+	if !tickRateEnabled || tickRate != "30" {
+		t.Fatalf("existing tick rate changed to %q", tickRate)
+	}
+	timeout, timeoutEnabled := iniValue(updated, section, "ConnectionTimeout")
+	if !timeoutEnabled || timeout != "10.0" {
+		t.Fatalf("connection timeout = %q, enabled %t", timeout, timeoutEnabled)
+	}
+	if !bytes.Contains(updated, []byte("\r\n")) ||
+		!bytes.Contains(updated, []byte("[Other]\r\nRetained=Yes")) {
+		t.Fatal("Engine.ini formatting or unrelated content was not preserved")
+	}
+
+	second, changed := ensureEngineNetworkDefaultValues(updated, store)
+	if changed || !bytes.Equal(second, updated) {
+		t.Fatal("Engine.ini network defaults were not idempotent")
+	}
+}
+
+func TestEngineNetworkDefaultsRespectExistingAndDisabledValues(t *testing.T) {
+	const section = "/Script/OnlineSubsystemUtils.IpNetDriver"
+	data := []byte("[" + section + "]\nConnectionTimeout=20.0\n")
+	store := newDisabledINIFile()
+	store.Entries = append(store.Entries, disabledINIEntry{
+		ID:      "disabled-tick-rate",
+		File:    "Engine.ini",
+		Section: section,
+		Key:     "NetServerMaxTickRate",
+		Value:   "24",
+	})
+
+	updated, changed := ensureEngineNetworkDefaultValues(data, store)
+	if changed || !bytes.Equal(updated, data) {
+		t.Fatal("an existing or explicitly disabled network value was replaced")
+	}
+
+	store.Sections = append(store.Sections, disabledINISection{
+		ID:   "disabled-ip-net-driver",
+		File: "Engine.ini",
+		Name: section,
+	})
+	sectionDisabled, changed := ensureEngineNetworkDefaultValues(
+		[]byte("[Other]\nRetained=Yes\n"),
+		store,
+	)
+	if changed || string(sectionDisabled) != "[Other]\nRetained=Yes\n" {
+		t.Fatal("an explicitly disabled IpNetDriver section was recreated")
+	}
+}
+
 func TestPersistentDisabledEntrySurvivesINIRewriteAndReenables(t *testing.T) {
 	original := []byte("[One]\nFirst=A\nMap=One\nMap=Two\nLast=Z\n")
 	document := parseIni(original)

@@ -93,6 +93,9 @@ func main() {
 		return
 	}
 	if *initOnly {
+		if err := app.EnsureEngineNetworkDefaults(); err != nil {
+			log.Fatalf("initialize Engine.ini network defaults: %v", err)
+		}
 		fmt.Println("MORDHAU manager state initialized.")
 		return
 	}

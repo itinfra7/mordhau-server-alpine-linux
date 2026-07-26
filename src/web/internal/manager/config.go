@@ -1124,6 +1124,66 @@ func iniEntryStateWithDisabled(
 	return "", false, false
 }
 
+func ensureEngineNetworkDefaultValues(
+	data []byte,
+	store disabledINIFile,
+) ([]byte, bool) {
+	const section = "/Script/OnlineSubsystemUtils.IpNetDriver"
+	for _, disabledSection := range store.Sections {
+		if disabledSection.File == "Engine.ini" &&
+			disabledSection.Name == section {
+			return data, false
+		}
+	}
+
+	document := parseIni(data)
+	changed := false
+	defaults := []struct {
+		key   string
+		value string
+	}{
+		{key: "NetServerMaxTickRate", value: "60"},
+		{key: "ConnectionTimeout", value: "10.0"},
+	}
+	for _, defaultValue := range defaults {
+		_, _, exists := iniEntryStateWithDisabled(
+			data,
+			store,
+			"Engine.ini",
+			section,
+			defaultValue.key,
+		)
+		if exists {
+			continue
+		}
+		setIniValue(&document, section, defaultValue.key, defaultValue.value)
+		changed = true
+	}
+	return document.bytes(), changed
+}
+
+func (m *Manager) EnsureEngineNetworkDefaults() error {
+	data, staged, err := readConfig("Engine.ini")
+	if err != nil {
+		return fmt.Errorf("read generated Engine.ini: %w", err)
+	}
+	store, err := loadDisabledINIFile(staged)
+	if err != nil {
+		return err
+	}
+	updated, changed := ensureEngineNetworkDefaultValues(data, store)
+	path := configPath("Engine.ini", staged)
+	if changed {
+		if !staged {
+			if err := backupConfig("Engine.ini", data); err != nil {
+				return err
+			}
+		}
+		return writeFileAtomic(path, updated, 0600)
+	}
+	return os.Chmod(path, 0600)
+}
+
 func (m *Manager) ensureRCONConfig() error {
 	path := configPath("Game.ini", false)
 	data, err := os.ReadFile(path)

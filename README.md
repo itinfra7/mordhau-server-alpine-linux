@@ -582,6 +582,11 @@ The web manager edits the server-generated files:
 /root/mordhau/Mordhau/Saved/Config/WindowsServer/Engine.ini
 ```
 
+During installer initialization, missing
+`[/Script/OnlineSubsystemUtils.IpNetDriver]` values are seeded with
+`NetServerMaxTickRate=60` and `ConnectionTimeout=10.0`. Existing values,
+disabled entries, and a disabled section are preserved.
+
 The editor preserves duplicate keys, ordering, comments, and unrelated lines.
 Disabled items and disabled-section state are stored independently in the
 root-only file `/root/mordhau/.manager/disabled-ini-entries.json`. Disabled
