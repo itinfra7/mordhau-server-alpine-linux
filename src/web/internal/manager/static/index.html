@@ -5,9 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="light dark">
   <title>MORDHAU Control</title>
-  <script src="/static/theme.js?v=1.9.0"></script>
-  <link rel="stylesheet" href="/static/app.css?v=1.9.0">
-  <script src="/static/app.js?v=1.9.0" defer></script>
+  <script src="/static/theme.js?v=2.0.0"></script>
+  <link rel="stylesheet" href="/static/app.css?v=2.0.0">
+  <script src="/static/app.js?v=2.0.0" defer></script>
 </head>
 <body>
   <div class="ambient ambient-one"></div>
@@ -43,6 +43,7 @@
   <main class="app-shell">
     <nav class="tabbar" aria-label="Manager sections">
       <button class="tab active" data-panel="dashboard">Dashboard</button>
+      <button class="tab" data-panel="runtime">Runtime</button>
       <button class="tab" data-panel="configuration">Configuration</button>
       <button class="tab" data-panel="mods">Mods</button>
       <button class="tab" data-panel="accounts">Accounts</button>
@@ -70,6 +71,14 @@
           <div class="metric-head"><span>MORDHAU filesystem</span><strong id="disk-value">—</strong></div>
           <div class="meter cyan"><span id="disk-meter"></span></div>
           <p id="disk-detail">—</p>
+        </article>
+        <article class="metric-card player-metric-card">
+          <div class="metric-head"><span>Players</span><strong id="players-value">—</strong></div>
+          <div class="player-count-visual" aria-hidden="true">
+            <span class="player-count-dot"></span>
+            <span>PlayerController instances</span>
+          </div>
+          <p id="runtime-bridge-summary">Runtime bridge loading</p>
         </article>
       </div>
 
@@ -209,6 +218,65 @@
               </div>
             </form>
           </div>
+        </article>
+      </div>
+    </section>
+
+    <section id="panel-runtime" class="panel">
+      <div class="runtime-layout">
+        <aside class="card runtime-target-card">
+          <div class="card-heading wrap">
+            <div>
+              <p class="eyebrow">SERVER OBJECTS</p>
+              <h2>Runtime targets</h2>
+            </div>
+            <span id="runtime-status" class="connection-pill">Loading</span>
+          </div>
+          <p class="hint">
+            Current GameMode, GameState, PlayerController, PlayerState, and possessed Pawn
+            instances are discovered from the running server.
+          </p>
+          <button id="runtime-refresh-targets" class="ghost compact" type="button">Refresh targets</button>
+          <div id="runtime-targets" class="runtime-target-list"></div>
+        </aside>
+
+        <article class="card runtime-inspector-card">
+          <div class="card-heading wrap">
+            <div>
+              <p class="eyebrow">UNREAL REFLECTION</p>
+              <h2 id="runtime-target-title">Select a runtime target</h2>
+            </div>
+            <span id="runtime-property-count" class="stage-pill">No target</span>
+          </div>
+          <div class="policy-note runtime-warning">
+            Changes execute immediately on the game thread. Only properties marked
+            <code>Net</code> are eligible for Unreal replication, subject to their replication
+            condition, actor relevancy, and ownership. GameMode and non-Net properties remain
+            server-only; <code>InitialOnly</code> values do not update clients already connected.
+            Replicated Actor changes flush net dormancy and request an immediate network update.
+          </div>
+          <div class="runtime-filter-bar">
+            <label>
+              <span>Search</span>
+              <input id="runtime-property-search" type="search"
+                     placeholder="Property, type, or declaring class"
+                     autocomplete="off" autocapitalize="none" spellcheck="false">
+            </label>
+            <label>
+              <span>Declaring class</span>
+              <select id="runtime-class-filter">
+                <option value="">All inherited classes</option>
+              </select>
+            </label>
+            <label class="runtime-checkbox">
+              <input id="runtime-editable-only" type="checkbox">
+              <span>Editable only</span>
+            </label>
+            <button id="runtime-refresh-properties" class="secondary compact" type="button"
+                    disabled>Refresh values</button>
+          </div>
+          <p id="runtime-empty" class="hint">Choose an object from Runtime targets.</p>
+          <div id="runtime-properties" class="runtime-properties"></div>
         </article>
       </div>
     </section>
@@ -403,6 +471,31 @@
       </article>
     </section>
   </main>
+
+  <dialog id="runtime-edit-dialog" class="runtime-edit-dialog">
+    <form id="runtime-edit-form">
+      <div class="card-heading">
+        <div>
+          <p class="eyebrow">IMMEDIATE RUNTIME CHANGE</p>
+          <h2 id="runtime-edit-title">Edit property</h2>
+        </div>
+        <button id="runtime-edit-close" class="ghost compact" type="button"
+                aria-label="Close runtime property editor">Close</button>
+      </div>
+      <p id="runtime-edit-meta" class="hint"></p>
+      <label class="runtime-value-field">
+        <span>Unreal exported text value</span>
+        <textarea id="runtime-edit-value" rows="8" maxlength="122880"
+                  autocomplete="off" autocapitalize="none" spellcheck="false"
+                  required></textarea>
+      </label>
+      <div id="runtime-edit-replication" class="policy-note"></div>
+      <div class="control-row runtime-edit-actions">
+        <button id="runtime-edit-save" class="primary" type="submit">Apply now</button>
+        <button id="runtime-edit-cancel" class="ghost" type="button">Cancel</button>
+      </div>
+    </form>
+  </dialog>
 
   <div id="toast-stack" class="toast-stack" aria-live="polite"></div>
 </body>

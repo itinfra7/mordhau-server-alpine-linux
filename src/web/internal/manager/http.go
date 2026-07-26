@@ -1,6 +1,7 @@
 package manager
 
 import (
+	"context"
 	"crypto/subtle"
 	"embed"
 	"encoding/json"
@@ -28,6 +29,9 @@ func (m *Manager) Handler() http.Handler {
 	mux.HandleFunc("/api/me", m.withSession(m.meHandler))
 	mux.HandleFunc("/api/snapshot", m.withSession(m.snapshotHandler))
 	mux.HandleFunc("/api/events", m.withSession(m.eventsHandler))
+	mux.HandleFunc("/api/runtime/status", m.withSession(m.runtimeStatusHandler))
+	mux.HandleFunc("/api/runtime/target", m.withSession(m.runtimeTargetHandler))
+	mux.HandleFunc("/api/runtime/property", m.withSession(m.runtimePropertyHandler))
 	mux.HandleFunc("/api/server/action", m.withSession(m.serverActionHandler))
 	mux.HandleFunc("/api/server/events/history", m.withSession(m.rconHistoryHandler))
 	mux.HandleFunc("/api/rcon/history", m.withSession(m.rconHistoryHandler))
@@ -297,6 +301,122 @@ func (m *Manager) snapshotHandler(response http.ResponseWriter, request *http.Re
 		return
 	}
 	writeJSON(response, http.StatusOK, m.snapshot())
+}
+
+func (m *Manager) runtimeStatusHandler(
+	response http.ResponseWriter,
+	request *http.Request,
+	_ Session,
+) {
+	if request.Method != http.MethodGet {
+		response.Header().Set("Allow", http.MethodGet)
+		http.Error(response, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	writeJSON(response, http.StatusOK, m.runtimeStatusView())
+}
+
+func runtimeBridgeHTTPStatus(err error) int {
+	if errors.Is(err, errRuntimeBridgeUnavailable) {
+		return http.StatusServiceUnavailable
+	}
+	if errors.Is(err, errInvalidRuntimeRequest) {
+		return http.StatusBadRequest
+	}
+	var bridgeErr *runtimeBridgeProtocolError
+	if !errors.As(err, &bridgeErr) {
+		if errors.Is(err, context.Canceled) {
+			return http.StatusRequestTimeout
+		}
+		return http.StatusBadGateway
+	}
+	switch bridgeErr.Code {
+	case "target_not_found", "property_not_found":
+		return http.StatusNotFound
+	case "stale_value":
+		return http.StatusConflict
+	case "invalid_value", "invalid_request", "property_type_unavailable":
+		return http.StatusBadRequest
+	case "response_too_large":
+		return http.StatusRequestEntityTooLarge
+	default:
+		return http.StatusConflict
+	}
+}
+
+func (m *Manager) runtimeTargetHandler(
+	response http.ResponseWriter,
+	request *http.Request,
+	_ Session,
+) {
+	if request.Method != http.MethodGet {
+		response.Header().Set("Allow", http.MethodGet)
+		http.Error(response, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	view, err := m.runtimeTarget(
+		request.Context(),
+		request.URL.Query().Get("id"),
+	)
+	if err != nil {
+		writeError(response, runtimeBridgeHTTPStatus(err), err.Error())
+		return
+	}
+	writeJSON(response, http.StatusOK, view)
+}
+
+func (m *Manager) runtimePropertyHandler(
+	response http.ResponseWriter,
+	request *http.Request,
+	session Session,
+) {
+	if request.Method != http.MethodPost {
+		response.Header().Set("Allow", http.MethodPost)
+		http.Error(response, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !validCSRF(request, session) {
+		writeError(response, http.StatusForbidden, "invalid CSRF token")
+		return
+	}
+	var change runtimePropertyChangeRequest
+	if err := decodeJSON(response, request, &change); err != nil {
+		writeError(response, http.StatusBadRequest, err.Error())
+		return
+	}
+	view, err := m.changeRuntimeProperty(request.Context(), change)
+	if err != nil {
+		m.auditRequestEvent(
+			request,
+			session.Username,
+			"runtime_property_change_failed",
+			map[string]string{
+				"target_id":       change.TargetID,
+				"declaring_class": change.DeclaringClass,
+				"property":        change.Name,
+				"array_index":     strconv.Itoa(change.ArrayIndex),
+				"error":           err.Error(),
+			},
+		)
+		writeError(response, runtimeBridgeHTTPStatus(err), err.Error())
+		return
+	}
+	m.auditRequestEvent(
+		request,
+		session.Username,
+		"runtime_property_changed",
+		map[string]string{
+			"target_id":             view.Target.ID,
+			"target_kind":           view.Target.Kind,
+			"target_class":          view.Target.Class,
+			"declaring_class":       view.Property.DeclaringClass,
+			"property":              view.Property.Name,
+			"array_index":           strconv.Itoa(view.Property.ArrayIndex),
+			"replication_scope":     view.Property.Replication.Scope,
+			"replication_condition": view.Property.Replication.Condition,
+		},
+	)
+	writeJSON(response, http.StatusOK, view)
 }
 
 func (m *Manager) eventsHandler(response http.ResponseWriter, request *http.Request, _ Session) {

@@ -16,6 +16,10 @@ The repository provides:
 - OpenRC service definitions for the game server and web manager
 - An animated responsive Go web manager with shared one-minute system metrics
   and persistent light/dark themes
+- A native, game-thread Unreal Reflection bridge for authenticated inspection
+  and controlled editing of current server actor properties
+- A shared live PlayerController count collected once by the server and
+  distributed to every authenticated administrator
 - Structured Game.ini and Engine.ini editing with persistent item and section
   enable/disable state
 - Optional mod.io metadata, recursive dependency status, and dependency
@@ -49,6 +53,8 @@ upstream distribution channels and are not included in this repository.
 - A mod.io API key when URL lookup, metadata, and recursive dependency
   inspection are required
 - A modern desktop or mobile browser
+- The supported MORDHAU shipping executable digest listed under
+  `src/runtime-bridge/README.md` when the Runtime panel is required
 
 The installer requires enough free storage for Wine, SteamCMD, Go build data,
 MORDHAU Dedicated Server, and Steam update staging.
@@ -68,6 +74,9 @@ MORDHAU Dedicated Server, and Steam update staging.
   SteamCMD runscript for Windows App ID `629800`.
 - `src/web/`
   Go source, embedded frontend assets, and tests.
+- `src/runtime-bridge/`
+  Native Windows runtime-reflection bridge source, build script, supported
+  executable guard, and technical documentation.
 - `src/unicode-bridge/`
   Editable Blueprint source, cooked WindowsServer PAK, build tooling, integrity
   manifest, and standalone installer for the server-only Unicode Bridge.
@@ -92,12 +101,12 @@ history remains in the versioned changelog asset instead of being repeated in
 every Release body.
 
 ```sh
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v1.9.0/mordhau-server-alpine-linux-v1.9.0.tar.gz
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v1.9.0/CHANGELOG-v1.9.0.md
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v1.9.0/SHA256SUMS
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.0.0/mordhau-server-alpine-linux-v2.0.0.tar.gz
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.0.0/CHANGELOG-v2.0.0.md
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.0.0/SHA256SUMS
 sha256sum -c SHA256SUMS
-tar -xzf mordhau-server-alpine-linux-v1.9.0.tar.gz
-cd mordhau-server-alpine-linux-v1.9.0
+tar -xzf mordhau-server-alpine-linux-v2.0.0.tar.gz
+cd mordhau-server-alpine-linux-v2.0.0
 chmod +x src/mordhau-server-alpine-linux.sh
 ./src/mordhau-server-alpine-linux.sh
 ```
@@ -137,11 +146,14 @@ The installer performs these operations:
 5. Generates an eight-character mixed-case alphanumeric RCON password and
    enables RCON on port `7778` through the generated
    `/Script/Mordhau.MordhauGameSession` section.
-6. Verifies and installs the cooked server-only Unicode Bridge, then registers
+6. Verifies the MORDHAU shipping executable, builds the native runtime
+   reflection bridge for a supported build, and installs its guarded DXGI
+   proxy.
+7. Verifies and installs the cooked server-only Unicode Bridge, then registers
    its nonreplicated server actor in active and staged Game.ini files.
-7. Builds and installs the Go web manager.
-8. Creates the initial web account and persistent security state.
-9. Installs both OpenRC service definitions.
+8. Builds and installs the Go web manager.
+9. Creates the initial web account and persistent security state.
+10. Installs both OpenRC service definitions.
 
 The initial web credentials are written with mode `0600` to:
 
@@ -212,6 +224,13 @@ The web manager provides:
 - A 30-minute exact-address emergency allow when switching to `all deny`
 - CPU, memory, swap, and MORDHAU-filesystem utilization sampled once per
   minute by one server-side collector and shared across administrator sessions
+- Current PlayerController count sampled once per second in the game process
+  and shared through the authenticated event stream
+- Runtime GameMode, GameState, PlayerController, PlayerState, and possessed
+  Pawn inspection with inherited-class property grouping
+- Game-thread runtime property changes with expected-value conflict detection,
+  read-only type enforcement, replication metadata, net-dormancy flushing,
+  and ForceNetUpdate
 - A default light theme with a persistent light/dark toggle
 - Responsive phone, tablet, and desktop layouts with notched-display safe
   areas and touch-sized controls
@@ -255,6 +274,56 @@ precedence as ordinary CIDR rules.
 Each explicit network rule can store an optional single-line comment of up to
 160 Unicode characters. Comments are metadata only and do not affect address
 matching or rule precedence. Existing rules without a comment remain valid.
+
+## Runtime Reflection
+
+The Runtime panel obtains its data from the native Windows bridge installed as:
+
+```text
+/root/mordhau/Mordhau/Binaries/Win64/dxgi.dll
+```
+
+The managed launcher enables that DLL only when
+`MordhauServer-Win64-Shipping.exe` matches the supported SHA-256 digest. The
+DLL performs additional PE-header and hook-prologue checks before attaching.
+If a Steam update changes the executable, the dedicated server starts with
+Wine's built-in DXGI implementation and the Runtime panel reports that the
+bridge is unavailable. Updated bridge offsets must be released for the new
+server build before runtime access is re-enabled.
+
+The bridge discovers the active authority GameMode, GameState, every live
+PlayerController, each controller's PlayerState, and its possessed Pawn from
+the current `UWorld`. Properties are grouped by the actual runtime class and
+each superclass. The web view includes Unreal property type and flags, static
+array index, exported text value, RepIndex, RepNotify function, lifetime
+condition, and effective replication scope.
+
+Changes are serialized by the Go server and executed after `UWorld::Tick` on
+the game thread. Every change contains the value originally loaded by the
+browser; a concurrent change causes a conflict instead of overwriting newer
+state. The bridge imports the replacement through Unreal's property system,
+verifies the resulting value, and restores the original value after an import
+failure. For a replication-eligible Actor field it then calls
+`AActor::FlushNetDormancy` followed by `AActor::ForceNetUpdate`.
+
+Object and class references, interfaces, delegates, field paths, deprecated
+and editor-only fields, function parameters, engine-internal Blueprint frame
+storage, and unexportable values remain read-only. The UI also distinguishes
+server-only fields from Net fields and displays the configured lifetime
+condition.
+
+Arbitrary runtime mutation cannot make a non-Net property replicate. GameMode
+exists only on the server. Net fields remain subject to Unreal's replication
+layout, ownership, actor relevancy, and lifetime condition; the bridge flushes
+Actor net dormancy before requesting the immediate update.
+`InitialOnly` values do not update clients that are already connected.
+
+The bridge writes its one-second status sample and root-only request/response
+IPC under `/root/mordhau/.manager/runtime`. The Go manager reads the shared
+status sample once, includes the PlayerController count in its existing
+authenticated event stream, serializes property requests, and caches identical
+target views briefly so simultaneous administrators do not multiply
+game-thread work.
 
 ## Trusted Reverse Proxies
 
@@ -340,7 +409,8 @@ server-wide refresh-setting changes, active-mod update detection, restart
 countdown notices, automatic restart requests, Game.ini and Engine.ini
 mutations, pending-configuration removal, Unicode server-message sends,
 administrative RCON command success or failure, account changes,
-network-policy changes, OpenRC boot-mode changes, and saved web-port changes.
+network-policy changes, runtime property changes and failures, OpenRC boot-mode
+changes, and saved web-port changes.
 Requests without a valid session use the account name `unauthenticated`.
 
 Passwords, request bodies, session cookies, CSRF tokens, RCON credentials,
@@ -351,7 +421,9 @@ only UTF-8 byte and character counts, not message text. Network-rule events
 record whether a comment is present and its character count without recording
 the comment text. RCON command audit events record the command name, character
 and byte counts, response-line count, truncation state, and outcome without
-recording command arguments or response text.
+recording command arguments or response text. Runtime-property audit events
+identify the target kind and class, declaring class, property, static-array
+index, replication scope, and outcome without recording the old or new value.
 
 ## Persistent Dashboard History
 
@@ -682,6 +754,15 @@ Changing a boot mode does not change the current process state.
 - The mod.io API key is never returned through a management endpoint.
 - mod.io requests accept only validated HTTPS API hosts and do not follow
   redirects.
+- Runtime bridge IPC remains inside a mode-`0700` manager directory and is not
+  exposed as a network listener.
+- Runtime target identifiers include Unreal object index and serial number,
+  and every request is restricted to actors rediscovered from the active
+  `UWorld`.
+- Runtime writes require authentication, CSRF validation, an expected current
+  value, a supported importable property type, and a supported executable
+  build. The separate web audit log records the account and canonical client
+  address without recording property values.
 - Lifecycle operations accept fixed actions and do not execute user-provided
   shell arguments.
 
@@ -710,7 +791,10 @@ sh -n src/templates/openrc/mordhau-web
 sh -n src/unicode-bridge/install.sh
 sh -n src/unicode-bridge/build-windows-server.sh
 sh -n src/tests/test-unicode-bridge-install.sh
+sh -n src/runtime-bridge/build.sh
+sh -n src/tests/test-runtime-bridge-build.sh
 ./src/tests/test-unicode-bridge-install.sh
+./src/tests/test-runtime-bridge-build.sh
 ```
 
 Installed-service checks:
@@ -742,26 +826,39 @@ validation, dependency ordering, scoped mod-entry mutation, shared-cache
 deduplication under concurrent clients, successful-refresh interval resets,
 failure retry behavior, lifecycle-result persistence, interrupted-operation
 recovery, multilingual server-event history persistence, and truncated-history
-recovery.
+recovery. Runtime tests cover server-wide status sampling, stale and stopped
+bridge state, target-view request serialization and cache reuse, target-ID
+validation, and multilingual property values.
 The shell integration test covers PAK installation, active and staged Game.ini
 registration, existing server-actor preservation, backup creation, and
 idempotent reinstallation. Static asset tests verify the default-light theme
 initializer, persistent theme, server-managed mod-refresh controls,
 browser-time-zone timestamps, initial server-event history loading, the
 unified RCON/SAY prompt, mobile viewport metadata, touch targets, input sizing,
-safe-area handling, narrow-screen control reflow, and mobile visibility of
-server and account status.
+safe-area handling, Runtime target and property controls, narrow-screen control
+reflow, and mobile visibility of server and account status. The native build
+test compiles the Windows DLL twice, verifies deterministic output and its DXGI
+proxy export, and pins the PDB-derived property-export signature and
+net-dormancy entry point.
+
+Connected-client Runtime validation covers the PlayerController count changing
+from zero to one, discovery of the associated PlayerController, PlayerState,
+and possessed Pawn, authoritative readback after a property write, client
+delivery of a `Net`/`OnRep` PlayerState string property, and restoration of the
+original value.
 
 ## Update and Rollback
 
 Run the installer from a newer release to update repository-managed scripts,
-services, the Unicode Bridge, and the Go web manager. The bundled PAK replaces
-the repository-managed bridge version, and the required server-actor entry is
-added without duplicating existing entries. Existing accounts, access rules,
-generated credentials, INI files, backups, logs, language selection, initial
-map, server ports, trusted proxy settings, mod.io settings, mod refresh
-interval, latest lifecycle result, server-event history, and boot modes are
-preserved.
+services, the Unicode Bridge, the supported native runtime bridge, and the Go
+web manager. The bundled PAK replaces the repository-managed Unicode Bridge
+version, and the required server-actor entry is added without duplicating
+existing entries. A native runtime bridge is replaced only after the current
+shipping executable passes its supported-build digest check. Existing
+accounts, access rules, generated credentials, INI files, backups, logs,
+language selection, initial map, server ports, trusted proxy settings, mod.io
+settings, mod refresh interval, latest lifecycle result, server-event history,
+and boot modes are preserved.
 
 To roll back management code:
 

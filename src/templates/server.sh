@@ -23,6 +23,9 @@ CONSOLE_LOG="$RUNTIME_DIR/server-console.log"
 STEAM_RUN_LOG="$RUNTIME_DIR/steamcmd-update.log"
 STEAM_CONSOLE_LOG=/root/steamcmd/logs/console_log.txt
 EXE="$ROOT/MordhauServer.exe"
+SHIPPING_EXE="$ROOT/Mordhau/Binaries/Win64/MordhauServer-Win64-Shipping.exe"
+RUNTIME_BRIDGE_DLL="$ROOT/Mordhau/Binaries/Win64/dxgi.dll"
+RUNTIME_BRIDGE_EXE_SHA256="a11348d6bfdb386d7f8a976a59e7d28d38b0d1ba2b9a2a7e0035ac28d53f885e"
 
 export WINEPREFIX="$ROOT/.wine"
 export WINEDEBUG=-all
@@ -286,6 +289,19 @@ archive_log() {
     printf 'Archived previous log as %s.\n' "$destination"
 }
 
+configure_runtime_bridge() {
+    [ -s "$RUNTIME_BRIDGE_DLL" ] || return 0
+    [ -s "$SHIPPING_EXE" ] || return 0
+
+    runtime_exe_sha256=$(sha256sum "$SHIPPING_EXE" | awk '{print $1}')
+    if [ "$runtime_exe_sha256" != "$RUNTIME_BRIDGE_EXE_SHA256" ]; then
+        printf '%s\n' \
+            'Runtime bridge disabled: the MORDHAU executable build is unsupported.' >&2
+        return 0
+    fi
+    export WINEDLLOVERRIDES="dxgi=n,b${WINEDLLOVERRIDES:+;$WINEDLLOVERRIDES}"
+}
+
 launch_server() {
     if is_running; then
         printf '%s\n' 'MORDHAU Dedicated Server is already running.' >&2
@@ -299,6 +315,7 @@ launch_server() {
     language=$(selected_language)
     start_map=$(selected_start_map)
     load_server_ports
+    configure_runtime_bridge
     archive_log
     if [ -n "$start_map" ]; then
         printf 'Starting MORDHAU Dedicated Server on %s with language %s (game %s, RCON %s, beacon %s, query %s)...\n' \

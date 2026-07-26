@@ -307,7 +307,7 @@ a:hover { color: var(--link-hover); }
 .panel.active { display: block; }
 @keyframes panel-in { from { opacity: 0; transform: translateY(8px); } }
 
-.metric-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .8rem; }
+.metric-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: .8rem; }
 .metric-card, .card {
   min-width: 0;
   border: 1px solid var(--line);
@@ -332,6 +332,26 @@ a:hover { color: var(--link-hover); }
 .meter.violet span { background: linear-gradient(90deg, #6c4bd1, var(--violet)); box-shadow: 0 0 12px rgba(155, 120, 255, .5); }
 .meter.amber span { background: linear-gradient(90deg, #c27e31, var(--amber)); box-shadow: 0 0 12px rgba(243, 185, 95, .45); }
 .meter.cyan span { background: linear-gradient(90deg, #2789a6, var(--cyan)); box-shadow: 0 0 12px rgba(88, 200, 232, .45); }
+.player-count-visual {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  min-height: 5px;
+  color: var(--label);
+  font-size: .72rem;
+}
+.player-count-dot {
+  width: .58rem;
+  height: .58rem;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 12px rgba(85, 217, 152, .5);
+}
+.player-metric-card.bridge-offline .player-count-dot {
+  background: #777f8d;
+  box-shadow: none;
+}
 
 .dashboard-grid { display: grid; grid-template-columns: minmax(0, .92fr) minmax(420px, 1.08fr); gap: .9rem; margin-top: .9rem; }
 .service-card { grid-column: 1 / -1; }
@@ -384,7 +404,7 @@ button.ghost { color: var(--ghost-text); background: var(--surface-soft); border
 button.compact { padding: .5rem .7rem; font-size: .75rem; }
 button.wide { width: 100%; }
 
-input, select {
+input, select, textarea {
   max-width: 100%;
   min-width: 0;
   padding: .62rem .7rem;
@@ -395,7 +415,8 @@ input, select {
   background: var(--input-bg);
   transition: border-color .2s ease, box-shadow .2s ease;
 }
-input:focus, select:focus { border-color: rgba(233, 79, 81, .65); box-shadow: 0 0 0 3px rgba(233, 79, 81, .1); }
+textarea { resize: vertical; }
+input:focus, select:focus, textarea:focus { border-color: rgba(233, 79, 81, .65); box-shadow: 0 0 0 3px rgba(233, 79, 81, .1); }
 .field-row { gap: .6rem; }
 .field-row label { color: var(--label); font-size: .8rem; }
 .language-row { margin-top: 1rem; flex-wrap: wrap; }
@@ -497,6 +518,199 @@ input:focus, select:focus { border-color: rgba(233, 79, 81, .65); box-shadow: 0 
 .console-line.login .console-text { color: var(--connected-text); }
 .console-line.matchstate .console-text { color: var(--console-system); }
 .console-line.punishment .console-text { color: var(--red-bright); }
+
+.runtime-layout {
+  display: grid;
+  grid-template-columns: minmax(17rem, 22rem) minmax(0, 1fr);
+  align-items: start;
+  gap: .9rem;
+}
+.runtime-target-card {
+  position: sticky;
+  top: 90px;
+}
+.runtime-target-list {
+  display: grid;
+  gap: .45rem;
+  margin-top: .85rem;
+}
+.runtime-target-group {
+  display: grid;
+  gap: .35rem;
+}
+.runtime-target-group + .runtime-target-group { margin-top: .5rem; }
+.runtime-target-group-title {
+  margin: 0;
+  color: var(--muted);
+  font-size: .67rem;
+  font-weight: 800;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+}
+.runtime-target-button {
+  display: grid;
+  gap: .22rem;
+  width: 100%;
+  padding: .65rem .7rem;
+  border-color: var(--line);
+  color: var(--text);
+  background: var(--surface-soft);
+  text-align: left;
+}
+.runtime-target-button strong {
+  overflow: hidden;
+  font-size: .78rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.runtime-target-button small {
+  overflow: hidden;
+  color: var(--muted);
+  font: .66rem/1.35 ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.runtime-target-button.active {
+  border-color: rgba(183, 59, 68, .42);
+  background: rgba(183, 59, 68, .09);
+  box-shadow: 0 0 0 2px rgba(183, 59, 68, .06);
+}
+.runtime-filter-bar {
+  display: grid;
+  grid-template-columns: minmax(12rem, 1fr) minmax(12rem, .8fr) auto auto;
+  align-items: end;
+  gap: .6rem;
+  margin: 1rem 0;
+}
+.runtime-filter-bar > label:not(.runtime-checkbox) {
+  display: grid;
+  gap: .35rem;
+  min-width: 0;
+  color: var(--label);
+  font-size: .75rem;
+}
+.runtime-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: .45rem;
+  min-height: 40px;
+  color: var(--label);
+  font-size: .75rem;
+  white-space: nowrap;
+}
+.runtime-checkbox input { width: auto; }
+.runtime-properties {
+  display: grid;
+  gap: .8rem;
+}
+.runtime-property-group {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: var(--surface-soft);
+}
+.runtime-property-group > h3 {
+  margin: 0;
+  padding: .7rem .8rem;
+  border-bottom: 1px solid var(--line);
+  color: var(--section-accent);
+  background: var(--surface-inset);
+  font: 700 .76rem/1.35 ui-monospace, SFMono-Regular, Menlo, monospace;
+  overflow-wrap: anywhere;
+}
+.runtime-property-row {
+  display: grid;
+  grid-template-columns: minmax(12rem, 1fr) minmax(15rem, 1.15fr) auto auto;
+  align-items: center;
+  gap: .7rem;
+  padding: .7rem .8rem;
+  border-top: 1px solid var(--line-soft);
+}
+.runtime-property-group > h3 + .runtime-property-row { border-top: 0; }
+.runtime-property-name { min-width: 0; }
+.runtime-property-name strong {
+  display: block;
+  overflow-wrap: anywhere;
+  font: 700 .78rem/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.runtime-property-name small {
+  display: block;
+  margin-top: .2rem;
+  color: var(--muted);
+  font: .65rem/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+  overflow-wrap: anywhere;
+}
+.runtime-property-value {
+  min-width: 0;
+  max-height: 6.5rem;
+  margin: 0;
+  padding: .52rem .58rem;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--operation-output);
+  background: var(--surface-inset);
+  font: .68rem/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.runtime-property-value.unavailable {
+  color: var(--disabled-text);
+  font-family: inherit;
+  font-style: italic;
+}
+.replication-badge {
+  display: inline-flex;
+  justify-content: center;
+  max-width: 10rem;
+  padding: .38rem .52rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  background: var(--surface-inset);
+  font-size: .65rem;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+  text-align: center;
+}
+.replication-badge.replicated {
+  border-color: rgba(24, 122, 87, .27);
+  color: var(--connected-text);
+  background: rgba(85, 217, 152, .08);
+}
+.replication-badge.conditional {
+  border-color: rgba(169, 103, 21, .3);
+  color: var(--staged-text);
+  background: rgba(243, 185, 95, .08);
+}
+.runtime-edit-dialog {
+  width: min(46rem, calc(100% - 2rem));
+  max-height: calc(100dvh - 2rem);
+  padding: 0;
+  overflow: auto;
+  border: 1px solid var(--line-strong);
+  border-radius: 18px;
+  color: var(--text);
+  background: var(--panel-solid);
+  box-shadow: 0 28px 90px rgba(0, 0, 0, .38);
+}
+.runtime-edit-dialog::backdrop {
+  background: rgba(3, 5, 9, .66);
+  backdrop-filter: blur(4px);
+}
+.runtime-edit-dialog form { padding: clamp(1rem, 3vw, 1.5rem); }
+.runtime-value-field {
+  display: grid;
+  gap: .45rem;
+  color: var(--label);
+  font-size: .78rem;
+}
+.runtime-value-field textarea {
+  width: 100%;
+  min-height: 10rem;
+  font: .76rem/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.runtime-edit-actions { justify-content: flex-end; margin-top: 1rem; }
 
 .inline-form, .account-create, .rule-create { display: flex; align-items: end; gap: .55rem; margin: 1rem 0; }
 .inline-form input { width: min(28rem, 65vw); }
@@ -799,6 +1013,11 @@ input:focus, select:focus { border-color: rgba(233, 79, 81, .65); box-shadow: 0 
   .service-grid { grid-template-columns: 1fr; }
   .mod-grid { grid-template-columns: 1fr; }
   .configured-mods-card { grid-column: auto; }
+  .runtime-layout { grid-template-columns: 1fr; }
+  .runtime-target-card { position: static; }
+  .runtime-target-list { grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); }
+  .runtime-target-group + .runtime-target-group { margin-top: 0; }
+  .runtime-filter-bar { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 720px) {
   body {
@@ -839,8 +1058,8 @@ input:focus, select:focus { border-color: rgba(233, 79, 81, .65); box-shadow: 0 
   .pending-banner { top: 0; }
   .app-shell { width: min(100% - 1rem, 1500px); margin-top: .8rem; }
   .tab { min-height: 44px; }
-  button, input, select, .secondary-link { min-height: 44px; }
-  input, select { font-size: 16px; }
+  button, input, select, textarea, .secondary-link { min-height: 44px; }
+  input, select, textarea { font-size: 16px; }
   .secondary-link { display: inline-flex; align-items: center; justify-content: center; }
   .card-heading { align-items: flex-start; flex-wrap: wrap; }
   .card-heading > * { min-width: 0; }
@@ -888,6 +1107,10 @@ input:focus, select:focus { border-color: rgba(233, 79, 81, .65); box-shadow: 0 
   .server-port-actions { align-items: stretch; flex-direction: column; }
   .server-port-actions button { width: 100%; }
   .console { height: 20rem; }
+  .runtime-property-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .runtime-property-value { grid-column: 1 / -1; grid-row: 2; }
+  .runtime-property-row > button { grid-column: 2; grid-row: 1; }
+  .replication-badge { grid-column: 1; grid-row: 3; justify-self: start; }
   .inline-form, .rule-create { align-items: stretch; flex-direction: column; }
   .inline-form input { width: 100%; }
   .inline-form button, .rule-create select, .rule-create input, .rule-create button {
@@ -915,6 +1138,24 @@ input:focus, select:focus { border-color: rgba(233, 79, 81, .65); box-shadow: 0 
   }
   .mod-refresh-setting { justify-content: space-between; }
   .mod-refresh-controls > button { width: 100%; }
+  .runtime-target-list { grid-template-columns: 1fr; }
+  .runtime-filter-bar { grid-template-columns: 1fr; }
+  .runtime-checkbox { min-height: 44px; }
+  .runtime-filter-bar > button { width: 100%; }
+  .runtime-property-row { grid-template-columns: 1fr; }
+  .runtime-property-value,
+  .runtime-property-row > button,
+  .replication-badge {
+    grid-column: 1;
+    grid-row: auto;
+    width: 100%;
+    max-width: none;
+  }
+  .runtime-edit-dialog {
+    width: calc(100% - 1rem);
+    max-height: calc(100dvh - 1rem);
+    border-radius: 14px;
+  }
   .dependency-list li {
     align-items: flex-start;
     flex-direction: column;

@@ -3,28 +3,31 @@ package manager
 import "time"
 
 const (
-	rootDir            = "/root/mordhau"
-	stateDir           = rootDir + "/.manager"
-	logDir             = rootDir + "/log"
-	runtimeDir         = stateDir + "/runtime"
-	pendingDir         = stateDir + "/pending"
-	backupDir          = stateDir + "/backups"
-	configDir          = rootDir + "/Mordhau/Saved/Config/WindowsServer"
-	gameLogPath        = rootDir + "/Mordhau/Saved/Logs/Mordhau.log"
-	accountsPath       = stateDir + "/accounts.json"
-	sessionsPath       = stateDir + "/sessions.json"
-	accessPath         = stateDir + "/access.json"
-	languagePath       = stateDir + "/language"
-	rconStatePath      = stateDir + "/rcon-last.json"
-	operationStatePath = stateDir + "/operation.json"
-	disabledINIPath    = stateDir + "/disabled-ini-entries.json"
-	webAuditLogPath    = logDir + "/mordhau-web.log"
-	rconEventLogPath   = logDir + "/mordhau-rcon.log"
-	defaultAccount     = rootDir + "/default_web_account.txt"
-	serverScript       = rootDir + "/server.sh"
-	mordhauPIDPath     = runtimeDir + "/mordhau.pid"
-	defaultRCONPort    = 7778
-	emergencyDuration  = 30 * time.Minute
+	rootDir                   = "/root/mordhau"
+	stateDir                  = rootDir + "/.manager"
+	logDir                    = rootDir + "/log"
+	runtimeDir                = stateDir + "/runtime"
+	pendingDir                = stateDir + "/pending"
+	backupDir                 = stateDir + "/backups"
+	configDir                 = rootDir + "/Mordhau/Saved/Config/WindowsServer"
+	gameLogPath               = rootDir + "/Mordhau/Saved/Logs/Mordhau.log"
+	accountsPath              = stateDir + "/accounts.json"
+	sessionsPath              = stateDir + "/sessions.json"
+	accessPath                = stateDir + "/access.json"
+	languagePath              = stateDir + "/language"
+	rconStatePath             = stateDir + "/rcon-last.json"
+	operationStatePath        = stateDir + "/operation.json"
+	disabledINIPath           = stateDir + "/disabled-ini-entries.json"
+	webAuditLogPath           = logDir + "/mordhau-web.log"
+	rconEventLogPath          = logDir + "/mordhau-rcon.log"
+	defaultAccount            = rootDir + "/default_web_account.txt"
+	serverScript              = rootDir + "/server.sh"
+	mordhauPIDPath            = runtimeDir + "/mordhau.pid"
+	runtimeBridgeStatusPath   = runtimeDir + "/runtime-bridge-status.json"
+	runtimeBridgeRequestPath  = runtimeDir + "/runtime-bridge-request.txt"
+	runtimeBridgeResponsePath = runtimeDir + "/runtime-bridge-response.json"
+	defaultRCONPort           = 7778
+	emergencyDuration         = 30 * time.Minute
 )
 
 var supportedLanguages = []Language{
@@ -127,18 +130,107 @@ type RCONEvent struct {
 }
 
 type Snapshot struct {
-	Metrics              Metrics     `json:"metrics"`
-	ServerRunning        bool        `json:"server_running"`
-	ServerPID            int         `json:"server_pid,omitempty"`
-	Language             string      `json:"language"`
-	Languages            []Language  `json:"languages"`
-	PendingConfig        bool        `json:"pending_config"`
-	Operation            Operation   `json:"operation"`
-	EventSourceConnected bool        `json:"event_source_connected"`
-	EventSourceStatus    string      `json:"event_source_status"`
-	ServerEvents         []RCONEvent `json:"server_events"`
-	ModRevision          uint64      `json:"mod_revision"`
-	GeneratedAt          time.Time   `json:"generated_at"`
+	Metrics              Metrics              `json:"metrics"`
+	ServerRunning        bool                 `json:"server_running"`
+	ServerPID            int                  `json:"server_pid,omitempty"`
+	Language             string               `json:"language"`
+	Languages            []Language           `json:"languages"`
+	PendingConfig        bool                 `json:"pending_config"`
+	Operation            Operation            `json:"operation"`
+	EventSourceConnected bool                 `json:"event_source_connected"`
+	EventSourceStatus    string               `json:"event_source_status"`
+	ServerEvents         []RCONEvent          `json:"server_events"`
+	ModRevision          uint64               `json:"mod_revision"`
+	RuntimeBridge        RuntimeBridgeSummary `json:"runtime_bridge"`
+	GeneratedAt          time.Time            `json:"generated_at"`
+}
+
+type RuntimeBridgeSummary struct {
+	Ready                 bool      `json:"ready"`
+	Status                string    `json:"status"`
+	PlayerControllerCount int       `json:"player_controller_count"`
+	GameModeClass         string    `json:"game_mode_class,omitempty"`
+	SampledAt             time.Time `json:"sampled_at,omitempty"`
+}
+
+type RuntimeTarget struct {
+	ID         string `json:"id"`
+	Kind       string `json:"kind"`
+	Class      string `json:"class"`
+	PlayerSlot int    `json:"player_slot"`
+}
+
+type RuntimeReplication struct {
+	Net       bool   `json:"net"`
+	RepSkip   bool   `json:"rep_skip"`
+	RepNotify bool   `json:"rep_notify"`
+	Scope     string `json:"scope"`
+	Condition string `json:"condition"`
+	RepIndex  uint16 `json:"rep_index"`
+}
+
+type RuntimeProperty struct {
+	DeclaringClass    string             `json:"declaring_class"`
+	Name              string             `json:"name"`
+	Type              string             `json:"type"`
+	ArrayIndex        int                `json:"array_index"`
+	ArrayDim          int                `json:"array_dim"`
+	ElementSize       int                `json:"element_size"`
+	Offset            int                `json:"offset"`
+	Flags             string             `json:"flags"`
+	Editable          bool               `json:"editable"`
+	ReadOnlyReason    string             `json:"read_only_reason"`
+	RepNotifyFunction string             `json:"rep_notify_function"`
+	Value             *string            `json:"value"`
+	Replication       RuntimeReplication `json:"replication"`
+}
+
+type RuntimeStatusView struct {
+	Version               int             `json:"version"`
+	RequestID             string          `json:"request_id"`
+	OK                    bool            `json:"ok"`
+	Ready                 bool            `json:"ready"`
+	PlayerControllerCount int             `json:"player_controller_count"`
+	TargetCount           int             `json:"target_count"`
+	Targets               []RuntimeTarget `json:"targets"`
+	Error                 *RuntimeError   `json:"error,omitempty"`
+}
+
+type RuntimeTargetView struct {
+	Version               int               `json:"version"`
+	RequestID             string            `json:"request_id"`
+	OK                    bool              `json:"ok"`
+	PlayerControllerCount int               `json:"player_controller_count"`
+	Target                RuntimeTarget     `json:"target"`
+	ClassChain            []string          `json:"class_chain"`
+	Properties            []RuntimeProperty `json:"properties"`
+	PropertyCount         int               `json:"property_count"`
+	NetworkNote           string            `json:"network_note"`
+	Error                 *RuntimeError     `json:"error,omitempty"`
+}
+
+type RuntimePropertyChange struct {
+	DeclaringClass string             `json:"declaring_class"`
+	Name           string             `json:"name"`
+	ArrayIndex     int                `json:"array_index"`
+	OldValue       string             `json:"old_value"`
+	NewValue       string             `json:"new_value"`
+	Replication    RuntimeReplication `json:"replication"`
+}
+
+type RuntimePropertyChangeView struct {
+	Version   int                   `json:"version"`
+	RequestID string                `json:"request_id"`
+	OK        bool                  `json:"ok"`
+	Target    RuntimeTarget         `json:"target"`
+	Property  RuntimePropertyChange `json:"property"`
+	Error     *RuntimeError         `json:"error,omitempty"`
+}
+
+type RuntimeError struct {
+	Code         string `json:"code"`
+	Message      string `json:"message"`
+	CurrentValue string `json:"current_value,omitempty"`
 }
 
 type PublicAccount struct {

@@ -2,7 +2,7 @@
 
 set -eu
 
-PROJECT_VERSION="1.9.0"
+PROJECT_VERSION="2.0.0"
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 MORDHAU_ROOT="/root/mordhau"
 STEAMCMD_ROOT="/root/steamcmd"
@@ -39,7 +39,8 @@ Usage: ./src/mordhau-server-alpine-linux.sh [options]
 
 Installs or updates the Windows MORDHAU Dedicated Server, SteamCMD, the Go
 management web application, the server-only Unicode Bridge, and OpenRC service
-definitions on Alpine Linux.
+definitions on Alpine Linux. The supported dedicated-server build also receives
+the native runtime-reflection bridge used by the authenticated Runtime panel.
 
 Options:
   --web-port PORT   Persist the web service port (default: existing value or 8080)
@@ -119,6 +120,9 @@ require_environment() {
         "$SCRIPT_DIR/unicode-bridge/dist/SHA256SUMS" \
         "$SCRIPT_DIR/unicode-bridge/dist/MordhauUnicodeBridge/MordhauUnicodeBridge.uplugin" \
         "$SCRIPT_DIR/unicode-bridge/dist/MordhauUnicodeBridge/Content/Paks/MordhauUnicodeBridge-WindowsServer.pak" \
+        "$SCRIPT_DIR/runtime-bridge/build.sh" \
+        "$SCRIPT_DIR/runtime-bridge/dxgi.def" \
+        "$SCRIPT_DIR/runtime-bridge/runtime_bridge.c" \
         "$SCRIPT_DIR/web/go.mod"; do
         [ -f "$required" ] || die "release bundle is incomplete: missing $required"
     done
@@ -139,6 +143,7 @@ ensure_packages() {
         ca-certificates \
         gnutls \
         go \
+        mingw-w64-gcc \
         openrc \
         p11-kit \
         p11-kit-trust \
@@ -147,7 +152,7 @@ ensure_packages() {
         wine
     update-ca-certificates >/dev/null 2>&1 || true
 
-    for command_name in awk flock go rc-service rc-update setsid sha256sum timeout unzip wget wine wineserver; do
+    for command_name in awk flock go rc-service rc-update setsid sha256sum timeout unzip wget wine wineserver x86_64-w64-mingw32-gcc; do
         command -v "$command_name" >/dev/null 2>&1 ||
             die "required command is unavailable after package installation: $command_name"
     done
@@ -282,6 +287,28 @@ install_mordhau() {
         die "MORDHAU Dedicated Server executable is missing after SteamCMD"
 }
 
+install_runtime_bridge() {
+    shipping_exe="$MORDHAU_ROOT/Mordhau/Binaries/Win64/MordhauServer-Win64-Shipping.exe"
+    bridge_destination="$MORDHAU_ROOT/Mordhau/Binaries/Win64/dxgi.dll"
+    supported_sha256="a11348d6bfdb386d7f8a976a59e7d28d38b0d1ba2b9a2a7e0035ac28d53f885e"
+
+    [ -s "$shipping_exe" ] ||
+        die "MORDHAU shipping executable is missing: $shipping_exe"
+    actual_sha256=$(sha256sum "$shipping_exe" | awk '{print $1}')
+    if [ "$actual_sha256" != "$supported_sha256" ]; then
+        log "Runtime bridge skipped: the installed MORDHAU executable is not a supported build."
+        return 0
+    fi
+
+    log "Building and installing the native runtime-reflection bridge..."
+    "$SCRIPT_DIR/runtime-bridge/build.sh" "$TMP_DIR/dxgi.dll"
+    [ -s "$TMP_DIR/dxgi.dll" ] ||
+        die "runtime bridge build did not produce dxgi.dll"
+    install -m 0644 "$TMP_DIR/dxgi.dll" "$bridge_destination"
+    printf '%s\n' "$supported_sha256" > "$STATE_DIR/runtime-bridge-exe-sha256"
+    chmod 0600 "$STATE_DIR/runtime-bridge-exe-sha256"
+}
+
 run_initial_generation() {
     game_ini="$CONFIG_DIR/Game.ini"
     engine_ini="$CONFIG_DIR/Engine.ini"
@@ -356,6 +383,7 @@ main() {
     install_runtime_files
     install_steamcmd
     install_mordhau
+    install_runtime_bridge
     run_initial_generation
     install_unicode_bridge
     build_web_manager

@@ -34,6 +34,16 @@ type Manager struct {
 	metrics   Metrics
 	cpu       cpuSample
 
+	runtimeMu            sync.RWMutex
+	runtimeSummary       RuntimeBridgeSummary
+	runtimeTargets       []RuntimeTarget
+	runtimeTargetCache   map[string]runtimeTargetCacheEntry
+	runtimeCommandMu     sync.Mutex
+	runtimeStatusPath    string
+	runtimeRequestPath   string
+	runtimeResponsePath  string
+	runtimeServerProcess func() (int, bool)
+
 	rconMu               sync.RWMutex
 	eventSourceConnected bool
 	eventSourceStatus    string
@@ -103,13 +113,17 @@ func New(trustedProxies ...netip.Prefix) (*Manager, error) {
 	}
 
 	m := &Manager{
-		loginAttempts:     make(map[string]*loginAttempt),
-		eventSourceStatus: "Waiting for server",
-		auditPath:         webAuditLogPath,
-		operationPath:     operationStatePath,
-		rconLogPath:       rconEventLogPath,
-		modRefreshWake:    make(chan struct{}, 1),
-		modRestartWake:    make(chan struct{}, 1),
+		loginAttempts:       make(map[string]*loginAttempt),
+		eventSourceStatus:   "Waiting for server",
+		auditPath:           webAuditLogPath,
+		operationPath:       operationStatePath,
+		rconLogPath:         rconEventLogPath,
+		modRefreshWake:      make(chan struct{}, 1),
+		modRestartWake:      make(chan struct{}, 1),
+		runtimeStatusPath:   runtimeBridgeStatusPath,
+		runtimeRequestPath:  runtimeBridgeRequestPath,
+		runtimeResponsePath: runtimeBridgeResponsePath,
+		runtimeTargetCache:  make(map[string]runtimeTargetCacheEntry),
 	}
 	for _, prefix := range trustedProxies {
 		canonical, err := canonicalTrustedProxyPrefix(prefix)
@@ -160,6 +174,7 @@ func New(trustedProxies ...netip.Prefix) (*Manager, error) {
 func (m *Manager) StartBackground(ctx context.Context) {
 	m.auditActorEvent("system", "local", "web_manager_started", nil)
 	go m.metricsLoop(ctx)
+	go m.runtimeBridgeStatusLoop(ctx)
 	go m.gameLogLoop(ctx)
 	go m.cleanupLoop(ctx)
 	go m.modRefreshLoop(ctx)

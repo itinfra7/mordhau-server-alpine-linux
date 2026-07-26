@@ -1,62 +1,67 @@
-# MORDHAU Server Alpine Linux v1.9.0
+# MORDHAU Server Alpine Linux v2.0.0
 
-This release contains the following changes relative to v1.8.3.
+This release contains the following changes relative to v1.9.0.
 
 ## Changelog
 
 ### Added
 
-- Add authenticated administrative RCON command execution from the Server
-  Events prompt with immediate, retained command and response events.
-- Add bounded multi-packet response collection with selected-language legacy
-  decoding, explicit no-output and truncation records, and mobile controls.
-- Add UTF-8 `Mordhau.log` following for player lifecycle, chat, match-state,
-  killfeed, scorefeed, and punishment events with source timestamps.
-- Add a terminal-style RCON/SAY selector and shared prompt below the Server
-  Events window.
-- Publish the full tag-specific changelog as a versioned asset with every
-  GitHub Release.
-- Add an API-key-gated, default-off automatic restart setting for enabled
-  mod.io modfile updates.
-- Persist active-mod modfile baselines and pending restart countdowns across
-  web-service restarts.
-- Announce automatic restarts in-game at 10, 5, 4, 3, 2, and 1 minutes before
-  invoking the managed restart action at the ten-minute deadline.
+- Add a native Windows runtime-reflection bridge for the supported MORDHAU
+  Dedicated Server build, loaded through a guarded DXGI proxy under Wine.
+- Add an authenticated Runtime panel for the active authority GameMode,
+  GameState, PlayerControllers, PlayerStates, and possessed Pawns.
+- Enumerate properties from each actual runtime class through its complete
+  superclass chain with Unreal type, flags, offset, array index, exported
+  value, RepIndex, RepNotify function, lifetime condition, and replication
+  scope.
+- Add immediate game-thread property changes with expected-value conflict
+  detection, Unreal text import verification, failure rollback, and
+  `AActor::FlushNetDormancy` plus `AActor::ForceNetUpdate` for
+  replication-eligible Actor fields.
+- Add a one-second shared PlayerController count collected in the game process
+  and distributed through the existing authenticated event stream.
+- Add responsive Runtime target, search, declaring-class filter, editable-only
+  filter, value editor, and replication-status controls for desktop and mobile
+  browsers.
+- Add native bridge build validation and Go tests for shared status sampling,
+  stale-state rejection, request serialization, cache reuse, target
+  validation, and multilingual values.
 
 ### Changed
 
-- Replace cumulative feature inventories in GitHub Release bodies with the
-  exact version section from `CHANGELOG.md`, preceding-Release navigation, and
-  direct tag comparison links.
-- Replace the permanent `listen allon` RCON subscription with a log-first
-  server-event collector that handles missing files, partial writes,
-  truncation, replacement, and restart-time player-state reconstruction.
-- Open RCON only for bounded administrative commands and acknowledged Unicode
-  SAY requests.
-- Initialize `bLogChat`, `bLogKillfeed`, and `bLogScore` unless their item or
-  containing section is explicitly disabled.
-- Default newly created server-wide mod metadata refresh state to five minutes
-  while preserving an existing saved interval during settings migration.
-- Merge additional active-mod updates into an existing countdown without
-  postponing its restart deadline.
-- Cancel a pending automatic restart when its setting or API key is removed,
-  the game process changes, or another lifecycle action begins.
-
-### Fixed
-
-- Correlate login-request, authentication, chat, and disconnect records by
-  player ID so UTF-8 names remain intact in login and logout events even when
-  a secondary identity line is lossy.
+- Build and install the native bridge only when
+  `MordhauServer-Win64-Shipping.exe` matches the supported SHA-256 digest.
+- Enable the Wine native DXGI override only for that supported executable
+  build; unsupported game updates continue with Wine's built-in DXGI and an
+  unavailable Runtime panel.
+- Cache Runtime status and identical short-lived target views in the Go
+  manager so administrator count does not multiply game-process status
+  collection.
+- Extend the dashboard with the shared live PlayerController count and current
+  runtime-bridge state.
 
 ### Security
 
-- Reject empty, invalid UTF-8, oversized, and control-character-containing
-  RCON commands.
-- Serialize web-issued RCON commands and bound each response by time, bytes,
-  and line count.
-- Attribute command success and failure to the authenticated account and
-  canonical client address while excluding command arguments from the web
-  audit log.
+- Restrict native runtime targets to actors rediscovered from the active
+  `UWorld` and bind target identifiers to Unreal object indices and serial
+  numbers.
+- Keep object references, class references, interfaces, delegates, field
+  paths, deprecated and editor-only fields, function parameters,
+  engine-internal Blueprint frame storage, and unexportable values read-only.
+- Keep bridge IPC inside the root-only manager runtime directory and expose no
+  additional network listener.
+- Require authenticated, CSRF-protected, expected-value-checked web mutations
+  and audit the responsible account, canonical client address, target,
+  property, and replication scope without recording property values.
+- Refuse bridge hook installation when PE metadata or the `UWorld::Tick`
+  prologue does not match the supported executable.
+
+### Validation
+
+- Confirm PlayerController count and associated PlayerController, PlayerState,
+  and possessed Pawn discovery with a connected client.
+- Confirm authoritative readback, client delivery through a `Net`/`OnRep`
+  PlayerState string property, and restoration of the original value.
 
 ## Documentation
 

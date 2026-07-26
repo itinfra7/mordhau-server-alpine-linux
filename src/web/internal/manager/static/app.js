@@ -12,6 +12,12 @@ const app = {
   modRevision: null,
   eventSequence: 0,
   eventLines: 0,
+  runtimeStatus: null,
+  runtimeTarget: null,
+  runtimeSelectedID: "",
+  runtimeEditing: null,
+  runtimeLoading: false,
+  runtimeReloadRequested: false,
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -72,11 +78,15 @@ async function api(path, options = {}) {
   }
   if (!response.ok) {
     let message = `${response.status} ${response.statusText}`;
+    let body = null;
     try {
-      const body = await response.json();
+      body = await response.json();
       if (body.error) message = body.error;
     } catch (_) {}
-    throw new Error(message);
+    const error = new Error(message);
+    error.status = response.status;
+    error.body = body;
+    throw error;
   }
   if (response.status === 204 || response.headers.get("content-length") === "0") return null;
   const type = response.headers.get("content-type") || "";
@@ -125,6 +135,17 @@ function renderSnapshot(snapshot) {
     ? `${bytes(snapshot.metrics.swap.used)} / ${bytes(snapshot.metrics.swap.total)}`
     : "No swap available";
   $("#disk-detail").textContent = `${bytes(snapshot.metrics.disk.used)} / ${bytes(snapshot.metrics.disk.total)}`;
+
+  const runtime = snapshot.runtime_bridge || {};
+  const runtimeReady = runtime.ready === true;
+  const playerCount = Number(runtime.player_controller_count);
+  $("#players-value").textContent = runtimeReady && Number.isInteger(playerCount)
+    ? String(playerCount)
+    : "—";
+  $(".player-metric-card").classList.toggle("bridge-offline", !runtimeReady);
+  $("#runtime-bridge-summary").textContent = runtimeReady
+    ? (runtime.game_mode_class || "Runtime bridge ready")
+    : `Runtime bridge: ${(runtime.status || "unavailable").replaceAll("_", " ")}`;
 
   $("#server-dot").classList.toggle("online", snapshot.server_running);
   $("#server-label").textContent = snapshot.server_running ? "Server online" : "Server stopped";
@@ -249,6 +270,341 @@ function updateServerPromptMode() {
     ? "SAY sends a multilingual message through the local server-only Unicode bridge."
     : "RCON commands run with full administrator authority; commands and responses are retained.";
   input.focus();
+}
+
+const runtimeKindLabels = {
+  game_mode: "Game Mode",
+  game_state: "Game State",
+  player_controller: "Player Controllers",
+  player_state: "Player States",
+  pawn: "Possessed Pawns",
+};
+
+function runtimeTargetLabel(target) {
+  const base = runtimeKindLabels[target.kind] || target.kind;
+  return target.player_slot >= 0 ? `${base.replace(/s$/, "")} #${target.player_slot + 1}` : base;
+}
+
+function runtimePanelActive() {
+  return $("#panel-runtime").classList.contains("active");
+}
+
+function renderRuntimeTargets() {
+  const status = app.runtimeStatus;
+  const targetList = $("#runtime-targets");
+  targetList.replaceChildren();
+  const ready = status && status.ready === true;
+  $("#runtime-status").textContent = ready
+    ? `${status.player_controller_count} player${status.player_controller_count === 1 ? "" : "s"}`
+    : "Bridge unavailable";
+  $("#runtime-status").classList.toggle("connected", ready);
+  if (!ready || !Array.isArray(status.targets) || !status.targets.length) {
+    const empty = document.createElement("p");
+    empty.className = "hint";
+    empty.textContent = ready ? "No runtime targets are available yet." : "Start the game server and wait for the runtime bridge.";
+    targetList.append(empty);
+    return;
+  }
+
+  const grouped = new Map();
+  for (const target of status.targets) {
+    if (!grouped.has(target.kind)) grouped.set(target.kind, []);
+    grouped.get(target.kind).push(target);
+  }
+  for (const kind of ["game_mode", "game_state", "player_controller", "player_state", "pawn"]) {
+    const targets = grouped.get(kind);
+    if (!targets || !targets.length) continue;
+    const group = document.createElement("section");
+    group.className = "runtime-target-group";
+    const heading = document.createElement("h3");
+    heading.className = "runtime-target-group-title";
+    heading.textContent = runtimeKindLabels[kind] || kind;
+    group.append(heading);
+    for (const target of targets) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "runtime-target-button";
+      button.classList.toggle("active", target.id === app.runtimeSelectedID);
+      const name = document.createElement("strong");
+      name.textContent = runtimeTargetLabel(target);
+      const className = document.createElement("small");
+      className.textContent = target.class;
+      button.append(name, className);
+      button.addEventListener("click", async () => {
+        app.runtimeSelectedID = target.id;
+        app.runtimeTarget = null;
+        renderRuntimeTargets();
+        await loadRuntimeTarget();
+      });
+      group.append(button);
+    }
+    targetList.append(group);
+  }
+}
+
+function clearRuntimeInspector(message = "Choose an object from Runtime targets.") {
+  app.runtimeTarget = null;
+  $("#runtime-target-title").textContent = "Select a runtime target";
+  $("#runtime-property-count").textContent = "No target";
+  $("#runtime-refresh-properties").disabled = true;
+  $("#runtime-class-filter").innerHTML = '<option value="">All inherited classes</option>';
+  $("#runtime-properties").replaceChildren();
+  $("#runtime-empty").textContent = message;
+  $("#runtime-empty").classList.remove("hidden");
+}
+
+async function loadRuntimeTargets({ selectDefault = false, silent = false } = {}) {
+  try {
+    const status = await api("/api/runtime/status");
+    app.runtimeStatus = status;
+    const targets = Array.isArray(status.targets) ? status.targets : [];
+    const selectedStillExists = targets.some((target) => target.id === app.runtimeSelectedID);
+    if (!selectedStillExists) {
+      app.runtimeSelectedID = selectDefault && targets.length ? targets[0].id : "";
+      clearRuntimeInspector(status.ready ? "Choose an object from Runtime targets." : "Runtime bridge unavailable.");
+    }
+    renderRuntimeTargets();
+    return status;
+  } catch (error) {
+    app.runtimeStatus = null;
+    renderRuntimeTargets();
+    clearRuntimeInspector("Runtime target discovery failed.");
+    if (!silent) toast(error.message, true);
+    return null;
+  }
+}
+
+function replicationLabel(replication) {
+  const scope = replication?.scope || "server_only";
+  const labels = {
+    server_only: "Server only",
+    replicated: "Replicated",
+    initial_only: "Initial only",
+    owner_only: "Owner only",
+    skip_owner: "Skip owner",
+    simulated_only: "Simulated only",
+    autonomous_only: "Autonomous only",
+    simulated_or_physics: "Simulated / physics",
+    initial_or_owner: "Initial / owner",
+    custom: "Custom condition",
+    replay_or_owner: "Replay / owner",
+    replay_only: "Replay only",
+    skip_replay: "Skip replay",
+    conditional: "Conditional",
+  };
+  return labels[scope] || scope.replaceAll("_", " ");
+}
+
+function replicationBadgeClass(replication) {
+  if (replication?.scope === "replicated") return " replicated";
+  if (replication?.scope && replication.scope !== "server_only") return " conditional";
+  return "";
+}
+
+function populateRuntimeClassFilter(classChain) {
+  const select = $("#runtime-class-filter");
+  const previous = select.value;
+  select.replaceChildren();
+  const all = document.createElement("option");
+  all.value = "";
+  all.textContent = "All inherited classes";
+  select.append(all);
+  for (const className of classChain || []) {
+    const option = document.createElement("option");
+    option.value = className;
+    option.textContent = className;
+    select.append(option);
+  }
+  if ([...select.options].some((option) => option.value === previous)) {
+    select.value = previous;
+  }
+}
+
+function openRuntimeEditor(property) {
+  if (!app.runtimeTarget || !property.editable || typeof property.value !== "string") return;
+  app.runtimeEditing = {
+    targetID: app.runtimeTarget.target.id,
+    property,
+    expectedValue: property.value,
+  };
+  const suffix = property.array_dim > 1 ? `[${property.array_index}]` : "";
+  $("#runtime-edit-title").textContent = `${property.name}${suffix}`;
+  $("#runtime-edit-meta").textContent = `${property.declaring_class} · ${property.type}`;
+  $("#runtime-edit-value").value = property.value;
+  $("#runtime-edit-replication").textContent =
+    `${replicationLabel(property.replication)} · condition ${property.replication.condition}. ` +
+    (property.replication.scope === "server_only"
+      ? "This change remains on the authoritative server instance."
+      : "Net dormancy is flushed and ForceNetUpdate is requested; delivery still follows Unreal ownership, relevancy, and replication rules.");
+  const dialog = $("#runtime-edit-dialog");
+  if (typeof dialog.showModal === "function") dialog.showModal();
+  else dialog.setAttribute("open", "");
+  $("#runtime-edit-value").focus();
+}
+
+function closeRuntimeEditor() {
+  app.runtimeEditing = null;
+  const dialog = $("#runtime-edit-dialog");
+  if (typeof dialog.close === "function" && dialog.open) dialog.close();
+  else dialog.removeAttribute("open");
+}
+
+function renderRuntimeProperties() {
+  const view = app.runtimeTarget;
+  const container = $("#runtime-properties");
+  container.replaceChildren();
+  if (!view || !view.target) {
+    clearRuntimeInspector();
+    return;
+  }
+  $("#runtime-target-title").textContent = `${runtimeTargetLabel(view.target)} · ${view.target.class}`;
+  $("#runtime-refresh-properties").disabled = false;
+  populateRuntimeClassFilter(view.class_chain);
+
+  const query = $("#runtime-property-search").value.trim().toLocaleLowerCase();
+  const classFilter = $("#runtime-class-filter").value;
+  const editableOnly = $("#runtime-editable-only").checked;
+  const properties = (view.properties || []).filter((property) => {
+    if (classFilter && property.declaring_class !== classFilter) return false;
+    if (editableOnly && !property.editable) return false;
+    if (!query) return true;
+    return `${property.name} ${property.type} ${property.declaring_class}`
+      .toLocaleLowerCase()
+      .includes(query);
+  });
+  $("#runtime-property-count").textContent =
+    `${properties.length} / ${view.property_count} properties`;
+  $("#runtime-empty").classList.toggle("hidden", properties.length > 0);
+  $("#runtime-empty").textContent = properties.length
+    ? ""
+    : "No runtime properties match the current filters.";
+
+  const groups = new Map();
+  for (const property of properties) {
+    if (!groups.has(property.declaring_class)) groups.set(property.declaring_class, []);
+    groups.get(property.declaring_class).push(property);
+  }
+  for (const className of view.class_chain || []) {
+    const classProperties = groups.get(className);
+    if (!classProperties?.length) continue;
+    const group = document.createElement("section");
+    group.className = "runtime-property-group";
+    const heading = document.createElement("h3");
+    heading.textContent = `${className} · ${classProperties.length}`;
+    group.append(heading);
+
+    for (const property of classProperties) {
+      const row = document.createElement("div");
+      row.className = "runtime-property-row";
+      const identity = document.createElement("div");
+      identity.className = "runtime-property-name";
+      const name = document.createElement("strong");
+      const arraySuffix = property.array_dim > 1 ? `[${property.array_index}]` : "";
+      name.textContent = `${property.name}${arraySuffix}`;
+      const metadata = document.createElement("small");
+      metadata.textContent =
+        `${property.type} · offset 0x${Number(property.offset).toString(16)} · ${property.flags}`;
+      identity.append(name, metadata);
+
+      const value = document.createElement("pre");
+      value.className = "runtime-property-value";
+      if (typeof property.value === "string") {
+        value.textContent = property.value;
+      } else {
+        value.textContent = "Value unavailable";
+        value.classList.add("unavailable");
+      }
+
+      const replication = document.createElement("span");
+      replication.className = `replication-badge${replicationBadgeClass(property.replication)}`;
+      replication.textContent = replicationLabel(property.replication);
+      replication.title =
+        `Condition: ${property.replication?.condition || "None"} · RepIndex: ${property.replication?.rep_index ?? 0}`;
+
+      const edit = makeButton(
+        property.editable && typeof property.value === "string" ? "Edit" : "Read only",
+        property.editable ? "secondary compact" : "ghost compact",
+        () => openRuntimeEditor(property),
+      );
+      edit.disabled = !property.editable || typeof property.value !== "string";
+      if (edit.disabled) {
+        edit.title = property.read_only_reason || "This value cannot be safely imported.";
+      }
+      row.append(identity, value, replication, edit);
+      group.append(row);
+    }
+    container.append(group);
+  }
+}
+
+async function loadRuntimeTarget({ silent = false } = {}) {
+  if (!app.runtimeSelectedID) {
+    clearRuntimeInspector();
+    return;
+  }
+  if (app.runtimeLoading) {
+    app.runtimeReloadRequested = true;
+    return;
+  }
+  app.runtimeLoading = true;
+  $("#runtime-refresh-properties").disabled = true;
+  try {
+    const view = await api(`/api/runtime/target?id=${encodeURIComponent(app.runtimeSelectedID)}`);
+    if (view.target?.id === app.runtimeSelectedID) {
+      app.runtimeTarget = view;
+      renderRuntimeProperties();
+    }
+  } catch (error) {
+    if (!silent) toast(error.message, true);
+    if (error.status === 404 || error.status === 503) {
+      await loadRuntimeTargets({ selectDefault: false, silent: true });
+    }
+  } finally {
+    app.runtimeLoading = false;
+    $("#runtime-refresh-properties").disabled = !app.runtimeSelectedID;
+    if (app.runtimeReloadRequested) {
+      app.runtimeReloadRequested = false;
+      loadRuntimeTarget({ silent: true });
+    }
+  }
+}
+
+async function submitRuntimeEdit(event) {
+  event.preventDefault();
+  const editing = app.runtimeEditing;
+  if (!editing) return;
+  const save = $("#runtime-edit-save");
+  save.disabled = true;
+  try {
+    const result = await api("/api/runtime/property", {
+      method: "POST",
+      body: {
+        target_id: editing.targetID,
+        declaring_class: editing.property.declaring_class,
+        name: editing.property.name,
+        array_index: editing.property.array_index,
+        expected_value: editing.expectedValue,
+        new_value: $("#runtime-edit-value").value,
+      },
+    });
+    closeRuntimeEditor();
+    toast(`Runtime property applied · ${replicationLabel(result.property.replication)}.`);
+    await loadRuntimeTarget();
+  } catch (error) {
+    toast(error.message, true);
+    if (error.status === 409) {
+      closeRuntimeEditor();
+      await loadRuntimeTarget({ silent: true });
+    }
+  } finally {
+    save.disabled = false;
+  }
+}
+
+async function refreshRuntimeLive() {
+  if (!runtimePanelActive() || $("#runtime-edit-dialog").open) return;
+  await loadRuntimeTargets({ selectDefault: false, silent: true });
+  if (app.runtimeSelectedID) await loadRuntimeTarget({ silent: true });
 }
 
 async function loadConfig() {
@@ -988,11 +1344,30 @@ function bindEvents() {
   $$(".tab").forEach((tab) => tab.addEventListener("click", () => {
     $$(".tab").forEach((item) => item.classList.toggle("active", item === tab));
     $$(".panel").forEach((panel) => panel.classList.toggle("active", panel.id === `panel-${tab.dataset.panel}`));
+    if (tab.dataset.panel === "runtime") {
+      loadRuntimeTargets({ selectDefault: !app.runtimeSelectedID }).then(() => {
+        if (app.runtimeSelectedID) loadRuntimeTarget({ silent: true });
+      });
+    }
   }));
   $$("[data-server-action]").forEach((button) =>
     button.addEventListener("click", () => serverAction(button.dataset.serverAction)));
   $("#server-prompt-form").addEventListener("submit", submitServerPrompt);
   $("#server-prompt-mode").addEventListener("change", updateServerPromptMode);
+  $("#runtime-refresh-targets").addEventListener("click", async () => {
+    await loadRuntimeTargets({ selectDefault: !app.runtimeSelectedID });
+    if (app.runtimeSelectedID) await loadRuntimeTarget();
+  });
+  $("#runtime-refresh-properties").addEventListener("click", () => loadRuntimeTarget());
+  $("#runtime-property-search").addEventListener("input", renderRuntimeProperties);
+  $("#runtime-class-filter").addEventListener("change", renderRuntimeProperties);
+  $("#runtime-editable-only").addEventListener("change", renderRuntimeProperties);
+  $("#runtime-edit-form").addEventListener("submit", submitRuntimeEdit);
+  $("#runtime-edit-close").addEventListener("click", closeRuntimeEditor);
+  $("#runtime-edit-cancel").addEventListener("click", closeRuntimeEditor);
+  $("#runtime-edit-dialog").addEventListener("cancel", () => {
+    app.runtimeEditing = null;
+  });
 
   $("#language-select").addEventListener("change", async (event) => {
     try {
@@ -1261,7 +1636,14 @@ async function initialize() {
     ]);
     appendServerEvents(eventHistory.events || []);
     renderSnapshot(snapshot);
-    await Promise.all([loadConfig(), loadMods(), loadAccounts(), loadAccess(), loadServices()]);
+    await Promise.all([
+      loadConfig(),
+      loadMods(),
+      loadAccounts(),
+      loadAccess(),
+      loadServices(),
+      loadRuntimeTargets({ silent: true }),
+    ]);
     const stream = new EventSource("/api/events");
     stream.addEventListener("snapshot", (event) => {
       try { renderSnapshot(JSON.parse(event.data)); } catch (_) {}
@@ -1271,6 +1653,7 @@ async function initialize() {
       status.textContent = "Live stream reconnecting";
       status.classList.remove("connected");
     };
+    setInterval(refreshRuntimeLive, 2000);
   } catch (error) {
     toast(error.message, true);
   }

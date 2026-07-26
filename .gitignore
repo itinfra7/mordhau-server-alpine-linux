@@ -2,3 +2,4 @@
 *.tar.gz
 *.sha256
 /src/web/mordhau-web
+/src/runtime-bridge/*.dll
