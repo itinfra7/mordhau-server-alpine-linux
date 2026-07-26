@@ -1,5 +1,3 @@
-# MORDHAU Server Alpine Linux v2.1.1
-
 This release contains the following changes relative to v2.1.0.
 
 ## Changelog
