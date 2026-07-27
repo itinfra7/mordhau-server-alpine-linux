@@ -83,18 +83,21 @@ type playerHistoryFile struct {
 }
 
 type PlayerSummary struct {
-	PlayFabID     string    `json:"playfab_id"`
-	LastNickname  string    `json:"last_nickname,omitempty"`
-	LastConnected time.Time `json:"last_connected_at,omitempty"`
-	Nicknames     []string  `json:"nicknames,omitempty"`
-	Connected     bool      `json:"connected"`
-	Muted         bool      `json:"muted"`
-	Banned        bool      `json:"banned"`
+	PlayFabID     string          `json:"playfab_id"`
+	LastNickname  string          `json:"last_nickname,omitempty"`
+	LastConnected time.Time       `json:"last_connected_at,omitempty"`
+	Nicknames     []string        `json:"nicknames,omitempty"`
+	TotalSeconds  int64           `json:"total_seconds"`
+	LastLocation  *PlayerLocation `json:"last_location,omitempty"`
+	Connected     bool            `json:"connected"`
+	Muted         bool            `json:"muted"`
+	Banned        bool            `json:"banned"`
 }
 
 type PlayerKnownValue struct {
-	Value      string    `json:"value"`
-	LastSeenAt time.Time `json:"last_seen_at"`
+	Value      string          `json:"value"`
+	LastSeenAt time.Time       `json:"last_seen_at"`
+	Location   *PlayerLocation `json:"location,omitempty"`
 }
 
 type PlayerDetail struct {
@@ -123,6 +126,7 @@ type PlayersView struct {
 	Players      []PlayerSummary         `json:"players"`
 	Revision     uint64                  `json:"revision"`
 	Restrictions PlayerRestrictionStatus `json:"restrictions"`
+	GeoIP        GeoIPStatus             `json:"geoip"`
 	GeneratedAt  time.Time               `json:"generated_at"`
 }
 
@@ -763,7 +767,7 @@ func sortedPlayerComments(comments []PlayerComment) []PlayerComment {
 	return out
 }
 
-func playerSummary(player playerRecord) PlayerSummary {
+func playerSummary(player playerRecord, now time.Time) PlayerSummary {
 	connected, _ := playerConnectedAt(player)
 	nicknames := sortedPlayerKnownValues(player.Nicknames)
 	names := make([]string, 0, len(nicknames))
@@ -775,10 +779,26 @@ func playerSummary(player playerRecord) PlayerSummary {
 		LastNickname:  player.LastNickname,
 		LastConnected: player.LastConnected,
 		Nicknames:     names,
+		TotalSeconds:  playerTotalSeconds(player, now),
 		Connected:     connected,
 		Muted:         player.Muted,
 		Banned:        player.Banned,
 	}
+}
+
+func latestPlayerAddress(player playerRecord) string {
+	if len(player.Addresses) == 0 {
+		return ""
+	}
+	latest := 0
+	for index := 1; index < len(player.Addresses); index++ {
+		if player.Addresses[index].LastSeenAt.After(
+			player.Addresses[latest].LastSeenAt,
+		) {
+			latest = index
+		}
+	}
+	return player.Addresses[latest].Value
 }
 
 func playerDetail(player playerRecord, now time.Time) PlayerDetail {
@@ -824,7 +844,11 @@ func (m *Manager) playersView() PlayersView {
 	m.playersMu.RLock()
 	players := make([]PlayerSummary, 0, len(m.playerHistory.Players))
 	for _, player := range m.playerHistory.Players {
-		players = append(players, playerSummary(player))
+		summary := playerSummary(player, now)
+		summary.LastLocation = m.playerLocationForAddress(
+			latestPlayerAddress(player),
+		)
+		players = append(players, summary)
 	}
 	revision := m.playerHistory.Revision
 	m.playersMu.RUnlock()
@@ -838,6 +862,7 @@ func (m *Manager) playersView() PlayersView {
 		Players:      players,
 		Revision:     revision,
 		Restrictions: m.playerRestrictionStatus(),
+		GeoIP:        m.geoIPStatusView(),
 		GeneratedAt:  now,
 	}
 }
@@ -854,7 +879,13 @@ func (m *Manager) playerDetail(playFabID string) (PlayerDetail, error) {
 	}
 	record := m.playerHistory.Players[index]
 	m.playersMu.RUnlock()
-	return playerDetail(record, time.Now()), nil
+	detail := playerDetail(record, time.Now())
+	for index := range detail.Addresses {
+		detail.Addresses[index].Location = m.playerLocationForAddress(
+			detail.Addresses[index].Value,
+		)
+	}
+	return detail, nil
 }
 
 func parsePlayerRestrictionList(lines []string) map[string]struct{} {

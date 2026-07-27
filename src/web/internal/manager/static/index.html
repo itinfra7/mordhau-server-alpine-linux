@@ -299,11 +299,33 @@
                    placeholder="Search PlayFabID or nickname"
                    autocomplete="off" autocapitalize="none" spellcheck="false">
           </label>
+          <div class="player-sort-controls">
+            <label>
+              <span>Sort by</span>
+              <select id="player-sort-field">
+                <option value="last_connected">Last joined</option>
+                <option value="total_time">Total time</option>
+              </select>
+            </label>
+            <label>
+              <span>Order</span>
+              <select id="player-sort-direction">
+                <option value="desc">Most recent first</option>
+                <option value="asc">Oldest first</option>
+              </select>
+            </label>
+          </div>
           <div class="player-directory-status">
             <span id="player-restriction-status" class="hint">Restriction state not checked</span>
             <button id="player-refresh" class="ghost compact" type="button">Refresh</button>
           </div>
           <div id="player-list" class="player-list"></div>
+          <div class="player-geoip-credit">
+            <span id="player-geoip-status" class="hint">Location database not checked</span>
+            <a href="https://db-ip.com" target="_blank" rel="noopener noreferrer">
+              IP Geolocation by DB-IP
+            </a>
+          </div>
         </aside>
 
         <article class="card players-profile-card">

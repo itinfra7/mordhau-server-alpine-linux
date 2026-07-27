@@ -946,6 +946,53 @@ function formatPlayerDuration(totalSeconds) {
   return `${seconds}s`;
 }
 
+function countryFlagEmoji(countryCode) {
+  const code = typeof countryCode === "string"
+    ? countryCode.trim().toUpperCase()
+    : "";
+  if (!/^[A-Z]{2}$/.test(code)) return "🌐";
+  return String.fromCodePoint(
+    ...[...code].map((character) => character.charCodeAt(0) + 127397),
+  );
+}
+
+function playerLocationLabel(location) {
+  if (!location || typeof location !== "object") return "Location unavailable";
+  const values = [
+    location.country_name,
+    location.region,
+    location.city,
+  ];
+  const seen = new Set();
+  const parts = [];
+  for (const value of values) {
+    if (typeof value !== "string" || !value.trim()) continue;
+    const normalized = value.trim();
+    const key = normalized.toLocaleLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    parts.push(normalized);
+  }
+  return parts.length ? parts.join(" · ") : "Location unavailable";
+}
+
+function renderPlayerGeoIPStatus() {
+  const geoIP = app.players?.geoip || {};
+  const status = $("#player-geoip-status");
+  if (geoIP.available) {
+    const parts = ["Approximate IP location"];
+    if (geoIP.edition) parts.push(`database ${geoIP.edition}`);
+    if (geoIP.error) parts.push(`update warning: ${geoIP.error}`);
+    status.textContent = parts.join(" · ");
+    status.classList.toggle("restriction-error", Boolean(geoIP.error));
+    return;
+  }
+  status.textContent = geoIP.error
+    ? `Location unavailable · ${geoIP.error}`
+    : "Location database is downloading";
+  status.classList.add("restriction-error");
+}
+
 function playerRestrictionAvailable() {
   const status = app.players?.restrictions || {};
   return status.server_running === true && status.available === true;
@@ -979,16 +1026,61 @@ function playerMatchesQuery(player, query) {
     typeof value === "string" && value.toLocaleLowerCase().includes(query));
 }
 
+function updatePlayerSortDirectionLabels() {
+  const field = $("#player-sort-field").value;
+  const direction = $("#player-sort-direction");
+  const current = direction.value;
+  direction.replaceChildren();
+  const labels = field === "total_time"
+    ? [["desc", "Longest first"], ["asc", "Shortest first"]]
+    : [["desc", "Most recent first"], ["asc", "Oldest first"]];
+  for (const [value, label] of labels) {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = label;
+    direction.append(option);
+  }
+  direction.value = current === "asc" ? "asc" : "desc";
+}
+
+function sortedPlayersForDisplay(players) {
+  const field = $("#player-sort-field").value;
+  const direction = $("#player-sort-direction").value === "asc" ? 1 : -1;
+  return [...players].sort((left, right) => {
+    let leftValue;
+    let rightValue;
+    if (field === "total_time") {
+      leftValue = Number(left.total_seconds) || 0;
+      rightValue = Number(right.total_seconds) || 0;
+    } else {
+      leftValue = playerDate(left.last_connected_at)?.getTime() || 0;
+      rightValue = playerDate(right.last_connected_at)?.getTime() || 0;
+    }
+    if (leftValue !== rightValue) {
+      return (leftValue - rightValue) * direction;
+    }
+    const leftJoined = playerDate(left.last_connected_at)?.getTime() || 0;
+    const rightJoined = playerDate(right.last_connected_at)?.getTime() || 0;
+    if (leftJoined !== rightJoined) return rightJoined - leftJoined;
+    return String(left.playfab_id || "").localeCompare(
+      String(right.playfab_id || ""),
+    );
+  });
+}
+
 function renderPlayerList() {
   const list = $("#player-list");
   list.replaceChildren();
   const players = Array.isArray(app.players?.players) ? app.players.players : [];
   const query = $("#player-search").value.trim().toLocaleLowerCase();
-  const filtered = players.filter((player) => playerMatchesQuery(player, query));
+  const filtered = sortedPlayersForDisplay(
+    players.filter((player) => playerMatchesQuery(player, query)),
+  );
   $("#player-count").textContent = query
     ? `${filtered.length} of ${players.length}`
     : `${players.length} player${players.length === 1 ? "" : "s"}`;
   renderPlayerRestrictionStatus();
+  renderPlayerGeoIPStatus();
 
   if (!filtered.length) {
     const empty = document.createElement("p");
@@ -1012,16 +1104,29 @@ function renderPlayerList() {
 
     const identity = document.createElement("span");
     identity.className = "player-list-identity";
+    const nicknameRow = document.createElement("span");
+    nicknameRow.className = "player-list-name";
+    const flag = document.createElement("span");
+    flag.className = `player-country-flag${player.last_location ? "" : " unknown"}`;
+    flag.textContent = countryFlagEmoji(player.last_location?.country_code);
+    flag.title = playerLocationLabel(player.last_location);
+    flag.setAttribute("aria-label", flag.title);
     const nickname = document.createElement("strong");
     nickname.textContent = player.last_nickname || "Unknown nickname";
     const playFabID = document.createElement("code");
     playFabID.textContent = player.playfab_id;
-    identity.append(nickname, playFabID);
+    nicknameRow.append(flag, nickname);
+    identity.append(nicknameRow, playFabID);
 
     const meta = document.createElement("span");
     meta.className = "player-list-meta";
+    const activity = document.createElement("span");
+    activity.className = "player-list-activity";
     const joined = document.createElement("small");
     joined.textContent = `Last joined · ${formatPlayerDate(player.last_connected_at)}`;
+    const played = document.createElement("small");
+    played.textContent = `Total time · ${formatPlayerDuration(player.total_seconds)}`;
+    activity.append(joined, played);
     const states = document.createElement("span");
     states.className = "player-list-states";
     if (player.connected) {
@@ -1042,7 +1147,7 @@ function renderPlayerList() {
       banned.textContent = "Banned";
       states.append(banned);
     }
-    meta.append(joined, states);
+    meta.append(activity, states);
     button.append(identity, meta);
     button.addEventListener("click", async () => {
       if (app.playerSelectedID === player.playfab_id && app.playerDetail) return;
@@ -1074,6 +1179,37 @@ function renderPlayerKnownValues(selector, values, emptyText, code = false) {
     const seen = document.createElement("small");
     seen.textContent = `Last seen · ${formatPlayerDate(item.last_seen_at)}`;
     row.append(value, seen);
+    container.append(row);
+  }
+}
+
+function renderPlayerAddresses(values) {
+  const container = $("#player-addresses");
+  container.replaceChildren();
+  if (!Array.isArray(values) || !values.length) {
+    const empty = document.createElement("p");
+    empty.className = "hint";
+    empty.textContent = "No IP address has been correlated from the game log.";
+    container.append(empty);
+    return;
+  }
+  for (const item of values) {
+    const row = document.createElement("div");
+    row.className = "player-known-value player-address-value";
+    const address = document.createElement("code");
+    address.textContent = item.value;
+    const location = document.createElement("span");
+    location.className = `player-address-location${item.location ? "" : " unknown"}`;
+    const flag = document.createElement("span");
+    flag.className = "player-country-flag";
+    flag.textContent = countryFlagEmoji(item.location?.country_code);
+    flag.setAttribute("aria-hidden", "true");
+    const label = document.createElement("span");
+    label.textContent = playerLocationLabel(item.location);
+    location.append(flag, label);
+    const seen = document.createElement("small");
+    seen.textContent = `Last seen · ${formatPlayerDate(item.last_seen_at)}`;
+    row.append(address, location, seen);
     container.append(row);
   }
 }
@@ -1179,12 +1315,7 @@ function renderPlayerProfile() {
     detail.nicknames,
     "No nickname has been recorded.",
   );
-  renderPlayerKnownValues(
-    "#player-addresses",
-    detail.addresses,
-    "No IP address has been correlated from the game log.",
-    true,
-  );
+  renderPlayerAddresses(detail.addresses);
   renderPlayerComments(detail.comments);
   $("#player-comment-body").disabled = app.playerMutationRunning;
   $("#player-comment-submit").disabled = app.playerMutationRunning;
@@ -2395,6 +2526,12 @@ function bindEvents() {
     app.runtimeEditing = null;
   });
   $("#player-search").addEventListener("input", renderPlayerList);
+  $("#player-sort-field").addEventListener("change", () => {
+    updatePlayerSortDirectionLabels();
+    renderPlayerList();
+  });
+  $("#player-sort-direction").addEventListener("change", renderPlayerList);
+  updatePlayerSortDirectionLabels();
   $("#player-refresh").addEventListener("click", () => loadPlayers());
   $("#player-mute-toggle").addEventListener("change", (event) =>
     setPlayerRestriction("mute", event.target.checked));

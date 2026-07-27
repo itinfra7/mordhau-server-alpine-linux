@@ -805,6 +805,25 @@ input:focus, select:focus, textarea:focus { border-color: rgba(233, 79, 81, .65)
   display: block;
   width: 100%;
 }
+.player-sort-controls {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: .5rem;
+  margin-top: .55rem;
+}
+.player-sort-controls label {
+  display: grid;
+  min-width: 0;
+  gap: .3rem;
+}
+.player-sort-controls label > span {
+  color: var(--label);
+  font-size: .65rem;
+}
+.player-sort-controls select {
+  width: 100%;
+  min-width: 0;
+}
 .player-directory-status {
   display: flex;
   align-items: center;
@@ -818,6 +837,24 @@ input:focus, select:focus, textarea:focus { border-color: rgba(233, 79, 81, .65)
   font-size: .7rem;
 }
 .player-directory-status .restriction-error { color: var(--staged-text); }
+.player-geoip-credit {
+  display: grid;
+  gap: .2rem;
+  margin-top: .65rem;
+  padding-top: .6rem;
+  border-top: 1px solid var(--line-soft);
+}
+.player-geoip-credit .hint {
+  margin: 0;
+  font-size: .65rem;
+}
+.player-geoip-credit .restriction-error { color: var(--staged-text); }
+.player-geoip-credit a {
+  width: fit-content;
+  color: var(--accent);
+  font-size: .65rem;
+  font-weight: 750;
+}
 .player-list {
   display: grid;
   gap: .42rem;
@@ -848,6 +885,26 @@ input:focus, select:focus, textarea:focus { border-color: rgba(233, 79, 81, .65)
   min-width: 0;
   gap: .22rem;
 }
+.player-list-name {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: .38rem;
+}
+.player-list-name strong { min-width: 0; }
+.player-country-flag {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.2rem;
+  font-size: 1rem;
+  line-height: 1;
+}
+.player-country-flag.unknown {
+  opacity: .5;
+  filter: grayscale(1);
+}
 .player-list-identity strong {
   overflow: hidden;
   font-size: .82rem;
@@ -868,7 +925,12 @@ input:focus, select:focus, textarea:focus { border-color: rgba(233, 79, 81, .65)
   gap: .5rem;
   min-width: 0;
 }
-.player-list-meta > small {
+.player-list-activity {
+  display: grid;
+  min-width: 0;
+  gap: .14rem;
+}
+.player-list-activity small {
   overflow: hidden;
   color: var(--muted);
   font-size: .65rem;
@@ -1062,6 +1124,41 @@ input:focus, select:focus, textarea:focus { border-color: rgba(233, 79, 81, .65)
 .player-known-value small {
   color: var(--muted);
   font-size: .62rem;
+}
+.player-address-location {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: .35rem;
+  color: var(--text);
+  font-size: .7rem;
+  line-height: 1.4;
+}
+.player-address-location > span:last-child {
+  overflow-wrap: anywhere;
+}
+.player-address-location.unknown {
+  color: var(--muted);
+}
+.player-address-value {
+  grid-template-columns: minmax(0, 1fr) minmax(8rem, auto);
+  align-items: center;
+  column-gap: .7rem;
+}
+.player-address-value > code {
+  grid-column: 1;
+  grid-row: 1;
+}
+.player-address-value > small {
+  grid-column: 1;
+  grid-row: 2;
+}
+.player-address-value > .player-address-location {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  justify-content: flex-end;
+  max-width: 17rem;
+  text-align: right;
 }
 .player-comment-form {
   display: grid;
@@ -1702,6 +1799,18 @@ input:focus, select:focus, textarea:focus { border-color: rgba(233, 79, 81, .65)
   }
   .player-section-heading > .hint { max-width: none; text-align: left; }
   .player-comment-actions button { width: 100%; }
+  .player-address-value {
+    grid-template-columns: 1fr;
+  }
+  .player-address-value > code,
+  .player-address-value > small,
+  .player-address-value > .player-address-location {
+    grid-column: 1;
+    grid-row: auto;
+    justify-content: flex-start;
+    max-width: none;
+    text-align: left;
+  }
   .inline-form, .rule-create { align-items: stretch; flex-direction: column; }
   .inline-form input { width: 100%; }
   .inline-form button, .rule-create select, .rule-create input, .rule-create button {
@@ -1752,6 +1861,7 @@ input:focus, select:focus, textarea:focus { border-color: rgba(233, 79, 81, .65)
     flex-direction: column;
   }
   .player-directory-status button { width: 100%; }
+  .player-sort-controls { grid-template-columns: 1fr; }
   .player-list-meta {
     align-items: flex-start;
     flex-direction: column;

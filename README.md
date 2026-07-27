@@ -28,6 +28,8 @@ The repository provides:
 - Persistent player connection history with PlayFab ID and nickname search,
   known nickname and IP history, accumulated play time, moderation controls,
   and attributed administrator comments
+- Bidirectional player ordering by last connection or accumulated server time,
+  plus local country, region, and city enrichment from DB-IP City Lite
 - Structured Game.ini and Engine.ini editing with persistent item and section
   enable/disable state
 - Optional mod.io metadata, recursive dependency status, and dependency
@@ -50,7 +52,9 @@ The repository provides:
 - Per-account JSON Lines web access and change auditing
 
 MORDHAU, SteamCMD, Wine, and their assets are downloaded from their respective
-upstream distribution channels and are not included in this repository.
+upstream distribution channels and are not included in this repository. The
+DB-IP City Lite database is also downloaded at runtime and is not redistributed
+in the source archive.
 
 ## Supported Environment
 
@@ -59,7 +63,7 @@ upstream distribution channels and are not included in this repository.
 - OpenRC
 - Root privileges
 - Internet access to Alpine package mirrors, SteamCMD, Steam content servers,
-  and Go module sources
+  Go module sources, and the DB-IP City Lite download host
 - A mod.io API key when URL lookup, metadata, and recursive dependency
   inspection are required
 - A modern desktop or mobile browser
@@ -246,8 +250,12 @@ The web manager provides:
   replication metadata, net-dormancy flushing, and ForceNetUpdate
 - A Players directory ordered by most recent connection with PlayFab ID and
   historical-nickname search
+- Ascending or descending player ordering by last connection or accumulated
+  server time
 - Per-player last connection, accumulated server time, current-session state,
   known nicknames, and known IP addresses
+- Country flags and approximate country, region, and city labels resolved
+  locally from the latest available DB-IP City Lite database
 - Verified server mute/unmute and ban/unban controls plus attributed
   administrator comments
 - A default light theme with a persistent light/dark toggle
@@ -342,10 +350,40 @@ Persistent history is stored with mode `0600` at:
 
 The player list is ordered by the most recent successful connection. Search
 matches PlayFab ID, the latest nickname, and every retained historical
-nickname. A selected record shows its last connection, accumulated completed
-and current-session time, nickname history, and canonical IPv4 or IPv6
-addresses. Browser-local date and time formatting is used for displayed
-timestamps.
+nickname. Administrators can order results in either direction by last
+connection or accumulated server time. A selected record shows its last
+connection, accumulated completed and current-session time, nickname history,
+and canonical IPv4 or IPv6 addresses. Browser-local date and time formatting
+is used for displayed timestamps.
+
+Country flags and approximate country, administrative region, and city names
+come from the free monthly DB-IP City Lite MMDB database. The web manager
+downloads and verifies the current edition on first use, retains a working
+older edition if a newer download fails, and checks daily for a new monthly
+edition. DB-IP City Lite is used under the
+[Creative Commons Attribution 4.0](https://creativecommons.org/licenses/by/4.0/)
+license, and the Players panel includes the required DB-IP attribution link.
+Player addresses are looked up only in the local database; they are not
+submitted to an external geolocation API.
+
+The downloaded database and update state use mode `0600` under:
+
+```text
+/root/mordhau/.manager/geoip
+```
+
+Private addresses are never looked up. Public-looking addresses used by an
+internal NAT, VPN, or test network can be excluded by adding one IP address or
+CIDR prefix per line to:
+
+```text
+/root/mordhau/.manager/geoip/ignore-networks
+```
+
+Blank lines and lines beginning with `#` are ignored. Restart only
+`mordhau-web` after editing the file. GeoIP results are approximate and may
+identify a carrier, VPN endpoint, or upstream gateway instead of a player's
+physical location.
 
 Every authenticated web account can add a player comment. Each comment stores
 the responsible account and creation time. Comment text is displayed as text,
@@ -840,6 +878,12 @@ Changing a boot mode does not change the current process state.
   credentials, the last working on-demand RCON credential, pending
   configuration, lifecycle results, player connection history, the
   server-event history, and the web audit log use root-only permissions.
+- DB-IP City Lite data, update state, and ignored-network configuration are
+  root-only. Updates use a fixed HTTPS origin, reject redirects, enforce
+  compressed and expanded size limits, preserve a filesystem reserve, verify
+  the complete MMDB search tree, and replace the active database atomically.
+- Player IP geolocation uses only that local MMDB reader; player addresses are
+  not sent to DB-IP or another lookup API.
 - CustomPaks upload and inactive storage are root-only. Package mutations share
   the lifecycle lock, reject paths and overwrite conflicts, and are not
   applied while a managed server launch is in progress.
@@ -943,7 +987,9 @@ framing, Korean legacy decoding, UTF-8 chat parsing, player-ID-based Unicode
 login/logout identity correlation, canonical connection-address correlation,
 idempotent archived/current player-history import, session-duration
 accounting, attributed persistent comments, verified mute/ban command
-handling, match/kill/score/punishment parsing,
+handling, GeoIP edition and ignored-prefix validation, local location-record
+normalization, fixed-origin download failure handling,
+match/kill/score/punishment parsing,
 missing-log creation, partial writes, truncation, and log replacement,
 ASCII-only Unicode token commands, UTF-8 message staging, spool permissions and
 stale-file cleanup, bridge acknowledgements, input validation, start-map
@@ -994,8 +1040,9 @@ shipping executable passes its supported-build digest check. Existing
 accounts, access rules, generated credentials, INI files, backups, logs,
 language selection, initial map, server ports, trusted proxy settings, mod.io
 settings, mod refresh interval, CustomPaks state and inactive/uploaded
-packages, player connection history and comments, latest lifecycle result,
-server-event history, and boot modes are preserved.
+packages, player connection history and comments, GeoIP database and ignored
+networks, latest lifecycle result, server-event history, and boot modes are
+preserved.
 
 To roll back management code:
 
@@ -1027,5 +1074,7 @@ or other third-party software.
 - Unreal Engine and Epic Games: https://www.unrealengine.com/
 - SteamCMD and Valve: https://developer.valvesoftware.com/wiki/SteamCMD
 - mod.io: https://mod.io/
+- DB-IP City Lite: https://db-ip.com/db/lite.php
+- MaxMind DB Reader for Go: https://github.com/oschwald/maxminddb-golang
 - Wine: https://www.winehq.org/
 - Author: itinfra7 (GitHub: https://github.com/itinfra7)

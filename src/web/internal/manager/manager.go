@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -17,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/oschwald/maxminddb-golang/v2"
 	"golang.org/x/crypto/argon2"
 )
 
@@ -64,6 +66,19 @@ type Manager struct {
 	playerRestrictionLastSync  time.Time
 	playerRestrictionLastError string
 
+	geoIPMu              sync.RWMutex
+	geoIPUpdateMu        sync.Mutex
+	geoIPReader          *maxminddb.Reader
+	geoIPStatus          GeoIPStatus
+	geoIPDatabaseFile    string
+	geoIPStateFile       string
+	geoIPIgnoreFile      string
+	geoIPIgnoredPrefixes []netip.Prefix
+	geoIPIgnoreError     string
+	geoIPDownloadBaseURL string
+	geoIPHTTPClient      *http.Client
+	geoIPNow             func() time.Time
+
 	loginMu       sync.Mutex
 	loginAttempts map[string]*loginAttempt
 
@@ -110,6 +125,7 @@ func New(trustedProxies ...netip.Prefix) (*Manager, error) {
 	for _, dir := range []string{
 		stateDir,
 		runtimeDir,
+		geoIPDir,
 		pendingDir,
 		backupDir,
 		logDir,
@@ -146,6 +162,12 @@ func New(trustedProxies ...netip.Prefix) (*Manager, error) {
 		playerArchiveDirectory: logDir,
 		playerCurrentLogFile:   gameLogPath,
 		playerServerProcess:    serverProcess,
+		geoIPDatabaseFile:      geoIPDatabasePath,
+		geoIPStateFile:         geoIPStatePath,
+		geoIPIgnoreFile:        geoIPIgnorePath,
+		geoIPDownloadBaseURL:   defaultGeoIPDownloadBaseURL,
+		geoIPHTTPClient:        defaultGeoIPHTTPClient,
+		geoIPNow:               time.Now,
 	}
 	for _, prefix := range trustedProxies {
 		canonical, err := canonicalTrustedProxyPrefix(prefix)
@@ -175,6 +197,7 @@ func New(trustedProxies ...netip.Prefix) (*Manager, error) {
 	if err := m.loadOrCreatePlayerHistory(); err != nil {
 		return nil, err
 	}
+	m.initializeGeoIP()
 	if err := m.ensureLanguage(); err != nil {
 		return nil, err
 	}
@@ -201,6 +224,7 @@ func (m *Manager) StartBackground(ctx context.Context) {
 	go m.metricsLoop(ctx)
 	go m.runtimeBridgeStatusLoop(ctx)
 	go m.gameLogLoop(ctx)
+	go m.geoIPUpdateLoop(ctx)
 	go m.cleanupLoop(ctx)
 	go m.modRefreshLoop(ctx)
 	go m.modRestartLoop(ctx)

@@ -7,6 +7,7 @@ const (
 	stateDir                  = rootDir + "/.manager"
 	logDir                    = rootDir + "/log"
 	runtimeDir                = stateDir + "/runtime"
+	geoIPDir                  = stateDir + "/geoip"
 	pendingDir                = stateDir + "/pending"
 	backupDir                 = stateDir + "/backups"
 	configDir                 = rootDir + "/Mordhau/Saved/Config/WindowsServer"
