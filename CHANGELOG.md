@@ -6,6 +6,12 @@ All notable changes to this repository are documented in this file.
 
 ### Added
 
+- Add a Players tab between Runtime and Configuration with a most-recent-first
+  PlayFab ID and nickname directory, historical nickname search, last
+  connection, accumulated server time, current-session state, and retained
+  nickname and canonical IP history.
+- Add verified mute/unmute and ban/unban toggles plus persistent player
+  comments attributed to the responsible web account.
 - Seed missing Engine.ini `IpNetDriver` values with
   `NetServerMaxTickRate=60` and `ConnectionTimeout=10.0` during installer
   initialization while preserving existing and intentionally disabled values.
@@ -18,11 +24,19 @@ All notable changes to this repository are documented in this file.
 
 ### Changed
 
+- Correlate accepted game connections, login requests, authentication, UTF-8
+  identity observations, and disconnect records into persistent player
+  sessions; import archived logs once and rescan the current log
+  idempotently.
 - Apply staged CustomPaks changes after Steam validation and immediately before
   each managed start or restart.
 
 ### Security
 
+- Store player history and comments in a mode-`0600` state file, require
+  authenticated CSRF-protected mutations, exclude comment text from audit
+  details, and confirm moderation changes against the running server's RCON
+  lists before reporting success.
 - Keep inactive and uploaded PAK files in root-only manager directories, apply
   all mutations under the lifecycle lock, and show project-managed packages as
   protected entries that cannot be deactivated, deleted, or manually replaced.
@@ -32,6 +46,10 @@ All notable changes to this repository are documented in this file.
 
 ### Validation
 
+- Verify Unicode identity and canonical IPv4/IPv6 correlation, session
+  deduplication, most-recent ordering, duration accounting, archived-log
+  import persistence, empty-array API contracts, attributed comment
+  persistence and audit exclusion, and RCON moderation command confirmation.
 - Verify manual and project-managed package discovery, protected-package
   deactivation/deletion/replacement rejection, inactive managed-package
   restoration, staged state rendering, activation/deactivation moves,

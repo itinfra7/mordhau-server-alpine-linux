@@ -227,6 +227,7 @@ func (m *Manager) snapshot() Snapshot {
 		EventSourceStatus:    status,
 		ServerEvents:         events,
 		ModRevision:          m.currentModRevision(),
+		PlayerRevision:       m.currentPlayerRevision(),
 		RuntimeBridge:        m.runtimeSummaryView(),
 		GeneratedAt:          time.Now(),
 	}

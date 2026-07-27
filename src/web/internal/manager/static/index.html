@@ -44,6 +44,7 @@
     <nav class="tabbar" aria-label="Manager sections">
       <button class="tab active" data-panel="dashboard">Dashboard</button>
       <button class="tab" data-panel="runtime">Runtime</button>
+      <button class="tab" data-panel="players">Players</button>
       <button class="tab" data-panel="configuration">Configuration</button>
       <button class="tab" data-panel="mods">Mods</button>
       <button class="tab" data-panel="custompaks">CustomPaks</button>
@@ -278,6 +279,142 @@
           </div>
           <p id="runtime-empty" class="hint">Choose an object from Runtime targets.</p>
           <div id="runtime-properties" class="runtime-properties"></div>
+        </article>
+      </div>
+    </section>
+
+    <section id="panel-players" class="panel">
+      <div class="players-layout">
+        <aside class="card players-directory-card">
+          <div class="card-heading wrap">
+            <div>
+              <p class="eyebrow">PLAYER HISTORY</p>
+              <h2>Known players</h2>
+            </div>
+            <span id="player-count" class="stage-pill">Loading</span>
+          </div>
+          <label class="player-search">
+            <span class="sr-only">Search players by PlayFabID or nickname</span>
+            <input id="player-search" type="search"
+                   placeholder="Search PlayFabID or nickname"
+                   autocomplete="off" autocapitalize="none" spellcheck="false">
+          </label>
+          <div class="player-directory-status">
+            <span id="player-restriction-status" class="hint">Restriction state not checked</span>
+            <button id="player-refresh" class="ghost compact" type="button">Refresh</button>
+          </div>
+          <div id="player-list" class="player-list"></div>
+        </aside>
+
+        <article class="card players-profile-card">
+          <div id="player-profile-empty" class="player-profile-empty">
+            <p class="eyebrow">PLAYER PROFILE</p>
+            <h2>Select a player</h2>
+            <p class="hint">
+              Choose a PlayFabID from the history to inspect connection activity,
+              moderation state, known identities, and administrator comments.
+            </p>
+          </div>
+
+          <div id="player-profile" class="hidden">
+            <div class="card-heading wrap player-profile-heading">
+              <div class="player-profile-identity">
+                <p class="eyebrow">PLAYER PROFILE</p>
+                <h2 id="player-profile-name">Unknown player</h2>
+                <code id="player-profile-id">—</code>
+              </div>
+              <div class="player-profile-badges">
+                <span id="player-profile-online" class="player-state-badge">Offline</span>
+                <span id="player-profile-muted" class="player-state-badge">Not muted</span>
+                <span id="player-profile-banned" class="player-state-badge">Not banned</span>
+              </div>
+            </div>
+
+            <div class="player-stat-grid">
+              <div class="player-stat">
+                <span>Last joined</span>
+                <strong id="player-last-connected">—</strong>
+              </div>
+              <div class="player-stat">
+                <span>Total time on server</span>
+                <strong id="player-total-time">—</strong>
+              </div>
+              <div class="player-stat">
+                <span>Current session</span>
+                <strong id="player-current-session">Offline</strong>
+              </div>
+            </div>
+
+            <section class="player-profile-section">
+              <div class="player-section-heading">
+                <div>
+                  <p class="eyebrow">SERVER MODERATION</p>
+                  <h3>Restrictions</h3>
+                </div>
+                <span id="player-moderation-hint" class="hint"></span>
+              </div>
+              <div class="player-moderation-grid">
+                <label class="player-moderation-toggle">
+                  <input id="player-mute-toggle" type="checkbox">
+                  <span>
+                    <strong>Muted</strong>
+                    <small>Permanent until explicitly unmuted</small>
+                  </span>
+                </label>
+                <label class="player-moderation-toggle danger-toggle">
+                  <input id="player-ban-toggle" type="checkbox">
+                  <span>
+                    <strong>Banned</strong>
+                    <small>Permanent until explicitly unbanned</small>
+                  </span>
+                </label>
+              </div>
+            </section>
+
+            <div class="player-identity-grid">
+              <section class="player-profile-section">
+                <div class="player-section-heading">
+                  <div>
+                    <p class="eyebrow">IDENTITIES</p>
+                    <h3>Known nicknames</h3>
+                  </div>
+                </div>
+                <div id="player-nicknames" class="player-known-values"></div>
+              </section>
+              <section class="player-profile-section">
+                <div class="player-section-heading">
+                  <div>
+                    <p class="eyebrow">CONNECTIONS</p>
+                    <h3>Known IP addresses</h3>
+                  </div>
+                </div>
+                <div id="player-addresses" class="player-known-values"></div>
+              </section>
+            </div>
+
+            <section class="player-profile-section player-comments-section">
+              <div class="player-section-heading">
+                <div>
+                  <p class="eyebrow">ADMINISTRATOR NOTES</p>
+                  <h3>Comments</h3>
+                </div>
+                <span id="player-comment-count" class="stage-pill">0 comments</span>
+              </div>
+              <form id="player-comment-form" class="player-comment-form">
+                <label for="player-comment-body">Leave a comment</label>
+                <textarea id="player-comment-body" rows="3" maxlength="2000"
+                          placeholder="Operational note for other web administrators"
+                          required></textarea>
+                <div class="player-comment-actions">
+                  <span class="hint">The signed-in web account and exact time are recorded.</span>
+                  <button id="player-comment-submit" class="primary" type="submit">
+                    Add comment
+                  </button>
+                </div>
+              </form>
+              <div id="player-comments" class="player-comments"></div>
+            </section>
+          </div>
         </article>
       </div>
     </section>

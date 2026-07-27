@@ -25,6 +25,9 @@ The repository provides:
   PlayFab ID
 - A shared live PlayerController count collected once by the server and
   distributed to every authenticated administrator
+- Persistent player connection history with PlayFab ID and nickname search,
+  known nickname and IP history, accumulated play time, moderation controls,
+  and attributed administrator comments
 - Structured Game.ini and Engine.ini editing with persistent item and section
   enable/disable state
 - Optional mod.io metadata, recursive dependency status, and dependency
@@ -241,6 +244,12 @@ The web manager provides:
 - Game-thread runtime property changes with expected-value conflict detection,
   type-aware controls and server-side validation, read-only type enforcement,
   replication metadata, net-dormancy flushing, and ForceNetUpdate
+- A Players directory ordered by most recent connection with PlayFab ID and
+  historical-nickname search
+- Per-player last connection, accumulated server time, current-session state,
+  known nicknames, and known IP addresses
+- Verified server mute/unmute and ban/unban controls plus attributed
+  administrator comments
 - A default light theme with a persistent light/dark toggle
 - Responsive phone, tablet, and desktop layouts with notched-display safe
   areas and touch-sized controls
@@ -314,6 +323,40 @@ precedence as ordinary CIDR rules.
 Each explicit network rule can store an optional single-line comment of up to
 160 Unicode characters. Comments are metadata only and do not affect address
 matching or rule precedence. Existing rules without a comment remain valid.
+
+## Player History and Moderation
+
+The Players panel reconstructs connection history from archived
+`Mordhau_<timestamp>.log` files and the current `Mordhau.log`, then follows new
+records while the web manager is running. Login requests, successful
+authentication, UTF-8 chat identity, and the authoritative game-connection
+close record are correlated by PlayFab ID. Archived logs are fingerprinted
+after a successful import, and connection start times prevent a repeated scan
+from duplicating sessions.
+
+Persistent history is stored with mode `0600` at:
+
+```text
+/root/mordhau/.manager/players.json
+```
+
+The player list is ordered by the most recent successful connection. Search
+matches PlayFab ID, the latest nickname, and every retained historical
+nickname. A selected record shows its last connection, accumulated completed
+and current-session time, nickname history, and canonical IPv4 or IPv6
+addresses. Browser-local date and time formatting is used for displayed
+timestamps.
+
+Every authenticated web account can add a player comment. Each comment stores
+the responsible account and creation time. Comment text is displayed as text,
+not HTML. Mute and ban toggles issue permanent-until-reversed MORDHAU RCON
+changes, then query the server's mute and ban lists before reporting success.
+These controls require a running game server and working local RCON
+configuration.
+
+Player IP history is sensitive administrative data and is available only
+after the same network-policy and account authentication checks as the rest
+of the manager.
 
 ## Runtime Reflection
 
@@ -474,6 +517,7 @@ server-wide refresh-setting changes, active-mod update detection, restart
 countdown notices, automatic restart requests, Game.ini and Engine.ini
 mutations, pending-configuration removal, CustomPak upload and staged-state
 changes, Unicode server-message sends,
+player mute and ban changes, attributed player comments,
 administrative RCON command success or failure, account changes,
 network-policy changes, runtime property changes and failures, OpenRC boot-mode
 changes, and saved web-port changes.
@@ -490,6 +534,8 @@ and byte counts, response-line count, truncation state, and outcome without
 recording command arguments or response text. Runtime-property audit events
 identify the target kind and class, declaring class, property, static-array
 index, replication scope, and outcome without recording the old or new value.
+Player-comment audit events record the PlayFab ID and outcome without
+recording comment text.
 
 ## Persistent Dashboard History
 
@@ -792,8 +838,8 @@ Changing a boot mode does not change the current process state.
   root-owned configuration files.
 - State files, disabled INI items and sections, sessions, generated
   credentials, the last working on-demand RCON credential, pending
-  configuration, lifecycle results, the server-event history, and the web
-  audit log use root-only permissions.
+  configuration, lifecycle results, player connection history, the
+  server-event history, and the web audit log use root-only permissions.
 - CustomPaks upload and inactive storage are root-only. Package mutations share
   the lifecycle lock, reject paths and overwrite conflicts, and are not
   applied while a managed server launch is in progress.
@@ -814,6 +860,9 @@ Changing a boot mode does not change the current process state.
   exact minimal CIDR blocks. Deny wins an equal-prefix tie except for the
   active emergency exact-address allow.
 - RCON connects to `127.0.0.1` from the web manager.
+- Player mute and ban changes require authentication and CSRF validation and
+  are accepted only after the running server's restriction lists confirm the
+  requested state.
 - Every authenticated web account can issue commands with full RCON
   administrator authority. Command arguments and responses are retained in
   the root-only server-event history but excluded from the separate web audit
@@ -891,7 +940,10 @@ explicit-disable preservation, RCON credential fallback order, administrative
 command validation, bounded response packet collection, actor attribution and
 audit argument exclusion, transport-status migration filtering, packet
 framing, Korean legacy decoding, UTF-8 chat parsing, player-ID-based Unicode
-login/logout identity correlation, match/kill/score/punishment parsing,
+login/logout identity correlation, canonical connection-address correlation,
+idempotent archived/current player-history import, session-duration
+accounting, attributed persistent comments, verified mute/ban command
+handling, match/kill/score/punishment parsing,
 missing-log creation, partial writes, truncation, and log replacement,
 ASCII-only Unicode token commands, UTF-8 message staging, spool permissions and
 stale-file cleanup, bridge acknowledgements, input validation, start-map
@@ -917,8 +969,9 @@ browser-time-zone timestamps, initial server-event history loading, the
 unified RCON/SAY prompt, mobile viewport metadata, touch targets, input sizing,
 safe-area handling, player-grouped Runtime navigation, type-specific Runtime
 edit controls, current-value search, manually indicated value refresh,
-narrow-screen control reflow, CustomPaks upload and staging controls, and
-mobile visibility of server and account status. The native build test
+narrow-screen control reflow, Players search/profile/moderation/comment
+controls, CustomPaks upload and staging controls, and mobile visibility of
+server and account status. The native build test
 compiles the Windows DLL twice, verifies deterministic output and its DXGI
 proxy export, and pins the PDB-derived property-export signature,
 enum-property layout, player identity fields, and net-dormancy entry point.
@@ -941,8 +994,8 @@ shipping executable passes its supported-build digest check. Existing
 accounts, access rules, generated credentials, INI files, backups, logs,
 language selection, initial map, server ports, trusted proxy settings, mod.io
 settings, mod refresh interval, CustomPaks state and inactive/uploaded
-packages, latest lifecycle result, server-event history, and boot modes are
-preserved.
+packages, player connection history and comments, latest lifecycle result,
+server-event history, and boot modes are preserved.
 
 To roll back management code:
 

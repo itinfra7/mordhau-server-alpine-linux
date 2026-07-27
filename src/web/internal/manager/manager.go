@@ -54,6 +54,16 @@ type Manager struct {
 	rconCommandMu        sync.Mutex
 	rconCommandExecute   func(command string) (rconCommandResult, error)
 
+	playersMu                  sync.RWMutex
+	playerHistory              playerHistoryFile
+	playerHistoryFile          string
+	playerArchiveDirectory     string
+	playerCurrentLogFile       string
+	playerServerProcess        func() (int, bool)
+	playerRestrictionMu        sync.Mutex
+	playerRestrictionLastSync  time.Time
+	playerRestrictionLastError string
+
 	loginMu       sync.Mutex
 	loginAttempts map[string]*loginAttempt
 
@@ -120,18 +130,22 @@ func New(trustedProxies ...netip.Prefix) (*Manager, error) {
 	}
 
 	m := &Manager{
-		loginAttempts:       make(map[string]*loginAttempt),
-		eventSourceStatus:   "Waiting for server",
-		auditPath:           webAuditLogPath,
-		operationPath:       operationStatePath,
-		rconLogPath:         rconEventLogPath,
-		modRefreshWake:      make(chan struct{}, 1),
-		modRestartWake:      make(chan struct{}, 1),
-		runtimeStatusPath:   runtimeBridgeStatusPath,
-		runtimeRequestPath:  runtimeBridgeRequestPath,
-		runtimeResponsePath: runtimeBridgeResponsePath,
-		runtimeTargetCache:  make(map[string]runtimeTargetCacheEntry),
-		customPakPaths:      customPaks,
+		loginAttempts:          make(map[string]*loginAttempt),
+		eventSourceStatus:      "Waiting for server",
+		auditPath:              webAuditLogPath,
+		operationPath:          operationStatePath,
+		rconLogPath:            rconEventLogPath,
+		modRefreshWake:         make(chan struct{}, 1),
+		modRestartWake:         make(chan struct{}, 1),
+		runtimeStatusPath:      runtimeBridgeStatusPath,
+		runtimeRequestPath:     runtimeBridgeRequestPath,
+		runtimeResponsePath:    runtimeBridgeResponsePath,
+		runtimeTargetCache:     make(map[string]runtimeTargetCacheEntry),
+		customPakPaths:         customPaks,
+		playerHistoryFile:      playerHistoryPath,
+		playerArchiveDirectory: logDir,
+		playerCurrentLogFile:   gameLogPath,
+		playerServerProcess:    serverProcess,
 	}
 	for _, prefix := range trustedProxies {
 		canonical, err := canonicalTrustedProxyPrefix(prefix)
@@ -156,6 +170,9 @@ func New(trustedProxies ...netip.Prefix) (*Manager, error) {
 		return nil, err
 	}
 	if err := m.loadAccess(); err != nil {
+		return nil, err
+	}
+	if err := m.loadOrCreatePlayerHistory(); err != nil {
 		return nil, err
 	}
 	if err := m.ensureLanguage(); err != nil {

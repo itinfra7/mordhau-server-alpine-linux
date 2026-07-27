@@ -28,6 +28,15 @@ const app = {
   runtimeLoading: false,
   runtimeReloadRequested: false,
   runtimeManualRefreshing: false,
+  players: null,
+  playerDetail: null,
+  playerSelectedID: "",
+  playerRevision: null,
+  playersLoading: false,
+  playersReloadRequested: false,
+  playerDetailLoading: false,
+  playerDetailRequestSequence: 0,
+  playerMutationRunning: false,
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -135,6 +144,14 @@ function renderSnapshot(snapshot) {
       app.modRevision !== snapshot.mod_revision;
     app.modRevision = snapshot.mod_revision;
     if (changed) loadMods();
+  }
+  if (Number.isSafeInteger(snapshot.player_revision)) {
+    const changed = app.playerRevision !== null &&
+      app.playerRevision !== snapshot.player_revision;
+    app.playerRevision = snapshot.player_revision;
+    if (changed && app.players && playersPanelActive()) {
+      loadPlayers({ silent: true });
+    }
   }
   setMeter("cpu", snapshot.metrics.cpu_percent);
   setMeter("memory", snapshot.metrics.memory.percent);
@@ -897,6 +914,404 @@ async function refreshRuntimeLive() {
   if (!runtimePanelActive() || $("#runtime-edit-dialog").open) return;
   await loadRuntimeTargets({ selectDefault: false, silent: true });
   if (app.runtimeSelectedID) await loadRuntimeTarget({ silent: true });
+}
+
+function playersPanelActive() {
+  return $("#panel-players").classList.contains("active");
+}
+
+function playerDate(value) {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime()) || date.getUTCFullYear() < 2000) return null;
+  return date;
+}
+
+function formatPlayerDate(value, fallback = "Unknown") {
+  const date = playerDate(value);
+  return date ? date.toLocaleString() : fallback;
+}
+
+function formatPlayerDuration(totalSeconds) {
+  let seconds = Math.max(0, Math.floor(Number(totalSeconds) || 0));
+  const days = Math.floor(seconds / 86400);
+  seconds %= 86400;
+  const hours = Math.floor(seconds / 3600);
+  seconds %= 3600;
+  const minutes = Math.floor(seconds / 60);
+  seconds %= 60;
+  if (days) return `${days}d ${hours}h ${minutes}m`;
+  if (hours) return `${hours}h ${minutes}m ${seconds}s`;
+  if (minutes) return `${minutes}m ${seconds}s`;
+  return `${seconds}s`;
+}
+
+function playerRestrictionAvailable() {
+  const status = app.players?.restrictions || {};
+  return status.server_running === true && status.available === true;
+}
+
+function renderPlayerRestrictionStatus() {
+  const status = app.players?.restrictions || {};
+  const element = $("#player-restriction-status");
+  if (status.available) {
+    element.textContent = `Server restrictions synced ${formatPlayerDate(status.last_synced_at)}`;
+    element.classList.remove("restriction-error");
+  } else if (!status.server_running) {
+    element.textContent = "Start the game server to change mute or ban state.";
+    element.classList.add("restriction-error");
+  } else {
+    element.textContent = status.error
+      ? `Restriction sync unavailable · ${status.error}`
+      : "Restriction sync unavailable";
+    element.classList.add("restriction-error");
+  }
+}
+
+function playerMatchesQuery(player, query) {
+  if (!query) return true;
+  const values = [
+    player.playfab_id,
+    player.last_nickname,
+    ...(Array.isArray(player.nicknames) ? player.nicknames : []),
+  ];
+  return values.some((value) =>
+    typeof value === "string" && value.toLocaleLowerCase().includes(query));
+}
+
+function renderPlayerList() {
+  const list = $("#player-list");
+  list.replaceChildren();
+  const players = Array.isArray(app.players?.players) ? app.players.players : [];
+  const query = $("#player-search").value.trim().toLocaleLowerCase();
+  const filtered = players.filter((player) => playerMatchesQuery(player, query));
+  $("#player-count").textContent = query
+    ? `${filtered.length} of ${players.length}`
+    : `${players.length} player${players.length === 1 ? "" : "s"}`;
+  renderPlayerRestrictionStatus();
+
+  if (!filtered.length) {
+    const empty = document.createElement("p");
+    empty.className = "hint player-list-empty";
+    empty.textContent = players.length
+      ? "No player matches that PlayFabID or nickname."
+      : "No player connections have been recorded yet.";
+    list.append(empty);
+    return;
+  }
+
+  for (const player of filtered) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "player-list-item";
+    button.classList.toggle("active", player.playfab_id === app.playerSelectedID);
+    button.setAttribute(
+      "aria-pressed",
+      String(player.playfab_id === app.playerSelectedID),
+    );
+
+    const identity = document.createElement("span");
+    identity.className = "player-list-identity";
+    const nickname = document.createElement("strong");
+    nickname.textContent = player.last_nickname || "Unknown nickname";
+    const playFabID = document.createElement("code");
+    playFabID.textContent = player.playfab_id;
+    identity.append(nickname, playFabID);
+
+    const meta = document.createElement("span");
+    meta.className = "player-list-meta";
+    const joined = document.createElement("small");
+    joined.textContent = `Last joined · ${formatPlayerDate(player.last_connected_at)}`;
+    const states = document.createElement("span");
+    states.className = "player-list-states";
+    if (player.connected) {
+      const online = document.createElement("i");
+      online.className = "player-list-state online";
+      online.textContent = "Online";
+      states.append(online);
+    }
+    if (player.muted) {
+      const muted = document.createElement("i");
+      muted.className = "player-list-state warning";
+      muted.textContent = "Muted";
+      states.append(muted);
+    }
+    if (player.banned) {
+      const banned = document.createElement("i");
+      banned.className = "player-list-state danger";
+      banned.textContent = "Banned";
+      states.append(banned);
+    }
+    meta.append(joined, states);
+    button.append(identity, meta);
+    button.addEventListener("click", async () => {
+      if (app.playerSelectedID === player.playfab_id && app.playerDetail) return;
+      app.playerSelectedID = player.playfab_id;
+      app.playerDetail = null;
+      renderPlayerList();
+      renderPlayerProfile();
+      await loadPlayerDetail();
+    });
+    list.append(button);
+  }
+}
+
+function renderPlayerKnownValues(selector, values, emptyText, code = false) {
+  const container = $(selector);
+  container.replaceChildren();
+  if (!Array.isArray(values) || !values.length) {
+    const empty = document.createElement("p");
+    empty.className = "hint";
+    empty.textContent = emptyText;
+    container.append(empty);
+    return;
+  }
+  for (const item of values) {
+    const row = document.createElement("div");
+    row.className = "player-known-value";
+    const value = document.createElement(code ? "code" : "strong");
+    value.textContent = item.value;
+    const seen = document.createElement("small");
+    seen.textContent = `Last seen · ${formatPlayerDate(item.last_seen_at)}`;
+    row.append(value, seen);
+    container.append(row);
+  }
+}
+
+function renderPlayerComments(comments) {
+  const container = $("#player-comments");
+  container.replaceChildren();
+  const values = Array.isArray(comments) ? comments : [];
+  $("#player-comment-count").textContent =
+    `${values.length} comment${values.length === 1 ? "" : "s"}`;
+  if (!values.length) {
+    const empty = document.createElement("p");
+    empty.className = "hint";
+    empty.textContent = "No administrator comments have been added.";
+    container.append(empty);
+    return;
+  }
+  for (const comment of values) {
+    const article = document.createElement("article");
+    article.className = "player-comment";
+    const meta = document.createElement("div");
+    meta.className = "player-comment-meta";
+    const author = document.createElement("strong");
+    author.textContent = comment.author || "Unknown account";
+    const time = document.createElement("time");
+    time.dateTime = comment.created_at || "";
+    time.textContent = formatPlayerDate(comment.created_at);
+    meta.append(author, time);
+    const body = document.createElement("p");
+    body.textContent = comment.body || "";
+    article.append(meta, body);
+    container.append(article);
+  }
+}
+
+function renderPlayerLiveDuration() {
+  const detail = app.playerDetail;
+  if (!detail || detail.playfab_id !== app.playerSelectedID) return;
+  let total = Number(detail.total_seconds) || 0;
+  if (detail.connected) {
+    const generatedAt = playerDate(detail.generated_at);
+    if (generatedAt) {
+      total += Math.max(0, Math.floor((Date.now() - generatedAt.getTime()) / 1000));
+    }
+  }
+  $("#player-total-time").textContent = formatPlayerDuration(total);
+}
+
+function renderPlayerProfile() {
+  const detail = app.playerDetail;
+  const valid = detail && detail.playfab_id === app.playerSelectedID;
+  $("#player-profile-empty").classList.toggle("hidden", Boolean(valid));
+  $("#player-profile").classList.toggle("hidden", !valid);
+  if (!valid) {
+    const heading = $("#player-profile-empty h2");
+    const hint = $("#player-profile-empty .hint");
+    if (app.playerSelectedID && app.playerDetailLoading) {
+      heading.textContent = "Loading player";
+      hint.textContent = "Reading connection history and administrator comments.";
+    } else if (app.playerSelectedID) {
+      heading.textContent = "Player unavailable";
+      hint.textContent = "Refresh the player list and select the record again.";
+    } else {
+      heading.textContent = "Select a player";
+      hint.textContent = "Choose a PlayFabID from the history to inspect connection activity, moderation state, known identities, and administrator comments.";
+    }
+    return;
+  }
+
+  $("#player-profile-name").textContent = detail.last_nickname || "Unknown nickname";
+  $("#player-profile-id").textContent = detail.playfab_id;
+  $("#player-last-connected").textContent =
+    formatPlayerDate(detail.last_connected_at, "Not recorded");
+  $("#player-current-session").textContent = detail.connected
+    ? `Online since ${formatPlayerDate(detail.active_since)}`
+    : "Offline";
+  renderPlayerLiveDuration();
+
+  const onlineBadge = $("#player-profile-online");
+  onlineBadge.textContent = detail.connected ? "Online" : "Offline";
+  onlineBadge.className = `player-state-badge${detail.connected ? " online" : ""}`;
+  const mutedBadge = $("#player-profile-muted");
+  mutedBadge.textContent = detail.muted ? "Muted" : "Not muted";
+  mutedBadge.className = `player-state-badge${detail.muted ? " warning" : ""}`;
+  const bannedBadge = $("#player-profile-banned");
+  bannedBadge.textContent = detail.banned ? "Banned" : "Not banned";
+  bannedBadge.className = `player-state-badge${detail.banned ? " danger" : ""}`;
+
+  const moderationAvailable = playerRestrictionAvailable() &&
+    !app.playerMutationRunning;
+  const mute = $("#player-mute-toggle");
+  const ban = $("#player-ban-toggle");
+  mute.checked = Boolean(detail.muted);
+  ban.checked = Boolean(detail.banned);
+  mute.disabled = !moderationAvailable;
+  ban.disabled = !moderationAvailable;
+  $("#player-moderation-hint").textContent = moderationAvailable
+    ? "Changes are executed and verified against the running server."
+    : (app.players?.restrictions?.error || "Server restriction state is unavailable.");
+
+  renderPlayerKnownValues(
+    "#player-nicknames",
+    detail.nicknames,
+    "No nickname has been recorded.",
+  );
+  renderPlayerKnownValues(
+    "#player-addresses",
+    detail.addresses,
+    "No IP address has been correlated from the game log.",
+    true,
+  );
+  renderPlayerComments(detail.comments);
+  $("#player-comment-body").disabled = app.playerMutationRunning;
+  $("#player-comment-submit").disabled = app.playerMutationRunning;
+}
+
+async function loadPlayerDetail({ silent = false } = {}) {
+  const playFabID = app.playerSelectedID;
+  if (!playFabID) {
+    app.playerDetail = null;
+    renderPlayerProfile();
+    return;
+  }
+  const requestSequence = ++app.playerDetailRequestSequence;
+  app.playerDetailLoading = true;
+  renderPlayerProfile();
+  try {
+    const detail = await api(
+      `/api/players/detail?playfab_id=${encodeURIComponent(playFabID)}`,
+    );
+    if (requestSequence === app.playerDetailRequestSequence &&
+        app.playerSelectedID === playFabID) {
+      app.playerDetail = detail;
+      renderPlayerProfile();
+    }
+  } catch (error) {
+    if (requestSequence === app.playerDetailRequestSequence &&
+        app.playerSelectedID === playFabID) {
+      app.playerDetail = null;
+      renderPlayerProfile();
+    }
+    if (!silent) toast(error.message, true);
+  } finally {
+    if (requestSequence === app.playerDetailRequestSequence) {
+      app.playerDetailLoading = false;
+      renderPlayerProfile();
+    }
+  }
+}
+
+async function loadPlayers({ silent = false } = {}) {
+  if (app.playersLoading) {
+    app.playersReloadRequested = true;
+    return;
+  }
+  app.playersLoading = true;
+  $("#player-refresh").disabled = true;
+  try {
+    const view = await api("/api/players");
+    app.players = view;
+    if (Number.isSafeInteger(view.revision)) app.playerRevision = view.revision;
+    const players = Array.isArray(view.players) ? view.players : [];
+    if (!players.some((player) => player.playfab_id === app.playerSelectedID)) {
+      app.playerSelectedID = players[0]?.playfab_id || "";
+      app.playerDetail = null;
+    }
+    renderPlayerList();
+    if (app.playerSelectedID) {
+      await loadPlayerDetail({ silent });
+    } else {
+      app.playerDetail = null;
+      renderPlayerProfile();
+    }
+  } catch (error) {
+    if (!silent) toast(error.message, true);
+  } finally {
+    app.playersLoading = false;
+    $("#player-refresh").disabled = false;
+    if (app.playersReloadRequested) {
+      app.playersReloadRequested = false;
+      loadPlayers({ silent: true });
+    }
+  }
+}
+
+async function setPlayerRestriction(restriction, enabled) {
+  const detail = app.playerDetail;
+  if (!detail || app.playerMutationRunning) return;
+  if (restriction === "ban" && enabled &&
+      !confirm(`Ban ${detail.last_nickname || detail.playfab_id} permanently until unbanned?`)) {
+    renderPlayerProfile();
+    return;
+  }
+  app.playerMutationRunning = true;
+  renderPlayerProfile();
+  try {
+    app.playerDetail = await api("/api/players/restriction", {
+      method: "POST",
+      body: {
+        playfab_id: detail.playfab_id,
+        restriction,
+        enabled,
+      },
+    });
+    toast(`${restriction === "ban" ? "Ban" : "Mute"} ${enabled ? "enabled" : "removed"} for ${detail.playfab_id}.`);
+    await loadPlayers({ silent: true });
+  } catch (error) {
+    toast(error.message, true);
+  } finally {
+    app.playerMutationRunning = false;
+    renderPlayerProfile();
+  }
+}
+
+async function submitPlayerComment(event) {
+  event.preventDefault();
+  const detail = app.playerDetail;
+  const body = $("#player-comment-body");
+  if (!detail || app.playerMutationRunning || !body.value.trim()) return;
+  app.playerMutationRunning = true;
+  renderPlayerProfile();
+  try {
+    app.playerDetail = await api("/api/players/comments", {
+      method: "POST",
+      body: {
+        playfab_id: detail.playfab_id,
+        body: body.value,
+      },
+    });
+    body.value = "";
+    renderPlayerProfile();
+    toast("Player comment added.");
+  } catch (error) {
+    toast(error.message, true);
+  } finally {
+    app.playerMutationRunning = false;
+    renderPlayerProfile();
+  }
 }
 
 async function loadConfig() {
@@ -1945,6 +2360,9 @@ function bindEvents() {
         if (app.runtimeSelectedID) loadRuntimeTarget({ silent: true });
       });
     }
+    if (tab.dataset.panel === "players") {
+      loadPlayers({ silent: true });
+    }
     if (tab.dataset.panel === "custompaks") {
       loadCustomPaks({ silent: true });
     }
@@ -1976,6 +2394,13 @@ function bindEvents() {
   $("#runtime-edit-dialog").addEventListener("cancel", () => {
     app.runtimeEditing = null;
   });
+  $("#player-search").addEventListener("input", renderPlayerList);
+  $("#player-refresh").addEventListener("click", () => loadPlayers());
+  $("#player-mute-toggle").addEventListener("change", (event) =>
+    setPlayerRestriction("mute", event.target.checked));
+  $("#player-ban-toggle").addEventListener("change", (event) =>
+    setPlayerRestriction("ban", event.target.checked));
+  $("#player-comment-form").addEventListener("submit", submitPlayerComment);
 
   $("#language-select").addEventListener("change", async (event) => {
     try {
@@ -2303,6 +2728,10 @@ async function initialize() {
       status.classList.remove("connected");
     };
     setInterval(refreshRuntimeLive, 2000);
+    setInterval(renderPlayerLiveDuration, 1000);
+    setInterval(() => {
+      if (playersPanelActive()) loadPlayers({ silent: true });
+    }, 30000);
   } catch (error) {
     toast(error.message, true);
   }

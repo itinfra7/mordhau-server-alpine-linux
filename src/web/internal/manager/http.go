@@ -32,6 +32,10 @@ func (m *Manager) Handler() http.Handler {
 	mux.HandleFunc("/api/runtime/status", m.withSession(m.runtimeStatusHandler))
 	mux.HandleFunc("/api/runtime/target", m.withSession(m.runtimeTargetHandler))
 	mux.HandleFunc("/api/runtime/property", m.withSession(m.runtimePropertyHandler))
+	mux.HandleFunc("/api/players", m.withSession(m.playersHandler))
+	mux.HandleFunc("/api/players/detail", m.withSession(m.playerDetailHandler))
+	mux.HandleFunc("/api/players/restriction", m.withSession(m.playerRestrictionHandler))
+	mux.HandleFunc("/api/players/comments", m.withSession(m.playerCommentHandler))
 	mux.HandleFunc("/api/server/action", m.withSession(m.serverActionHandler))
 	mux.HandleFunc("/api/server/events/history", m.withSession(m.rconHistoryHandler))
 	mux.HandleFunc("/api/rcon/history", m.withSession(m.rconHistoryHandler))
@@ -425,6 +429,155 @@ func (m *Manager) runtimePropertyHandler(
 		},
 	)
 	writeJSON(response, http.StatusOK, view)
+}
+
+func playerHTTPStatus(err error) int {
+	switch {
+	case errors.Is(err, errPlayerInvalid),
+		errors.Is(err, errPlayerCommentInvalid):
+		return http.StatusBadRequest
+	case errors.Is(err, errPlayerNotFound):
+		return http.StatusNotFound
+	case errors.Is(err, errPlayerCommentLimit):
+		return http.StatusConflict
+	case errors.Is(err, errPlayerServerStopped):
+		return http.StatusConflict
+	case errors.Is(err, errPlayerRestrictionSync):
+		return http.StatusBadGateway
+	default:
+		return http.StatusInternalServerError
+	}
+}
+
+func (m *Manager) playersHandler(
+	response http.ResponseWriter,
+	request *http.Request,
+	_ Session,
+) {
+	if request.Method != http.MethodGet {
+		response.Header().Set("Allow", http.MethodGet)
+		http.Error(response, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	_ = m.refreshPlayerRestrictions(false)
+	writeJSON(response, http.StatusOK, m.playersView())
+}
+
+func (m *Manager) playerDetailHandler(
+	response http.ResponseWriter,
+	request *http.Request,
+	_ Session,
+) {
+	if request.Method != http.MethodGet {
+		response.Header().Set("Allow", http.MethodGet)
+		http.Error(response, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	detail, err := m.playerDetail(request.URL.Query().Get("playfab_id"))
+	if err != nil {
+		writeError(response, playerHTTPStatus(err), err.Error())
+		return
+	}
+	writeJSON(response, http.StatusOK, detail)
+}
+
+func (m *Manager) playerRestrictionHandler(
+	response http.ResponseWriter,
+	request *http.Request,
+	session Session,
+) {
+	if request.Method != http.MethodPost {
+		response.Header().Set("Allow", http.MethodPost)
+		http.Error(response, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !validCSRF(request, session) {
+		writeError(response, http.StatusForbidden, "invalid CSRF token")
+		return
+	}
+	var change playerRestrictionRequest
+	if err := decodeJSON(response, request, &change); err != nil {
+		writeError(response, http.StatusBadRequest, err.Error())
+		return
+	}
+	detail, err := m.setPlayerRestriction(
+		change.PlayFabID,
+		change.Restriction,
+		change.Enabled,
+	)
+	auditDetails := map[string]string{
+		"playfab_id":  change.PlayFabID,
+		"restriction": change.Restriction,
+		"enabled":     strconv.FormatBool(change.Enabled),
+	}
+	if err != nil {
+		auditDetails["error"] = err.Error()
+		m.auditRequestEvent(
+			request,
+			session.Username,
+			"player_restriction_change_failed",
+			auditDetails,
+		)
+		writeError(response, playerHTTPStatus(err), err.Error())
+		return
+	}
+	m.auditRequestEvent(
+		request,
+		session.Username,
+		"player_restriction_changed",
+		auditDetails,
+	)
+	writeJSON(response, http.StatusOK, detail)
+}
+
+func (m *Manager) playerCommentHandler(
+	response http.ResponseWriter,
+	request *http.Request,
+	session Session,
+) {
+	if request.Method != http.MethodPost {
+		response.Header().Set("Allow", http.MethodPost)
+		http.Error(response, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !validCSRF(request, session) {
+		writeError(response, http.StatusForbidden, "invalid CSRF token")
+		return
+	}
+	var comment playerCommentRequest
+	if err := decodeJSON(response, request, &comment); err != nil {
+		writeError(response, http.StatusBadRequest, err.Error())
+		return
+	}
+	detail, err := m.addPlayerComment(
+		comment.PlayFabID,
+		session.Username,
+		comment.Body,
+	)
+	if err != nil {
+		m.auditRequestEvent(
+			request,
+			session.Username,
+			"player_comment_add_failed",
+			map[string]string{
+				"playfab_id": comment.PlayFabID,
+				"error":      err.Error(),
+			},
+		)
+		writeError(response, playerHTTPStatus(err), err.Error())
+		return
+	}
+	m.auditRequestEvent(
+		request,
+		session.Username,
+		"player_comment_added",
+		map[string]string{
+			"playfab_id": comment.PlayFabID,
+			"characters": strconv.Itoa(utf8.RuneCountInString(comment.Body)),
+			"utf8_bytes": strconv.Itoa(len(comment.Body)),
+		},
+	)
+	writeJSON(response, http.StatusCreated, detail)
 }
 
 func (m *Manager) eventsHandler(response http.ResponseWriter, request *http.Request, _ Session) {

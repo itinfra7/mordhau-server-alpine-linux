@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/netip"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -30,26 +32,44 @@ type gameLogFollower struct {
 }
 
 type gameLogEvent struct {
-	Time time.Time
-	Kind string
-	Text string
+	Time           time.Time
+	Kind           string
+	Text           string
+	PlayerAction   string
+	PlayerID       string
+	PlayerName     string
+	PlayerIP       string
+	PlayerJoinedAt time.Time
+}
+
+type gameLogPlayer struct {
+	name     string
+	ip       string
+	joinedAt time.Time
+}
+
+type pendingGameConnection struct {
+	ip       string
+	accepted time.Time
 }
 
 type gameLogProcessor struct {
-	players map[string]string
-	pending map[string]string
+	players     map[string]gameLogPlayer
+	pending     map[string]gameLogPlayer
+	connections []pendingGameConnection
 }
 
 func newGameLogProcessor() *gameLogProcessor {
 	return &gameLogProcessor{
-		players: make(map[string]string),
-		pending: make(map[string]string),
+		players: make(map[string]gameLogPlayer),
+		pending: make(map[string]gameLogPlayer),
 	}
 }
 
 func (processor *gameLogProcessor) reset() {
 	clear(processor.players)
 	clear(processor.pending)
+	processor.connections = nil
 }
 
 func (follower *gameLogFollower) initialize(onLine func(string)) (bool, error) {
@@ -257,23 +277,58 @@ func parseMordhauAuthentication(body string) (string, string, bool) {
 	return name, playerID, true
 }
 
-func parseMordhauGameConnectionClose(body string) (string, bool) {
+func parseMordhauRemoteAddress(body string) (string, bool) {
+	const marker = "RemoteAddr: "
+	start := strings.Index(body, marker)
+	if start < 0 {
+		return "", false
+	}
+	value := body[start+len(marker):]
+	if end := strings.IndexByte(value, ','); end >= 0 {
+		value = value[:end]
+	}
+	value = strings.TrimSpace(value)
+	addressPort, err := netip.ParseAddrPort(value)
+	if err == nil {
+		return normalizePlayerAddress(addressPort.Addr().Unmap().String())
+	}
+	if strings.HasPrefix(value, "[") && strings.HasSuffix(value, "]") {
+		value = strings.TrimSuffix(strings.TrimPrefix(value, "["), "]")
+	}
+	return normalizePlayerAddress(value)
+}
+
+func parseMordhauAcceptedGameConnection(body string) (string, bool) {
+	const marker = "LogNet: NotifyAcceptedConnection:"
+	if !strings.HasPrefix(body, marker) ||
+		!strings.Contains(body, "Driver: GameNetDriver ") ||
+		!strings.Contains(body, "UniqueId: INVALID") {
+		return "", false
+	}
+	return parseMordhauRemoteAddress(body)
+}
+
+func parseMordhauGameConnectionClose(body string) (string, string, bool) {
 	const marker = "LogNet: UChannel::CleanUp: ChIndex == 0. Closing connection."
 	const idMarker = "UniqueId: MordhauOnlineSubsystem:"
 	if !strings.HasPrefix(body, marker) ||
 		!strings.Contains(body, "Driver: GameNetDriver ") {
-		return "", false
+		return "", "", false
 	}
 	idStart := strings.LastIndex(body, idMarker)
 	if idStart < 0 {
-		return "", false
+		return "", "", false
 	}
 	playerID := body[idStart+len(idMarker):]
 	if idEnd := strings.IndexByte(playerID, ','); idEnd >= 0 {
 		playerID = playerID[:idEnd]
 	}
 	playerID = strings.TrimSpace(playerID)
-	return playerID, validMordhauPlayerID(playerID)
+	if !validMordhauPlayerID(playerID) {
+		return "", "", false
+	}
+	address, _ := parseMordhauRemoteAddress(body)
+	return playerID, address, true
 }
 
 func parseMordhauChatPayload(body string) (
@@ -453,26 +508,101 @@ func parseMordhauPunishment(body string) (string, bool) {
 	return "", false
 }
 
+func (processor *gameLogProcessor) addConnection(address string, accepted time.Time) {
+	if address == "" || accepted.IsZero() {
+		return
+	}
+	processor.pruneConnections(accepted)
+	processor.connections = append(processor.connections, pendingGameConnection{
+		ip:       address,
+		accepted: accepted,
+	})
+}
+
+func (processor *gameLogProcessor) pruneConnections(now time.Time) {
+	keep := processor.connections[:0]
+	for _, connection := range processor.connections {
+		age := now.Sub(connection.accepted)
+		if age >= 0 && age <= playerPendingConnectionMaxAge {
+			keep = append(keep, connection)
+		}
+	}
+	processor.connections = keep
+}
+
+func (processor *gameLogProcessor) nextConnection(now time.Time) string {
+	processor.pruneConnections(now)
+	if len(processor.connections) == 0 {
+		return ""
+	}
+	address := processor.connections[0].ip
+	processor.connections = processor.connections[1:]
+	return address
+}
+
+func (processor *gameLogProcessor) closePlayerSessions(at time.Time) []gameLogEvent {
+	if at.IsZero() || len(processor.players) == 0 {
+		return nil
+	}
+	events := make([]gameLogEvent, 0, len(processor.players))
+	for playerID, player := range processor.players {
+		if player.joinedAt.IsZero() {
+			continue
+		}
+		events = append(events, gameLogEvent{
+			Time:           at,
+			PlayerAction:   "logout",
+			PlayerID:       playerID,
+			PlayerName:     player.name,
+			PlayerIP:       player.ip,
+			PlayerJoinedAt: player.joinedAt,
+		})
+	}
+	sort.Slice(events, func(left, right int) bool {
+		return events[left].PlayerID < events[right].PlayerID
+	})
+	return events
+}
+
 func (processor *gameLogProcessor) processLine(line string) []gameLogEvent {
 	eventTime, body, ok := parseMordhauLogEnvelope(line)
 	if !ok {
 		return nil
 	}
 
+	if address, ok := parseMordhauAcceptedGameConnection(body); ok {
+		processor.addConnection(address, eventTime)
+		return nil
+	}
 	if name, playerID, ok := parseMordhauLoginRequest(body); ok {
-		processor.pending[playerID] = name
+		processor.pending[playerID] = gameLogPlayer{
+			name: name,
+			ip:   processor.nextConnection(eventTime),
+		}
 		return nil
 	}
 	if name, playerID, ok := parseMordhauAuthentication(body); ok {
-		if pendingName := processor.pending[playerID]; pendingName != "" {
-			name = pendingName
+		pending := processor.pending[playerID]
+		if pending.name != "" {
+			name = pending.name
 		}
-		_, alreadyActive := processor.players[playerID]
-		processor.players[playerID] = name
-		delete(processor.pending, playerID)
+		existing, alreadyActive := processor.players[playerID]
 		if alreadyActive {
+			existing.name = name
+			if existing.ip == "" {
+				existing.ip = pending.ip
+			}
+			processor.players[playerID] = existing
+			delete(processor.pending, playerID)
 			return nil
 		}
+		player := gameLogPlayer{
+			name:     name,
+			ip:       pending.ip,
+			joinedAt: eventTime,
+		}
+		processor.players[playerID] = player
+		delete(processor.pending, playerID)
 		return []gameLogEvent{{
 			Time: eventTime,
 			Kind: "login",
@@ -482,19 +612,31 @@ func (processor *gameLogProcessor) processLine(line string) []gameLogEvent {
 				name,
 				playerID,
 			),
+			PlayerAction:   "login",
+			PlayerID:       playerID,
+			PlayerName:     name,
+			PlayerIP:       player.ip,
+			PlayerJoinedAt: eventTime,
 		}}
 	}
 	if chat, playerID, name, ok := parseMordhauChatPayload(body); ok {
-		processor.players[playerID] = name
+		player := processor.players[playerID]
+		player.name = name
+		processor.players[playerID] = player
 		delete(processor.pending, playerID)
 		return []gameLogEvent{{
-			Time: eventTime,
-			Kind: "chat",
-			Text: chat,
+			Time:           eventTime,
+			Kind:           "chat",
+			Text:           chat,
+			PlayerAction:   "observe",
+			PlayerID:       playerID,
+			PlayerName:     name,
+			PlayerIP:       player.ip,
+			PlayerJoinedAt: player.joinedAt,
 		}}
 	}
-	if playerID, ok := parseMordhauGameConnectionClose(body); ok {
-		name, active := processor.players[playerID]
+	if playerID, address, ok := parseMordhauGameConnectionClose(body); ok {
+		player, active := processor.players[playerID]
 		delete(processor.players, playerID)
 		delete(processor.pending, playerID)
 		if !active {
@@ -506,9 +648,14 @@ func (processor *gameLogProcessor) processLine(line string) []gameLogEvent {
 			Text: fmt.Sprintf(
 				"Login: %s: %s (%s) logged out",
 				eventTime.Format("2006.01.02-15.04.05"),
-				name,
+				player.name,
 				playerID,
 			),
+			PlayerAction:   "logout",
+			PlayerID:       playerID,
+			PlayerName:     player.name,
+			PlayerIP:       address,
+			PlayerJoinedAt: player.joinedAt,
 		}}
 	}
 	if text, ok := parseMordhauMatchState(body); ok {
@@ -554,6 +701,7 @@ func (manager *Manager) gameLogLoop(ctx context.Context) {
 		running := serverRunning()
 		if !running {
 			if wasRunning {
+				manager.recordPlayerGameEvents(processor.closePlayerSessions(time.Now()))
 				processor.reset()
 			}
 			wasRunning = false
@@ -576,6 +724,7 @@ func (manager *Manager) gameLogLoop(ctx context.Context) {
 			if follower.initialized {
 				lines, replaced, available, err := follower.readNewLines()
 				if replaced {
+					manager.recordPlayerGameEvents(processor.closePlayerSessions(time.Now()))
 					processor.reset()
 				}
 				if err != nil {
@@ -591,11 +740,16 @@ func (manager *Manager) gameLogLoop(ctx context.Context) {
 					} else {
 						manager.setEventSourceState(false, "Waiting for Mordhau.log")
 					}
+					var playerEvents []gameLogEvent
 					for _, line := range lines {
 						for _, event := range processor.processLine(line) {
 							manager.addRCONEventAt(event.Time, event.Kind, event.Text)
+							if event.PlayerAction != "" {
+								playerEvents = append(playerEvents, event)
+							}
 						}
 					}
+					manager.recordPlayerGameEvents(playerEvents)
 				}
 			}
 		}

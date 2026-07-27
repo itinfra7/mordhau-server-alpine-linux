@@ -18,6 +18,7 @@ const (
 	rconStatePath             = stateDir + "/rcon-last.json"
 	operationStatePath        = stateDir + "/operation.json"
 	disabledINIPath           = stateDir + "/disabled-ini-entries.json"
+	playerHistoryPath         = stateDir + "/players.json"
 	webAuditLogPath           = logDir + "/mordhau-web.log"
 	rconEventLogPath          = logDir + "/mordhau-rcon.log"
 	defaultAccount            = rootDir + "/default_web_account.txt"
@@ -141,6 +142,7 @@ type Snapshot struct {
 	EventSourceStatus    string               `json:"event_source_status"`
 	ServerEvents         []RCONEvent          `json:"server_events"`
 	ModRevision          uint64               `json:"mod_revision"`
+	PlayerRevision       uint64               `json:"player_revision"`
 	RuntimeBridge        RuntimeBridgeSummary `json:"runtime_bridge"`
 	GeneratedAt          time.Time            `json:"generated_at"`
 }
