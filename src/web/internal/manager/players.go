@@ -411,10 +411,9 @@ func updatePlayerKnownValue(
 	return true
 }
 
-func updatePlayerIdentity(
+func updatePlayerAuthenticatedNickname(
 	player *playerRecord,
 	name string,
-	address string,
 	seenAt time.Time,
 ) bool {
 	changed := false
@@ -441,17 +440,23 @@ func updatePlayerIdentity(
 			changed = true
 		}
 	}
+	return changed
+}
+
+func updatePlayerAddress(
+	player *playerRecord,
+	address string,
+	seenAt time.Time,
+) bool {
 	if normalized, ok := normalizePlayerAddress(address); ok {
-		if updatePlayerKnownValue(
+		return updatePlayerKnownValue(
 			&player.Addresses,
 			normalized,
 			seenAt,
 			playerMaximumAddresses,
-		) {
-			changed = true
-		}
+		)
 	}
-	return changed
+	return false
 }
 
 func playerConnectionIndex(player *playerRecord, joinedAt time.Time) int {
@@ -474,7 +479,12 @@ func applyPlayerGameEvent(history *playerHistoryFile, event gameLogEvent) bool {
 	}
 	player, created := ensurePlayerRecord(history, event.PlayerID)
 	changed := created
-	if updatePlayerIdentity(player, event.PlayerName, event.PlayerIP, event.Time) {
+	if event.PlayerAction == "login" &&
+		event.PlayerNameAuthenticated &&
+		updatePlayerAuthenticatedNickname(player, event.PlayerName, event.Time) {
+		changed = true
+	}
+	if updatePlayerAddress(player, event.PlayerIP, event.Time) {
 		changed = true
 	}
 

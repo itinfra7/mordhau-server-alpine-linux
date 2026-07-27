@@ -13,7 +13,10 @@ import (
 	"time"
 )
 
-const testPlayerID = "D5E9DEF6A65BDE65"
+const (
+	testPlayerID      = "FEDCBA9876543210"
+	testOtherPlayerID = "0123456789ABCDEF"
+)
 
 func testPlayerLogLines(
 	playerID string,
@@ -51,7 +54,7 @@ func TestGameLogProcessorCorrelatesPlayerIdentityAndCanonicalAddress(t *testing.
 	var events []gameLogEvent
 	for _, line := range testPlayerLogLines(
 		testPlayerID,
-		"쿠아해병",
+		"테스트유저",
 		"203.0.113.45",
 		start,
 		30*time.Second,
@@ -64,17 +67,20 @@ func TestGameLogProcessorCorrelatesPlayerIdentityAndCanonicalAddress(t *testing.
 	login := events[0]
 	if login.PlayerAction != "login" ||
 		login.PlayerID != testPlayerID ||
-		login.PlayerName != "쿠아해병" ||
+		login.PlayerName != "테스트유저" ||
+		!login.PlayerNameAuthenticated ||
 		login.PlayerIP != "203.0.113.45" ||
 		!login.PlayerJoinedAt.Equal(start) {
 		t.Fatalf("login identity = %+v", login)
 	}
 	if events[1].PlayerAction != "observe" ||
+		events[1].PlayerNameAuthenticated ||
 		events[1].PlayerIP != "203.0.113.45" {
 		t.Fatalf("chat observation = %+v", events[1])
 	}
 	logout := events[2]
 	if logout.PlayerAction != "logout" ||
+		logout.PlayerNameAuthenticated ||
 		logout.PlayerIP != "203.0.113.45" ||
 		!logout.PlayerJoinedAt.Equal(start) ||
 		!logout.Time.Equal(start.Add(30*time.Second)) {
@@ -123,7 +129,7 @@ func TestPlayersViewSortsRecentConnectionsAndCountsOpenSession(t *testing.T) {
 					LastConnected: older,
 				},
 				{
-					PlayFabID:     "207774DA34BBD416",
+					PlayFabID:     testOtherPlayerID,
 					LastConnected: recent,
 					Connections: []playerConnection{{
 						JoinedAt: recent,
@@ -136,7 +142,7 @@ func TestPlayersViewSortsRecentConnectionsAndCountsOpenSession(t *testing.T) {
 
 	view := manager.playersView()
 	if len(view.Players) != 2 ||
-		view.Players[0].PlayFabID != "207774DA34BBD416" ||
+		view.Players[0].PlayFabID != testOtherPlayerID ||
 		view.Players[1].PlayFabID != testPlayerID {
 		t.Fatalf("player order = %#v", view.Players)
 	}
@@ -146,22 +152,23 @@ func TestPlayersViewSortsRecentConnectionsAndCountsOpenSession(t *testing.T) {
 	}
 }
 
-func TestPlayerHistoryDeduplicatesSessionsAndPreservesUnicode(t *testing.T) {
+func TestPlayerHistoryAcceptsNicknamesOnlyFromAuthenticatedLogin(t *testing.T) {
 	start := time.Date(2026, 7, 27, 12, 0, 0, 0, time.Local)
 	events := []gameLogEvent{
 		{
-			Time:           start,
-			PlayerAction:   "login",
-			PlayerID:       testPlayerID,
-			PlayerName:     "첫 이름",
-			PlayerIP:       "203.0.113.45",
-			PlayerJoinedAt: start,
+			Time:                    start,
+			PlayerAction:            "login",
+			PlayerID:                testPlayerID,
+			PlayerName:              "첫 이름",
+			PlayerNameAuthenticated: true,
+			PlayerIP:                "203.0.113.45",
+			PlayerJoinedAt:          start,
 		},
 		{
 			Time:           start.Add(5 * time.Second),
 			PlayerAction:   "observe",
 			PlayerID:       testPlayerID,
-			PlayerName:     "Русский 이름",
+			PlayerName:     "RuntimeInjected",
 			PlayerIP:       "203.0.113.45",
 			PlayerJoinedAt: start,
 		},
@@ -169,7 +176,7 @@ func TestPlayerHistoryDeduplicatesSessionsAndPreservesUnicode(t *testing.T) {
 			Time:           start.Add(30 * time.Second),
 			PlayerAction:   "logout",
 			PlayerID:       testPlayerID,
-			PlayerName:     "Русский 이름",
+			PlayerName:     "RuntimeInjected",
 			PlayerIP:       "203.0.113.45",
 			PlayerJoinedAt: start,
 		},
@@ -185,14 +192,106 @@ func TestPlayerHistoryDeduplicatesSessionsAndPreservesUnicode(t *testing.T) {
 		t.Fatalf("players = %#v", history.Players)
 	}
 	player := history.Players[0]
-	if player.LastNickname != "Русский 이름" ||
-		len(player.Nicknames) != 2 ||
+	if player.LastNickname != "첫 이름" ||
+		len(player.Nicknames) != 1 ||
+		player.Nicknames[0].Value != "첫 이름" ||
 		len(player.Addresses) != 1 ||
 		len(player.Connections) != 1 {
 		t.Fatalf("player identity = %+v", player)
 	}
 	if total := playerTotalSeconds(player, start.Add(time.Hour)); total != 30 {
 		t.Fatalf("total seconds = %d, want 30", total)
+	}
+}
+
+func TestPlayerHistoryRecordsLaterAuthenticatedUnicodeNickname(t *testing.T) {
+	start := time.Date(2026, 7, 27, 12, 0, 0, 0, time.Local)
+	history := playerHistoryFile{Version: playerHistoryVersion}
+	for _, event := range []gameLogEvent{
+		{
+			Time:                    start,
+			PlayerAction:            "login",
+			PlayerID:                testPlayerID,
+			PlayerName:              "첫 이름",
+			PlayerNameAuthenticated: true,
+			PlayerIP:                "203.0.113.45",
+			PlayerJoinedAt:          start,
+		},
+		{
+			Time:           start.Add(time.Minute),
+			PlayerAction:   "logout",
+			PlayerID:       testPlayerID,
+			PlayerName:     "첫 이름",
+			PlayerIP:       "203.0.113.45",
+			PlayerJoinedAt: start,
+		},
+		{
+			Time:                    start.Add(time.Hour),
+			PlayerAction:            "login",
+			PlayerID:                testPlayerID,
+			PlayerName:              "Русский 이름",
+			PlayerNameAuthenticated: true,
+			PlayerIP:                "203.0.113.45",
+			PlayerJoinedAt:          start.Add(time.Hour),
+		},
+	} {
+		if !applyPlayerGameEvent(&history, event) {
+			t.Fatalf("event did not change history: %+v", event)
+		}
+	}
+
+	player := history.Players[0]
+	if player.LastNickname != "Русский 이름" ||
+		len(player.Nicknames) != 2 ||
+		player.Nicknames[0].Value != "첫 이름" ||
+		player.Nicknames[1].Value != "Русский 이름" {
+		t.Fatalf("player identity = %+v", player)
+	}
+}
+
+func TestPlayerHistoryObservationCannotReprioritizeKnownNickname(t *testing.T) {
+	start := time.Date(2026, 7, 27, 12, 0, 0, 0, time.Local)
+	history := playerHistoryFile{Version: playerHistoryVersion}
+	for _, event := range []gameLogEvent{
+		{
+			Time:                    start,
+			PlayerAction:            "login",
+			PlayerID:                testPlayerID,
+			PlayerName:              "Earlier",
+			PlayerNameAuthenticated: true,
+			PlayerJoinedAt:          start,
+		},
+		{
+			Time:                    start.Add(time.Hour),
+			PlayerAction:            "login",
+			PlayerID:                testPlayerID,
+			PlayerName:              "Current",
+			PlayerNameAuthenticated: true,
+			PlayerJoinedAt:          start.Add(time.Hour),
+		},
+	} {
+		if !applyPlayerGameEvent(&history, event) {
+			t.Fatalf("authenticated login did not change history: %+v", event)
+		}
+	}
+
+	observed := gameLogEvent{
+		Time:           start.Add(2 * time.Hour),
+		PlayerAction:   "observe",
+		PlayerID:       testPlayerID,
+		PlayerName:     "Earlier",
+		PlayerJoinedAt: start.Add(time.Hour),
+	}
+	if applyPlayerGameEvent(&history, observed) {
+		t.Fatal("mutable observation changed persistent player history")
+	}
+
+	player := history.Players[0]
+	if player.LastNickname != "Current" ||
+		len(player.Nicknames) != 2 ||
+		!player.Nicknames[0].LastSeenAt.Equal(start) ||
+		!player.Nicknames[1].LastSeenAt.Equal(start.Add(time.Hour)) {
+		t.Fatalf("mutable observation reprioritized nickname history: %+v", player)
 	}
 }
 

@@ -1288,12 +1288,12 @@ func TestGameLogFollowerStartsAtEndAndFollowsPartialLinesAndRotation(t *testing.
 }
 
 func TestGameLogProcessorPreservesUnicodePlayerLifecycle(t *testing.T) {
-	const playerID = "D5E9DEF6A65BDE65"
+	const playerID = "FEDCBA9876543210"
 	processor := newGameLogProcessor()
 	lines := []string{
-		`[2026.07.25-13.13.10:001][100]LogNet: Login request: ?Name=쿠아해병 userId: MordhauOnlineSubsystem:` + playerID + ` platform: Steam`,
+		`[2026.07.25-13.13.10:001][100]LogNet: Login request: ?Name=테스트유저 userId: MordhauOnlineSubsystem:` + playerID + ` platform: Steam`,
 		`[2026.07.25-13.13.11:002][101]LogMordhauGameSession: Player authentication for ???? (` + playerID + `) completed successfully`,
-		`[2026.07.25-13.13.12:003][102]LogGameMode: Display: (ALL) 쿠아해병, ` + playerID + `: "한국어 — Русский — 简体中文"`,
+		`[2026.07.25-13.13.12:003][102]LogGameMode: Display: (ALL) 테스트유저, ` + playerID + `: "한국어 — Русский — 简体中文"`,
 		`[2026.07.25-13.13.14:004][103]LogNet: UChannel::CleanUp: ChIndex == 0. Closing connection. [UNetConnection] RemoteAddr: 127.0.0.1:1234, Name: IpConnection_0, Driver: GameNetDriver GameNetDriver, IsServer: YES, UniqueId: MordhauOnlineSubsystem:` + playerID,
 	}
 
@@ -1305,15 +1305,15 @@ func TestGameLogProcessorPreservesUnicodePlayerLifecycle(t *testing.T) {
 		t.Fatalf("player lifecycle event count = %d: %#v", len(events), events)
 	}
 	if events[0].Kind != "login" ||
-		events[0].Text != "Login: 2026.07.25-13.13.11: 쿠아해병 ("+playerID+") logged in" {
+		events[0].Text != "Login: 2026.07.25-13.13.11: 테스트유저 ("+playerID+") logged in" {
 		t.Fatalf("login event = %#v", events[0])
 	}
 	if events[1].Kind != "chat" ||
-		events[1].Text != "Chat: "+playerID+", 쿠아해병, (ALL) 한국어 — Русский — 简体中文" {
+		events[1].Text != "Chat: "+playerID+", 테스트유저, (ALL) 한국어 — Русский — 简体中文" {
 		t.Fatalf("chat event = %#v", events[1])
 	}
 	if events[2].Kind != "login" ||
-		events[2].Text != "Login: 2026.07.25-13.13.14: 쿠아해병 ("+playerID+") logged out" {
+		events[2].Text != "Login: 2026.07.25-13.13.14: 테스트유저 ("+playerID+") logged out" {
 		t.Fatalf("logout event = %#v", events[2])
 	}
 	for _, event := range events {
@@ -2151,9 +2151,9 @@ func TestDashboardThemeAndServerPromptMarkup(t *testing.T) {
 	for _, expected := range []string{
 		`id="theme-toggle"`,
 		`content="width=device-width, initial-scale=1, viewport-fit=cover"`,
-		`src="/static/theme.js?v=2.2.0"`,
-		`href="/static/app.css?v=2.2.0"`,
-		`src="/static/app.js?v=2.2.0"`,
+		`src="/static/theme.js?v=2.2.1"`,
+		`href="/static/app.css?v=2.2.1"`,
+		`src="/static/app.js?v=2.2.1"`,
 		`<body id="page-top">`,
 		`class="brand" href="#page-top"`,
 		`<p class="eyebrow">SERVER EVENTS</p>`,
@@ -2228,10 +2228,10 @@ func TestDashboardThemeAndServerPromptMarkup(t *testing.T) {
 		t.Fatal(err)
 	}
 	loginSource := string(loginData)
-	if !strings.Contains(loginSource, `src="/static/theme.js?v=2.2.0"`) {
+	if !strings.Contains(loginSource, `src="/static/theme.js?v=2.2.1"`) {
 		t.Fatal("login page does not initialize the persisted theme")
 	}
-	if !strings.Contains(loginSource, `href="/static/app.css?v=2.2.0"`) {
+	if !strings.Contains(loginSource, `href="/static/app.css?v=2.2.1"`) {
 		t.Fatal("login page does not use the release stylesheet version")
 	}
 	if !strings.Contains(loginSource, `viewport-fit=cover`) {

@@ -4,6 +4,22 @@ All notable changes to this repository are documented in this file.
 
 ## [Unreleased]
 
+## [2.2.1] - 2026-07-27
+
+### Fixed
+
+- Accept new persistent player nicknames only when a login request has been
+  correlated with successful player authentication.
+- Prevent mutable chat and disconnect observations, including temporary
+  server-side PlayerState edits, from adding or reprioritizing nickname
+  history.
+
+### Validation
+
+- Verify that an observed runtime-only name is excluded from history while a
+  Unicode nickname supplied by a later authenticated login is retained and
+  becomes the latest nickname.
+
 ## [2.2.0] - 2026-07-27
 
 ### Added

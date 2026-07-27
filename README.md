@@ -115,12 +115,12 @@ history remains in the versioned changelog asset instead of being repeated in
 every Release body.
 
 ```sh
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.2.0/mordhau-server-alpine-linux-v2.2.0.tar.gz
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.2.0/CHANGELOG-v2.2.0.md
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.2.0/SHA256SUMS
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.2.1/mordhau-server-alpine-linux-v2.2.1.tar.gz
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.2.1/CHANGELOG-v2.2.1.md
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.2.1/SHA256SUMS
 sha256sum -c SHA256SUMS
-tar -xzf mordhau-server-alpine-linux-v2.2.0.tar.gz
-cd mordhau-server-alpine-linux-v2.2.0
+tar -xzf mordhau-server-alpine-linux-v2.2.1.tar.gz
+cd mordhau-server-alpine-linux-v2.2.1
 chmod +x src/mordhau-server-alpine-linux.sh
 ./src/mordhau-server-alpine-linux.sh
 ```
@@ -336,11 +336,13 @@ matching or rule precedence. Existing rules without a comment remain valid.
 
 The Players panel reconstructs connection history from archived
 `Mordhau_<timestamp>.log` files and the current `Mordhau.log`, then follows new
-records while the web manager is running. Login requests, successful
-authentication, UTF-8 chat identity, and the authoritative game-connection
-close record are correlated by PlayFab ID. Archived logs are fingerprinted
-after a successful import, and connection start times prevent a repeated scan
-from duplicating sessions.
+records while the web manager is running. Login requests are correlated with
+successful authentication by PlayFab ID and are the only source allowed to
+introduce or reprioritize a persistent nickname. UTF-8 chat identity and the
+authoritative game-connection close record remain available for server-event
+and session correlation without changing nickname history. Archived logs are
+fingerprinted after a successful import, and connection start times prevent a
+repeated scan from duplicating sessions.
 
 Persistent history is stored with mode `0600` at:
 

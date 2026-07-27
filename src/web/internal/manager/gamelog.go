@@ -32,14 +32,15 @@ type gameLogFollower struct {
 }
 
 type gameLogEvent struct {
-	Time           time.Time
-	Kind           string
-	Text           string
-	PlayerAction   string
-	PlayerID       string
-	PlayerName     string
-	PlayerIP       string
-	PlayerJoinedAt time.Time
+	Time                    time.Time
+	Kind                    string
+	Text                    string
+	PlayerAction            string
+	PlayerID                string
+	PlayerName              string
+	PlayerNameAuthenticated bool
+	PlayerIP                string
+	PlayerJoinedAt          time.Time
 }
 
 type gameLogPlayer struct {
@@ -612,11 +613,12 @@ func (processor *gameLogProcessor) processLine(line string) []gameLogEvent {
 				name,
 				playerID,
 			),
-			PlayerAction:   "login",
-			PlayerID:       playerID,
-			PlayerName:     name,
-			PlayerIP:       player.ip,
-			PlayerJoinedAt: eventTime,
+			PlayerAction:            "login",
+			PlayerID:                playerID,
+			PlayerName:              name,
+			PlayerNameAuthenticated: true,
+			PlayerIP:                player.ip,
+			PlayerJoinedAt:          eventTime,
 		}}
 	}
 	if chat, playerID, name, ok := parseMordhauChatPayload(body); ok {
