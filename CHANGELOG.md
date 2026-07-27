@@ -24,18 +24,19 @@ All notable changes to this repository are documented in this file.
 ### Security
 
 - Keep inactive and uploaded PAK files in root-only manager directories, apply
-  all mutations under the lifecycle lock, and protect repository-managed
-  packages from listing or mutation.
+  all mutations under the lifecycle lock, and show project-managed packages as
+  protected entries that cannot be deactivated, deleted, or manually replaced.
 - Require authenticated, CSRF-protected CustomPaks mutations; validate UTF-8
   `.pak` basenames, reject case-insensitive overwrite conflicts, cap each
   upload at 8 GiB, and retain a 1 GiB filesystem reserve.
 
 ### Validation
 
-- Verify manual package discovery, repository-managed package exclusion,
-  staged state rendering, activation/deactivation moves, deletion, upload
-  limits, duplicate rejection, deletion cancellation, lifecycle locking, and
-  idempotent next-launch application.
+- Verify manual and project-managed package discovery, protected-package
+  deactivation/deletion/replacement rejection, inactive managed-package
+  restoration, staged state rendering, activation/deactivation moves,
+  deletion, upload limits, duplicate rejection, deletion cancellation,
+  lifecycle locking, and idempotent next-launch application.
 
 ## [2.1.1] - 2026-07-26
 

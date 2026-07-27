@@ -1132,6 +1132,10 @@ input:focus, select:focus, textarea:focus { border-color: rgba(233, 79, 81, .65)
   border-color: rgba(183, 59, 68, .23);
   background: var(--danger-bg);
 }
+.custompak-row.managed {
+  border-color: rgba(20, 124, 153, .24);
+  background: rgba(20, 124, 153, .045);
+}
 .custompak-details { min-width: 0; }
 .custompak-title {
   display: flex;
@@ -1163,6 +1167,11 @@ input:focus, select:focus, textarea:focus { border-color: rgba(233, 79, 81, .65)
   border-color: rgba(233, 79, 81, .32);
   color: var(--danger-text);
   background: var(--danger-bg);
+}
+.custompak-status.managed {
+  border-color: rgba(20, 124, 153, .28);
+  color: var(--policy-text);
+  background: rgba(20, 124, 153, .08);
 }
 .custompak-meta {
   margin-top: .3rem;

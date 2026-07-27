@@ -2173,6 +2173,7 @@ func TestDashboardThemeAndServerPromptMarkup(t *testing.T) {
 		`id="custompak-file"`,
 		`id="custompak-upload-progress"`,
 		`id="custompak-list"`,
+		`Project-managed packages remain visible`,
 		`data-panel="runtime"`,
 		`id="players-value"`,
 		`id="runtime-targets"`,
@@ -2198,6 +2199,7 @@ func TestDashboardThemeAndServerPromptMarkup(t *testing.T) {
 		"Unicode server message",
 		"한국어 · Русский · 简体中文 · Français",
 		"stored in this browser",
+		"protected and omitted",
 		"<script>\n",
 	} {
 		if strings.Contains(index, unwanted) {
@@ -2244,6 +2246,9 @@ func TestDashboardThemeAndServerPromptMarkup(t *testing.T) {
 		`function renderCustomPaks(data)`,
 		`function uploadCustomPak(file)`,
 		`new XMLHttpRequest()`,
+		`"Project managed"`,
+		`Project-managed PAKs cannot be deactivated.`,
+		`Project-managed PAKs cannot be deleted.`,
 		`function runtimePlayerGroups(targets)`,
 		`function validateRuntimeEditor()`,
 		`function runtimePropertyMatchesQuery(property, query)`,
@@ -2294,6 +2299,7 @@ func TestMobileLayoutHasTouchAndNarrowViewportRules(t *testing.T) {
 		`.custompak-dropzone`,
 		`.custompak-row`,
 		`.custompak-switch`,
+		`.custompak-status.managed`,
 		`scroll-behavior: smooth`,
 	} {
 		if !strings.Contains(css, expected) {

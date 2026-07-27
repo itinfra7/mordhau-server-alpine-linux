@@ -1431,19 +1431,19 @@ function renderCustomPaks(data) {
   stage.textContent = pending ? `${pendingCount} staged` : "No staged changes";
   stage.classList.toggle("staged", pending);
 
-  const omitted = Number.isSafeInteger(view.managed_packages_excluded)
-    ? view.managed_packages_excluded
+  const managedPackages = Number.isSafeInteger(view.managed_packages)
+    ? view.managed_packages
     : 0;
   const summary = $("#custompak-summary");
   const application = view.server_running
     ? "The running game server is unchanged."
     : "Changes will be applied before the next managed launch.";
-  const omittedText = omitted
-    ? ` ${omitted} repository-managed package${omitted === 1 ? " is" : "s are"} protected and omitted.`
+  const managedText = managedPackages
+    ? ` ${managedPackages} project-managed package${managedPackages === 1 ? " is" : "s are"} visible and protected from deactivation and deletion.`
     : "";
   summary.textContent = pending
-    ? `${pendingCount} change${pendingCount === 1 ? "" : "s"} staged for the next managed start or restart. ${application}${omittedText}`
-    : `No CustomPak changes are staged. ${application}${omittedText}`;
+    ? `${pendingCount} change${pendingCount === 1 ? "" : "s"} staged for the next managed start or restart. ${application}${managedText}`
+    : `No CustomPak changes are staged. ${application}${managedText}`;
 
   const limit = Number(view.max_upload_bytes);
   const limitLabel = $("#custompak-upload-limit");
@@ -1458,7 +1458,7 @@ function renderCustomPaks(data) {
   if (!items.length) {
     const empty = document.createElement("p");
     empty.className = "hint";
-    empty.textContent = "No manually installed CustomPaks were found.";
+    empty.textContent = "No CustomPaks were found.";
     list.append(empty);
     return;
   }
@@ -1468,6 +1468,7 @@ function renderCustomPaks(data) {
     const row = document.createElement("div");
     row.className = "custompak-row";
     row.classList.toggle("pending-delete", item.pending_action === "delete");
+    row.classList.toggle("managed", Boolean(item.managed));
 
     const details = document.createElement("div");
     details.className = "custompak-details";
@@ -1477,17 +1478,32 @@ function renderCustomPaks(data) {
     name.textContent = item.name;
     const status = document.createElement("span");
     status.className = "custompak-status";
-    if (item.pending_action) status.classList.add("pending");
-    if (item.pending_action === "delete") status.classList.add("delete");
-    status.textContent = customPakPendingLabels[item.pending_action] ||
-      customPakCurrentLabels[item.current_state] ||
-      "Stored";
+    if (item.managed) {
+      status.classList.add("managed");
+      status.textContent = "Project managed";
+    } else {
+      if (item.pending_action) status.classList.add("pending");
+      if (item.pending_action === "delete") status.classList.add("delete");
+      status.textContent = customPakPendingLabels[item.pending_action] ||
+        customPakCurrentLabels[item.current_state] ||
+        "Stored";
+    }
     title.append(name, status);
+    if (item.managed && item.pending_action) {
+      const pendingStatus = document.createElement("span");
+      pendingStatus.className = "custompak-status pending";
+      pendingStatus.textContent = customPakPendingLabels[item.pending_action] ||
+        "Pending";
+      title.append(pendingStatus);
+    }
 
     const meta = document.createElement("div");
     meta.className = "custompak-meta";
     const current = customPakCurrentLabels[item.current_state] || item.current_state || "Stored";
-    meta.textContent = `${current} · ${bytes(Number(item.size))} · modified ${customPakModifiedAt(item.modified_at)}`;
+    const component = item.managed && item.managed_component
+      ? ` · component ${item.managed_component}`
+      : "";
+    meta.textContent = `${current}${component} · ${bytes(Number(item.size))} · modified ${customPakModifiedAt(item.modified_at)}`;
     details.append(title, meta);
 
     const toggle = document.createElement("label");
@@ -1495,10 +1511,21 @@ function renderCustomPaks(data) {
     const checkbox = document.createElement("input");
     checkbox.type = "checkbox";
     checkbox.checked = Boolean(item.enabled);
-    checkbox.disabled = item.pending_action === "delete";
-    checkbox.setAttribute("aria-label", `Activate ${item.name} on the next server start`);
+    checkbox.disabled = item.pending_action === "delete" ||
+      (Boolean(item.managed) && checkbox.checked);
+    checkbox.setAttribute(
+      "aria-label",
+      item.managed
+        ? `Restore ${item.name} to active on the next server start`
+        : `Set ${item.name} active on the next server start`,
+    );
+    if (item.managed && checkbox.checked) {
+      checkbox.title = "Project-managed PAKs cannot be deactivated.";
+    }
     const toggleText = document.createElement("span");
-    toggleText.textContent = checkbox.checked ? "Active" : "Inactive";
+    toggleText.textContent = item.managed
+      ? (checkbox.checked ? "Active · protected" : "Activate")
+      : (checkbox.checked ? "Active" : "Inactive");
     checkbox.addEventListener("change", async () => {
       const enabled = checkbox.checked;
       checkbox.disabled = true;
@@ -1512,14 +1539,20 @@ function renderCustomPaks(data) {
       } catch (error) {
         checkbox.checked = !enabled;
         checkbox.disabled = false;
-        toggleText.textContent = checkbox.checked ? "Active" : "Inactive";
+        toggleText.textContent = item.managed
+          ? (checkbox.checked ? "Active · protected" : "Activate")
+          : (checkbox.checked ? "Active" : "Inactive");
         toast(error.message, true);
       }
     });
     toggle.append(checkbox, toggleText);
 
     let removal;
-    if (item.pending_action === "delete") {
+    if (item.managed) {
+      removal = makeButton("Protected", "ghost compact", () => {});
+      removal.disabled = true;
+      removal.title = "Project-managed PAKs cannot be deleted.";
+    } else if (item.pending_action === "delete") {
       removal = makeButton("Cancel delete", "ghost compact", async () => {
         try {
           const updated = await api("/api/custompaks/delete/cancel", {

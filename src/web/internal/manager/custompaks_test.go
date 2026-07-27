@@ -74,7 +74,7 @@ func TestValidateCustomPakNameAndManagerPackageProtection(t *testing.T) {
 	}
 }
 
-func TestCustomPaksViewExcludesManagedPackagesAndShowsPendingState(t *testing.T) {
+func TestCustomPaksViewShowsManagedPackagesAndPendingState(t *testing.T) {
 	paths := testCustomPakPaths(t)
 	writeTestCustomPak(t, paths.activeDir, unicodeBridgeCustomPak, "managed")
 	writeTestCustomPak(t, paths.activeDir, "Active.pak", "active")
@@ -98,11 +98,19 @@ func TestCustomPaksViewExcludesManagedPackagesAndShowsPendingState(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !view.ServerRunning || view.ManagedPackagesExcluded != 1 {
+	if !view.ServerRunning || view.ManagedPackages != 1 {
 		t.Fatalf("unexpected server/managed state: %+v", view)
 	}
-	if len(view.Items) != 3 || !view.PendingChanges || view.PendingCount != 2 {
+	if len(view.Items) != 4 || !view.PendingChanges || view.PendingCount != 2 {
 		t.Fatalf("unexpected CustomPaks view: %+v", view)
+	}
+	managed := customPakItemByName(t, view, unicodeBridgeCustomPak)
+	if !managed.Managed ||
+		managed.ManagedComponent != "MORDHAU Unicode Bridge" ||
+		managed.CurrentState != customPakLocationActive ||
+		!managed.Enabled ||
+		managed.PendingAction != "" {
+		t.Fatalf("unexpected project-managed item: %+v", managed)
 	}
 	active := customPakItemByName(t, view, "Active.pak")
 	if active.CurrentState != customPakLocationActive ||
@@ -122,6 +130,70 @@ func TestCustomPaksViewExcludesManagedPackagesAndShowsPendingState(t *testing.T)
 		upload.PendingAction != "install" ||
 		!upload.Enabled {
 		t.Fatalf("unexpected uploaded item: %+v", upload)
+	}
+}
+
+func TestManagedCustomPaksCannotBeDisabledOrDeletedAndCanBeRestored(t *testing.T) {
+	paths := testCustomPakPaths(t)
+	activePath := filepath.Join(paths.activeDir, unicodeBridgeCustomPak)
+	inactivePath := filepath.Join(paths.inactiveDir, unicodeBridgeCustomPak)
+	writeTestCustomPak(t, paths.activeDir, unicodeBridgeCustomPak, "managed")
+
+	if err := writeJSONAtomic(paths.statePath, customPakStateFile{
+		Version: customPakStateVersion,
+		Actions: []customPakAction{{
+			Name:         unicodeBridgeCustomPak,
+			DesiredState: customPakStateDelete,
+		}},
+	}, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if applied, err := applyPendingCustomPaksAt(paths); err != nil || applied != 1 {
+		t.Fatalf("neutralize stale managed deletion = %d, %v", applied, err)
+	}
+	if _, err := os.Stat(activePath); err != nil {
+		t.Fatalf("stale managed deletion removed the package: %v", err)
+	}
+
+	if err := setCustomPakEnabledAt(paths, unicodeBridgeCustomPak, false); !errors.Is(
+		err,
+		errCustomPakProtected,
+	) {
+		t.Fatalf("managed deactivation = %v, want protected", err)
+	}
+	if err := stageCustomPakDeletionAt(paths, unicodeBridgeCustomPak); !errors.Is(
+		err,
+		errCustomPakProtected,
+	) {
+		t.Fatalf("managed deletion = %v, want protected", err)
+	}
+	if _, err := stageCustomPakUploadAt(
+		paths,
+		unicodeBridgeCustomPak,
+		bytes.NewBufferString("replacement"),
+	); !errors.Is(err, errCustomPakProtected) {
+		t.Fatalf("managed replacement upload = %v, want protected", err)
+	}
+
+	if err := os.Rename(activePath, inactivePath); err != nil {
+		t.Fatal(err)
+	}
+	if err := setCustomPakEnabledAt(paths, unicodeBridgeCustomPak, true); err != nil {
+		t.Fatalf("restore managed package: %v", err)
+	}
+	view, err := customPaksViewAt(paths, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	managed := customPakItemByName(t, view, unicodeBridgeCustomPak)
+	if !managed.Managed || !managed.Enabled || managed.PendingAction != "activate" {
+		t.Fatalf("managed restore was not staged: %+v", managed)
+	}
+	if applied, err := applyPendingCustomPaksAt(paths); err != nil || applied != 1 {
+		t.Fatalf("apply managed restore = %d, %v", applied, err)
+	}
+	if _, err := os.Stat(activePath); err != nil {
+		t.Fatalf("managed package was not restored to active: %v", err)
 	}
 }
 

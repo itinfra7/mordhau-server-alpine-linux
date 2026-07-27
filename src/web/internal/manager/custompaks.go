@@ -26,11 +26,23 @@ const (
 	unicodeBridgeCustomPak       = "MordhauUnicodeBridge-WindowsServer.pak"
 )
 
+type managedCustomPakDefinition struct {
+	name      string
+	component string
+}
+
+var repositoryManagedCustomPaks = []managedCustomPakDefinition{
+	{
+		name:      unicodeBridgeCustomPak,
+		component: "MORDHAU Unicode Bridge",
+	},
+}
+
 var (
 	errCustomPakInvalid      = errors.New("invalid CustomPak")
 	errCustomPakNotFound     = errors.New("CustomPak not found")
 	errCustomPakConflict     = errors.New("CustomPak conflict")
-	errCustomPakProtected    = errors.New("manager-owned CustomPak is protected")
+	errCustomPakProtected    = errors.New("project-managed CustomPak is protected")
 	errCustomPakTooLarge     = errors.New("CustomPak exceeds the upload limit")
 	errCustomPakStorage      = errors.New("insufficient storage for CustomPak upload")
 	errCustomPakEmpty        = errors.New("CustomPak file is empty")
@@ -39,22 +51,24 @@ var (
 )
 
 type CustomPakItem struct {
-	Name          string `json:"name"`
-	Size          int64  `json:"size"`
-	ModifiedAt    string `json:"modified_at"`
-	CurrentState  string `json:"current_state"`
-	DesiredState  string `json:"desired_state"`
-	PendingAction string `json:"pending_action,omitempty"`
-	Enabled       bool   `json:"enabled"`
+	Name             string `json:"name"`
+	Size             int64  `json:"size"`
+	ModifiedAt       string `json:"modified_at"`
+	CurrentState     string `json:"current_state"`
+	DesiredState     string `json:"desired_state"`
+	PendingAction    string `json:"pending_action,omitempty"`
+	Enabled          bool   `json:"enabled"`
+	Managed          bool   `json:"managed"`
+	ManagedComponent string `json:"managed_component,omitempty"`
 }
 
 type CustomPaksView struct {
-	Items                   []CustomPakItem `json:"items"`
-	PendingChanges          bool            `json:"pending_changes"`
-	PendingCount            int             `json:"pending_count"`
-	ServerRunning           bool            `json:"server_running"`
-	MaxUploadBytes          int64           `json:"max_upload_bytes"`
-	ManagedPackagesExcluded int             `json:"managed_packages_excluded"`
+	Items           []CustomPakItem `json:"items"`
+	PendingChanges  bool            `json:"pending_changes"`
+	PendingCount    int             `json:"pending_count"`
+	ServerRunning   bool            `json:"server_running"`
+	MaxUploadBytes  int64           `json:"max_upload_bytes"`
+	ManagedPackages int             `json:"managed_packages"`
 }
 
 type customPakAction struct {
@@ -79,11 +93,13 @@ type customPakPaths struct {
 }
 
 type customPakDiskFile struct {
-	name       string
-	path       string
-	location   string
-	size       int64
-	modifiedAt string
+	name             string
+	path             string
+	location         string
+	size             int64
+	modifiedAt       string
+	managed          bool
+	managedComponent string
 }
 
 func defaultCustomPakPaths() customPakPaths {
@@ -110,11 +126,16 @@ func ensureCustomPakDirectories(paths customPakPaths) error {
 	return nil
 }
 
-func protectedCustomPakName(name string) bool {
-	return strings.EqualFold(name, unicodeBridgeCustomPak)
+func managedCustomPak(name string) (managedCustomPakDefinition, bool) {
+	for _, definition := range repositoryManagedCustomPaks {
+		if strings.EqualFold(name, definition.name) {
+			return definition, true
+		}
+	}
+	return managedCustomPakDefinition{}, false
 }
 
-func validateCustomPakName(name string) error {
+func validateCustomPakFilename(name string) error {
 	if name == "" || !utf8.ValidString(name) || len(name) > 240 {
 		return fmt.Errorf("%w: filename must be valid UTF-8 and at most 240 bytes", errCustomPakInvalid)
 	}
@@ -134,7 +155,14 @@ func validateCustomPakName(name string) error {
 		strings.TrimSpace(strings.TrimSuffix(name, filepath.Ext(name))) == "" {
 		return fmt.Errorf("%w: filename must end in .pak", errCustomPakInvalid)
 	}
-	if protectedCustomPakName(name) {
+	return nil
+}
+
+func validateCustomPakName(name string) error {
+	if err := validateCustomPakFilename(name); err != nil {
+		return err
+	}
+	if _, managed := managedCustomPak(name); managed {
 		return errCustomPakProtected
 	}
 	return nil
@@ -172,12 +200,12 @@ func scanCustomPakFilesAt(
 			if !strings.EqualFold(filepath.Ext(entry.Name()), ".pak") {
 				continue
 			}
-			if protectedCustomPakName(entry.Name()) {
-				managedPackages++
-				continue
-			}
-			if err := validateCustomPakName(entry.Name()); err != nil {
+			if err := validateCustomPakFilename(entry.Name()); err != nil {
 				return nil, 0, err
+			}
+			managedDefinition, managed := managedCustomPak(entry.Name())
+			if managed {
+				managedPackages++
 			}
 			info, err := entry.Info()
 			if err != nil {
@@ -197,11 +225,13 @@ func scanCustomPakFilesAt(
 				)
 			}
 			files[key] = customPakDiskFile{
-				name:       entry.Name(),
-				path:       filepath.Join(directory.path, entry.Name()),
-				location:   directory.location,
-				size:       info.Size(),
-				modifiedAt: info.ModTime().UTC().Format("2006-01-02T15:04:05.999999999Z"),
+				name:             entry.Name(),
+				path:             filepath.Join(directory.path, entry.Name()),
+				location:         directory.location,
+				size:             info.Size(),
+				modifiedAt:       info.ModTime().UTC().Format("2006-01-02T15:04:05.999999999Z"),
+				managed:          managed,
+				managedComponent: managedDefinition.component,
 			}
 		}
 	}
@@ -224,13 +254,18 @@ func loadCustomPakActionsAt(paths customPakPaths) (map[string]customPakAction, e
 	}
 	actions := make(map[string]customPakAction, len(state.Actions))
 	for _, action := range state.Actions {
-		if err := validateCustomPakName(action.Name); err != nil {
+		if err := validateCustomPakFilename(action.Name); err != nil {
 			return nil, err
 		}
 		switch action.DesiredState {
 		case customPakStateActive, customPakStateInactive, customPakStateDelete:
 		default:
 			return nil, errors.New("CustomPaks state contains an invalid desired state")
+		}
+		if _, managed := managedCustomPak(action.Name); managed &&
+			action.DesiredState != customPakStateActive {
+			action.DesiredState = customPakStateActive
+			action.PreviousState = ""
 		}
 		if action.PreviousState != "" &&
 			(action.DesiredState != customPakStateDelete ||
@@ -301,10 +336,10 @@ func customPaksViewAt(paths customPakPaths, running bool) (CustomPaksView, error
 		return CustomPaksView{}, err
 	}
 	view := CustomPaksView{
-		Items:                   make([]CustomPakItem, 0, len(files)),
-		ServerRunning:           running,
-		MaxUploadBytes:          limit,
-		ManagedPackagesExcluded: managedPackages,
+		Items:           make([]CustomPakItem, 0, len(files)),
+		ServerRunning:   running,
+		MaxUploadBytes:  limit,
+		ManagedPackages: managedPackages,
 	}
 	for key, file := range files {
 		action, hasAction := actions[key]
@@ -340,13 +375,15 @@ func customPaksViewAt(paths customPakPaths, running bool) (CustomPaksView, error
 			currentState = "uploaded"
 		}
 		view.Items = append(view.Items, CustomPakItem{
-			Name:          file.name,
-			Size:          file.size,
-			ModifiedAt:    file.modifiedAt,
-			CurrentState:  currentState,
-			DesiredState:  desiredState,
-			PendingAction: pendingAction,
-			Enabled:       desiredState == customPakStateActive,
+			Name:             file.name,
+			Size:             file.size,
+			ModifiedAt:       file.modifiedAt,
+			CurrentState:     currentState,
+			DesiredState:     desiredState,
+			PendingAction:    pendingAction,
+			Enabled:          desiredState == customPakStateActive,
+			Managed:          file.managed,
+			ManagedComponent: file.managedComponent,
 		})
 	}
 	for key := range actions {
@@ -363,8 +400,11 @@ func customPaksViewAt(paths customPakPaths, running bool) (CustomPaksView, error
 }
 
 func setCustomPakEnabledAt(paths customPakPaths, name string, enabled bool) error {
-	if err := validateCustomPakName(name); err != nil {
+	if err := validateCustomPakFilename(name); err != nil {
 		return err
+	}
+	if _, managed := managedCustomPak(name); managed && !enabled {
+		return errCustomPakProtected
 	}
 	files, _, err := scanCustomPakFilesAt(paths)
 	if err != nil {

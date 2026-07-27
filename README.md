@@ -277,12 +277,12 @@ The web manager provides:
   administrator sessions
 - Root-only web access and administrative change audit logging
 
-The CustomPaks panel lists manually installed regular `.pak` files from active,
-inactive, and upload-staging storage. An uploaded file is staged as active by
-default. Active/Inactive changes move the package between active and root-only
-inactive storage, while Delete removes it. All three actions are applied only
-after Steam validation and immediately before the next managed server start,
-so they cannot change the currently running game process.
+The CustomPaks panel lists regular `.pak` files from active, inactive, and
+upload-staging storage. An uploaded file is staged as active by default.
+Active/Inactive changes move a manually installed package between active and
+root-only inactive storage, while Delete removes it. All three actions are
+applied only after Steam validation and immediately before the next managed
+server start, so they cannot change the currently running game process.
 
 Active packages use:
 
@@ -299,9 +299,11 @@ Inactive and newly uploaded packages remain under mode-`0700` manager storage:
 
 The server permits one PAK per upload, limits a file to 8 GiB, preserves at
 least 1 GiB of filesystem space, validates the UTF-8 filename, and never
-overwrites an existing case-insensitive name. Repository-managed packages,
-including the Unicode Bridge, are omitted from this panel and cannot be
-changed through its API.
+overwrites an existing case-insensitive name. Project-managed packages,
+including the Unicode Bridge, remain visible with their owning component.
+They cannot be deactivated, deleted, or replaced through the manual upload
+API. If such a package was moved into inactive storage outside the manager,
+the panel permits only its restoration to Active.
 
 IPv4 ranges include both endpoints and are stored in canonical `start-end`
 form. The manager decomposes each range into the smallest exact set of CIDR
@@ -898,12 +900,13 @@ validation, dependency ordering, scoped mod-entry mutation, shared-cache
 deduplication under concurrent clients, successful-refresh interval resets,
 failure retry behavior, lifecycle-result persistence, interrupted-operation
 recovery, multilingual server-event history persistence, and truncated-history
-recovery. CustomPaks tests cover protected package exclusion, staged state,
-activation and deactivation moves, deletion and cancellation, upload limits,
-case-insensitive duplicate rejection, lifecycle locking, and idempotent
-next-launch application. Runtime tests cover server-wide status sampling, stale and stopped
-bridge state, target-view request serialization and cache reuse, target-ID
-validation, player-identity placement, multilingual property values,
+recovery. CustomPaks tests cover visible project-managed package protection,
+staged state, activation and deactivation moves, deletion and cancellation,
+upload limits, case-insensitive duplicate rejection, lifecycle locking, and
+idempotent next-launch application. Runtime tests cover server-wide status
+sampling, stale and stopped bridge state, target-view request serialization
+and cache reuse, target-ID validation, player-identity placement,
+multilingual property values,
 type-derived editor selection, exact enum choices, integer boundary handling,
 finite floating-point parsing, and structured-text delimiter validation.
 The shell integration test covers PAK installation, active and staged Game.ini
