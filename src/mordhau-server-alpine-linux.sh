@@ -164,6 +164,8 @@ ensure_layout() {
         "$STEAMCMD_ROOT" \
         "$STATE_DIR" \
         "$STATE_DIR/backups" \
+        "$STATE_DIR/custompaks-inactive" \
+        "$STATE_DIR/custompaks-upload" \
         "$STATE_DIR/pending" \
         "$RUNTIME_DIR" \
         "$MORDHAU_ROOT/log" \

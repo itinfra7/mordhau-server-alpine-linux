@@ -10,6 +10,13 @@ const app = {
   modsLoading: false,
   modsReloadRequested: false,
   modRevision: null,
+  customPaks: null,
+  customPaksLoading: false,
+  customPaksReloadRequested: false,
+  customPakUploadXHR: null,
+  lifecycleObserved: false,
+  lifecycleRunning: false,
+  lifecycleFinishedAt: "",
   eventSequence: 0,
   eventLines: 0,
   runtimeStatus: null,
@@ -156,6 +163,13 @@ function renderSnapshot(snapshot) {
   $("#pending-banner").classList.toggle("hidden", !snapshot.pending_config);
 
   const operation = snapshot.operation;
+  const finishedAt = operation.finished_at || "";
+  const customPaksMayHaveChanged = app.lifecycleObserved &&
+    ((app.lifecycleRunning && !operation.running) ||
+     (finishedAt && finishedAt !== app.lifecycleFinishedAt));
+  app.lifecycleObserved = true;
+  app.lifecycleRunning = operation.running;
+  app.lifecycleFinishedAt = finishedAt;
   $("#operation-spinner").classList.toggle("hidden", !operation.running);
   if (operation.action) {
     const state = operation.running ? "running" : operation.successful ? "completed" : "failed";
@@ -187,6 +201,7 @@ function renderSnapshot(snapshot) {
   $("#server-prompt-input").disabled = operation.running || !snapshot.server_running;
   $("#server-prompt-mode").disabled = operation.running || !snapshot.server_running;
   appendServerEvents(snapshot.server_events || []);
+  if (customPaksMayHaveChanged) loadCustomPaks({ silent: true });
 }
 
 function appendServerEvents(events) {
@@ -1385,6 +1400,277 @@ async function loadMods() {
   }
 }
 
+const customPakCurrentLabels = {
+  active: "Active now",
+  inactive: "Inactive now",
+  uploaded: "Uploaded",
+};
+
+const customPakPendingLabels = {
+  install: "Install on next start",
+  activate: "Activate on next start",
+  deactivate: "Deactivate on next start",
+  delete: "Delete on next start",
+};
+
+function customPakModifiedAt(value) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "unknown time" : date.toLocaleString();
+}
+
+function renderCustomPaks(data) {
+  const view = data && typeof data === "object" ? data : {};
+  const items = Array.isArray(view.items) ? view.items : [];
+  app.customPaks = view;
+
+  const pendingCount = Number.isSafeInteger(view.pending_count)
+    ? view.pending_count
+    : items.filter((item) => item && item.pending_action).length;
+  const pending = Boolean(view.pending_changes || pendingCount);
+  const stage = $("#custompak-stage");
+  stage.textContent = pending ? `${pendingCount} staged` : "No staged changes";
+  stage.classList.toggle("staged", pending);
+
+  const omitted = Number.isSafeInteger(view.managed_packages_excluded)
+    ? view.managed_packages_excluded
+    : 0;
+  const summary = $("#custompak-summary");
+  const application = view.server_running
+    ? "The running game server is unchanged."
+    : "Changes will be applied before the next managed launch.";
+  const omittedText = omitted
+    ? ` ${omitted} repository-managed package${omitted === 1 ? " is" : "s are"} protected and omitted.`
+    : "";
+  summary.textContent = pending
+    ? `${pendingCount} change${pendingCount === 1 ? "" : "s"} staged for the next managed start or restart. ${application}${omittedText}`
+    : `No CustomPak changes are staged. ${application}${omittedText}`;
+
+  const limit = Number(view.max_upload_bytes);
+  const limitLabel = $("#custompak-upload-limit");
+  limitLabel.textContent = Number.isFinite(limit) && limit > 0
+    ? `Available upload limit: ${bytes(limit)}`
+    : "No upload capacity available";
+  $("#custompak-browse").disabled = Boolean(app.customPakUploadXHR) ||
+    !Number.isFinite(limit) || limit < 1;
+
+  const list = $("#custompak-list");
+  list.replaceChildren();
+  if (!items.length) {
+    const empty = document.createElement("p");
+    empty.className = "hint";
+    empty.textContent = "No manually installed CustomPaks were found.";
+    list.append(empty);
+    return;
+  }
+
+  for (const item of items) {
+    if (!item || typeof item.name !== "string") continue;
+    const row = document.createElement("div");
+    row.className = "custompak-row";
+    row.classList.toggle("pending-delete", item.pending_action === "delete");
+
+    const details = document.createElement("div");
+    details.className = "custompak-details";
+    const title = document.createElement("div");
+    title.className = "custompak-title";
+    const name = document.createElement("strong");
+    name.textContent = item.name;
+    const status = document.createElement("span");
+    status.className = "custompak-status";
+    if (item.pending_action) status.classList.add("pending");
+    if (item.pending_action === "delete") status.classList.add("delete");
+    status.textContent = customPakPendingLabels[item.pending_action] ||
+      customPakCurrentLabels[item.current_state] ||
+      "Stored";
+    title.append(name, status);
+
+    const meta = document.createElement("div");
+    meta.className = "custompak-meta";
+    const current = customPakCurrentLabels[item.current_state] || item.current_state || "Stored";
+    meta.textContent = `${current} · ${bytes(Number(item.size))} · modified ${customPakModifiedAt(item.modified_at)}`;
+    details.append(title, meta);
+
+    const toggle = document.createElement("label");
+    toggle.className = "custompak-switch";
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.checked = Boolean(item.enabled);
+    checkbox.disabled = item.pending_action === "delete";
+    checkbox.setAttribute("aria-label", `Activate ${item.name} on the next server start`);
+    const toggleText = document.createElement("span");
+    toggleText.textContent = checkbox.checked ? "Active" : "Inactive";
+    checkbox.addEventListener("change", async () => {
+      const enabled = checkbox.checked;
+      checkbox.disabled = true;
+      try {
+        const updated = await api("/api/custompaks/enabled", {
+          method: "POST",
+          body: { name: item.name, enabled },
+        });
+        renderCustomPaks(updated);
+        toast(`${item.name} will be ${enabled ? "active" : "inactive"} after the next managed start or restart.`);
+      } catch (error) {
+        checkbox.checked = !enabled;
+        checkbox.disabled = false;
+        toggleText.textContent = checkbox.checked ? "Active" : "Inactive";
+        toast(error.message, true);
+      }
+    });
+    toggle.append(checkbox, toggleText);
+
+    let removal;
+    if (item.pending_action === "delete") {
+      removal = makeButton("Cancel delete", "ghost compact", async () => {
+        try {
+          const updated = await api("/api/custompaks/delete/cancel", {
+            method: "POST",
+            body: { name: item.name },
+          });
+          renderCustomPaks(updated);
+          toast(`Deletion canceled for ${item.name}.`);
+        } catch (error) {
+          toast(error.message, true);
+        }
+      });
+    } else {
+      removal = makeButton("Delete", "danger compact", async () => {
+        if (!confirm(`Delete ${item.name} at the next managed server start or restart?`)) return;
+        try {
+          const updated = await api("/api/custompaks/delete", {
+            method: "POST",
+            body: { name: item.name },
+          });
+          renderCustomPaks(updated);
+          toast(`${item.name} is staged for deletion.`);
+        } catch (error) {
+          toast(error.message, true);
+        }
+      });
+    }
+    row.append(details, toggle, removal);
+    list.append(row);
+  }
+}
+
+async function loadCustomPaks({ silent = false } = {}) {
+  if (app.customPaksLoading) {
+    app.customPaksReloadRequested = true;
+    return;
+  }
+  app.customPaksLoading = true;
+  const refresh = $("#custompak-refresh");
+  if (refresh) refresh.disabled = true;
+  try {
+    renderCustomPaks(await api("/api/custompaks"));
+  } catch (error) {
+    if (!silent) toast(error.message, true);
+  } finally {
+    app.customPaksLoading = false;
+    if (refresh) refresh.disabled = false;
+    if (app.customPaksReloadRequested) {
+      app.customPaksReloadRequested = false;
+      loadCustomPaks({ silent });
+    }
+  }
+}
+
+function setCustomPakUploading(uploading, filename = "") {
+  $("#custompak-dropzone").classList.toggle("uploading", uploading);
+  $("#custompak-upload-progress").classList.toggle("hidden", !uploading);
+  $("#custompak-browse").disabled = uploading ||
+    !app.customPaks || Number(app.customPaks.max_upload_bytes) < 1;
+  if (uploading) {
+    $("#custompak-progress").value = 0;
+    $("#custompak-progress-text").textContent = `Uploading ${filename}`;
+  }
+  if (!uploading) $("#custompak-file").value = "";
+}
+
+function customPakUploadError(xhr) {
+  let message = xhr.status
+    ? `${xhr.status} ${xhr.statusText || "Upload failed"}`
+    : "The upload connection failed.";
+  try {
+    const response = JSON.parse(xhr.responseText || "{}");
+    if (response.error) message = response.error;
+  } catch (_) {}
+  return message;
+}
+
+function uploadCustomPak(file) {
+  if (!file) return;
+  if (app.customPakUploadXHR) {
+    toast("Another CustomPak upload is already in progress.", true);
+    return;
+  }
+  if (!/\.pak$/iu.test(file.name)) {
+    toast("Choose a file whose name ends in .pak.", true);
+    return;
+  }
+  const limit = Number(app.customPaks && app.customPaks.max_upload_bytes);
+  if (!Number.isFinite(limit) || limit < 1) {
+    toast("No CustomPak upload capacity is currently available.", true);
+    return;
+  }
+  if (file.size > limit) {
+    toast(`${file.name} is ${bytes(file.size)}; the current upload limit is ${bytes(limit)}.`, true);
+    return;
+  }
+
+  const form = new FormData();
+  form.append("file", file, file.name);
+  const xhr = new XMLHttpRequest();
+  app.customPakUploadXHR = xhr;
+  setCustomPakUploading(true, file.name);
+  xhr.open("POST", "/api/custompaks/upload");
+  xhr.withCredentials = true;
+  xhr.setRequestHeader("X-CSRF-Token", app.csrf);
+  xhr.upload.addEventListener("progress", (event) => {
+    if (!event.lengthComputable) {
+      $("#custompak-progress").removeAttribute("value");
+      $("#custompak-progress-text").textContent = `Uploading ${file.name}`;
+      return;
+    }
+    const percent = Math.min(100, (event.loaded / event.total) * 100);
+    $("#custompak-progress").value = percent;
+    $("#custompak-progress-text").textContent =
+      `${file.name} · ${percent.toFixed(1)}% · ${bytes(event.loaded)} / ${bytes(event.total)}`;
+  });
+  xhr.addEventListener("load", () => {
+    app.customPakUploadXHR = null;
+    setCustomPakUploading(false);
+    if (xhr.status === 401) {
+      location.href = "/login";
+      return;
+    }
+    if (xhr.status < 200 || xhr.status >= 300) {
+      toast(customPakUploadError(xhr), true);
+      loadCustomPaks({ silent: true });
+      return;
+    }
+    try {
+      renderCustomPaks(JSON.parse(xhr.responseText));
+      toast(`${file.name} uploaded and staged as active.`);
+    } catch (_) {
+      toast("The PAK was uploaded, but the returned package list was invalid.", true);
+      loadCustomPaks({ silent: true });
+    }
+  });
+  xhr.addEventListener("error", () => {
+    app.customPakUploadXHR = null;
+    setCustomPakUploading(false);
+    toast("The CustomPak upload connection failed.", true);
+    loadCustomPaks({ silent: true });
+  });
+  xhr.addEventListener("abort", () => {
+    app.customPakUploadXHR = null;
+    setCustomPakUploading(false);
+    toast("CustomPak upload canceled.");
+    loadCustomPaks({ silent: true });
+  });
+  xhr.send(form);
+}
+
 function renderModPlan(plan) {
   const target = $("#mod-plan");
   target.replaceChildren();
@@ -1625,6 +1911,9 @@ function bindEvents() {
       loadRuntimeTargets({ selectDefault: !app.runtimeSelectedID }).then(() => {
         if (app.runtimeSelectedID) loadRuntimeTarget({ silent: true });
       });
+    }
+    if (tab.dataset.panel === "custompaks") {
+      loadCustomPaks({ silent: true });
     }
   }));
   $$("[data-server-action]").forEach((button) =>
@@ -1904,6 +2193,46 @@ function bindEvents() {
       toast(error.message, true);
     }
   });
+  $("#custompak-refresh").addEventListener("click", () => loadCustomPaks());
+  $("#custompak-browse").addEventListener("click", () => {
+    $("#custompak-file").click();
+  });
+  $("#custompak-file").addEventListener("change", (event) => {
+    uploadCustomPak(event.target.files && event.target.files[0]);
+  });
+  $("#custompak-upload-cancel").addEventListener("click", () => {
+    if (app.customPakUploadXHR) app.customPakUploadXHR.abort();
+  });
+  const customPakDropzone = $("#custompak-dropzone");
+  for (const eventName of ["dragenter", "dragover"]) {
+    customPakDropzone.addEventListener(eventName, (event) => {
+      event.preventDefault();
+      if (!app.customPakUploadXHR) customPakDropzone.classList.add("dragging");
+    });
+  }
+  customPakDropzone.addEventListener("dragleave", (event) => {
+    if (!customPakDropzone.contains(event.relatedTarget)) {
+      customPakDropzone.classList.remove("dragging");
+    }
+  });
+  customPakDropzone.addEventListener("drop", (event) => {
+    event.preventDefault();
+    customPakDropzone.classList.remove("dragging");
+    const files = event.dataTransfer && event.dataTransfer.files;
+    if (!files || files.length !== 1) {
+      toast("Drop exactly one PAK file.", true);
+      return;
+    }
+    uploadCustomPak(files[0]);
+  });
+  window.addEventListener("dragover", (event) => {
+    if (event.dataTransfer && [...event.dataTransfer.types].includes("Files")) {
+      event.preventDefault();
+    }
+  });
+  window.addEventListener("drop", (event) => {
+    if (!customPakDropzone.contains(event.target)) event.preventDefault();
+  });
 }
 
 async function initialize() {
@@ -1925,6 +2254,7 @@ async function initialize() {
     await Promise.all([
       loadConfig(),
       loadMods(),
+      loadCustomPaks({ silent: true }),
       loadAccounts(),
       loadAccess(),
       loadServices(),

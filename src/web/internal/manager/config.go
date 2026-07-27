@@ -367,7 +367,11 @@ func validIniText(value string, allowEmpty bool) bool {
 }
 
 func acquireLifecycleLock() (*os.File, error) {
-	file, err := os.OpenFile(filepath.Join(stateDir, "lifecycle.lock"), os.O_CREATE|os.O_RDWR, 0600)
+	return acquireLifecycleLockAt(filepath.Join(stateDir, "lifecycle.lock"))
+}
+
+func acquireLifecycleLockAt(path string) (*os.File, error) {
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
 		return nil, err
 	}

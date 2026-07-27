@@ -26,6 +26,7 @@ EXE="$ROOT/MordhauServer.exe"
 SHIPPING_EXE="$ROOT/Mordhau/Binaries/Win64/MordhauServer-Win64-Shipping.exe"
 RUNTIME_BRIDGE_DLL="$ROOT/Mordhau/Binaries/Win64/dxgi.dll"
 RUNTIME_BRIDGE_EXE_SHA256="a11348d6bfdb386d7f8a976a59e7d28d38b0d1ba2b9a2a7e0035ac28d53f885e"
+WEB_MANAGER="$ROOT/bin/mordhau-web"
 
 export WINEPREFIX="$ROOT/.wine"
 export WINEDEBUG=-all
@@ -36,9 +37,9 @@ usage() {
 Usage: /root/mordhau/server.sh <command>
 
 Commands:
-  start      Update MORDHAU Dedicated Server, apply staged configuration, and start it
+  start      Update the server, apply staged INI/CustomPaks changes, and start it
   stop       Stop MORDHAU Dedicated Server
-  restart    Stop, update, apply staged configuration, and start the server
+  restart    Stop, update, apply staged INI/CustomPaks changes, and start it
   update     Update only; the server must be stopped
   status     Show whether the server is running
   help       Show this help
@@ -46,8 +47,23 @@ EOF
 }
 
 ensure_layout() {
-    mkdir -p "$RUNTIME_DIR" "$PENDING_DIR" "$BACKUP_DIR" "$ARCHIVE_DIR" "$XDG_RUNTIME_DIR"
-    chmod 700 "$STATE_DIR" "$RUNTIME_DIR" "$PENDING_DIR" "$BACKUP_DIR" "$ARCHIVE_DIR" "$XDG_RUNTIME_DIR"
+    mkdir -p \
+        "$RUNTIME_DIR" \
+        "$PENDING_DIR" \
+        "$BACKUP_DIR" \
+        "$STATE_DIR/custompaks-inactive" \
+        "$STATE_DIR/custompaks-upload" \
+        "$ARCHIVE_DIR" \
+        "$XDG_RUNTIME_DIR"
+    chmod 700 \
+        "$STATE_DIR" \
+        "$RUNTIME_DIR" \
+        "$PENDING_DIR" \
+        "$BACKUP_DIR" \
+        "$STATE_DIR/custompaks-inactive" \
+        "$STATE_DIR/custompaks-upload" \
+        "$ARCHIVE_DIR" \
+        "$XDG_RUNTIME_DIR"
 }
 
 read_pid() {
@@ -276,6 +292,14 @@ apply_pending_config() {
     fi
 }
 
+apply_pending_custompaks() {
+    [ -x "$WEB_MANAGER" ] || {
+        printf '%s\n' "Missing manager binary: $WEB_MANAGER" >&2
+        return 1
+    }
+    "$WEB_MANAGER" --apply-custompaks
+}
+
 archive_log() {
     [ -f "$GAME_LOG" ] || return 0
     stamp=$(date -r "$GAME_LOG" '+%Y-%m-%d_%H-%M-%S')
@@ -445,6 +469,7 @@ case "$command" in
         fi
         update_server
         apply_pending_config
+        apply_pending_custompaks
         launch_server
         ;;
     stop)
@@ -454,6 +479,7 @@ case "$command" in
         stop_server
         update_server
         apply_pending_config
+        apply_pending_custompaks
         launch_server
         ;;
     update)

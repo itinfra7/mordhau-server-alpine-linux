@@ -9,6 +9,33 @@ All notable changes to this repository are documented in this file.
 - Seed missing Engine.ini `IpNetDriver` values with
   `NetServerMaxTickRate=60` and `ConnectionTimeout=10.0` during installer
   initialization while preserving existing and intentionally disabled values.
+- Add an authenticated CustomPaks panel immediately after Mods with manual PAK
+  inventory, drag-and-drop and file-picker upload, upload progress, and
+  responsive controls.
+- Add next-start activation, deactivation, and deletion staging for manually
+  installed PAK files.
+- Make the dashboard brand link return the current page to its top.
+
+### Changed
+
+- Apply staged CustomPaks changes after Steam validation and immediately before
+  each managed start or restart.
+
+### Security
+
+- Keep inactive and uploaded PAK files in root-only manager directories, apply
+  all mutations under the lifecycle lock, and protect repository-managed
+  packages from listing or mutation.
+- Require authenticated, CSRF-protected CustomPaks mutations; validate UTF-8
+  `.pak` basenames, reject case-insensitive overwrite conflicts, cap each
+  upload at 8 GiB, and retain a 1 GiB filesystem reserve.
+
+### Validation
+
+- Verify manual package discovery, repository-managed package exclusion,
+  staged state rendering, activation/deactivation moves, deletion, upload
+  limits, duplicate rejection, deletion cancellation, lifecycle locking, and
+  idempotent next-launch application.
 
 ## [2.1.1] - 2026-07-26
 

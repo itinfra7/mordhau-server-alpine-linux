@@ -50,6 +50,14 @@ func (m *Manager) Handler() http.Handler {
 	mux.HandleFunc("/api/mods/remove", m.withSession(m.modRemoveHandler))
 	mux.HandleFunc("/api/modio/settings", m.withSession(m.modIOSettingsHandler))
 	mux.HandleFunc("/api/modio/settings/clear", m.withSession(m.modIOSettingsClearHandler))
+	mux.HandleFunc("/api/custompaks", m.withSession(m.customPaksHandler))
+	mux.HandleFunc("/api/custompaks/upload", m.withSession(m.customPakUploadHandler))
+	mux.HandleFunc("/api/custompaks/enabled", m.withSession(m.customPakEnabledHandler))
+	mux.HandleFunc("/api/custompaks/delete", m.withSession(m.customPakDeleteHandler))
+	mux.HandleFunc(
+		"/api/custompaks/delete/cancel",
+		m.withSession(m.customPakDeleteCancelHandler),
+	)
 	mux.HandleFunc("/api/accounts", m.withSession(m.accountsHandler))
 	mux.HandleFunc("/api/accounts/create", m.withSession(m.accountCreateHandler))
 	mux.HandleFunc("/api/accounts/edit", m.withSession(m.accountEditHandler))
@@ -740,6 +748,205 @@ func (m *Manager) modsHandler(response http.ResponseWriter, request *http.Reques
 		writeError(response, http.StatusInternalServerError, err.Error())
 		return
 	}
+	writeJSON(response, http.StatusOK, view)
+}
+
+func (m *Manager) customPaksHandler(
+	response http.ResponseWriter,
+	request *http.Request,
+	_ Session,
+) {
+	if request.Method != http.MethodGet {
+		response.Header().Set("Allow", http.MethodGet)
+		http.Error(response, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	view, err := m.customPaksView()
+	if err != nil {
+		writeError(response, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(response, http.StatusOK, view)
+}
+
+func customPakHTTPStatus(err error) int {
+	var maximumBodyError *http.MaxBytesError
+	switch {
+	case errors.As(err, &maximumBodyError), errors.Is(err, errCustomPakTooLarge):
+		return http.StatusRequestEntityTooLarge
+	case errors.Is(err, errCustomPakStorage):
+		return http.StatusInsufficientStorage
+	case errors.Is(err, errCustomPakNotFound):
+		return http.StatusNotFound
+	case errors.Is(err, errLifecycleBusy), errors.Is(err, errCustomPakConflict):
+		return http.StatusConflict
+	case errors.Is(err, errCustomPakInvalid),
+		errors.Is(err, errCustomPakProtected),
+		errors.Is(err, errCustomPakEmpty),
+		errors.Is(err, errCustomPakDeleteAbsent):
+		return http.StatusBadRequest
+	default:
+		return http.StatusInternalServerError
+	}
+}
+
+func (m *Manager) customPakUploadHandler(
+	response http.ResponseWriter,
+	request *http.Request,
+	session Session,
+) {
+	if request.Method != http.MethodPost {
+		response.Header().Set("Allow", http.MethodPost)
+		http.Error(response, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !validCSRF(request, session) {
+		writeError(response, http.StatusForbidden, "invalid CSRF token")
+		return
+	}
+	_ = http.NewResponseController(response).SetReadDeadline(time.Now().Add(2 * time.Hour))
+	request.Body = http.MaxBytesReader(
+		response,
+		request.Body,
+		customPakMaximumUploadBytes+(2<<20),
+	)
+	reader, err := request.MultipartReader()
+	if err != nil {
+		writeError(response, http.StatusBadRequest, "upload must use multipart form data")
+		return
+	}
+	for {
+		part, nextErr := reader.NextPart()
+		if errors.Is(nextErr, io.EOF) {
+			writeError(response, http.StatusBadRequest, "a PAK file is required")
+			return
+		}
+		if nextErr != nil {
+			writeError(response, customPakHTTPStatus(nextErr), nextErr.Error())
+			return
+		}
+		if part.FormName() != "file" || part.FileName() == "" {
+			_ = part.Close()
+			continue
+		}
+		name := part.FileName()
+		view, written, uploadErr := m.stageCustomPakUpload(name, part)
+		_ = part.Close()
+		if uploadErr != nil {
+			m.auditRequestEvent(request, session.Username, "custompak_upload_failed",
+				map[string]string{
+					"name":  name,
+					"error": uploadErr.Error(),
+				})
+			writeError(response, customPakHTTPStatus(uploadErr), uploadErr.Error())
+			return
+		}
+		m.auditRequestEvent(request, session.Username, "custompak_uploaded",
+			map[string]string{
+				"name":  name,
+				"bytes": strconv.FormatInt(written, 10),
+			})
+		writeJSON(response, http.StatusCreated, view)
+		return
+	}
+}
+
+type customPakEnabledRequest struct {
+	Name    string `json:"name"`
+	Enabled bool   `json:"enabled"`
+}
+
+func (m *Manager) customPakEnabledHandler(
+	response http.ResponseWriter,
+	request *http.Request,
+	session Session,
+) {
+	if request.Method != http.MethodPost {
+		response.Header().Set("Allow", http.MethodPost)
+		http.Error(response, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !validCSRF(request, session) {
+		writeError(response, http.StatusForbidden, "invalid CSRF token")
+		return
+	}
+	var change customPakEnabledRequest
+	if err := decodeJSON(response, request, &change); err != nil {
+		writeError(response, http.StatusBadRequest, err.Error())
+		return
+	}
+	view, err := m.setCustomPakEnabled(change.Name, change.Enabled)
+	if err != nil {
+		writeError(response, customPakHTTPStatus(err), err.Error())
+		return
+	}
+	m.auditRequestEvent(request, session.Username, "custompak_state_staged",
+		map[string]string{
+			"name":    change.Name,
+			"enabled": strconv.FormatBool(change.Enabled),
+		})
+	writeJSON(response, http.StatusOK, view)
+}
+
+type customPakNameRequest struct {
+	Name string `json:"name"`
+}
+
+func (m *Manager) customPakDeleteHandler(
+	response http.ResponseWriter,
+	request *http.Request,
+	session Session,
+) {
+	if request.Method != http.MethodPost {
+		response.Header().Set("Allow", http.MethodPost)
+		http.Error(response, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !validCSRF(request, session) {
+		writeError(response, http.StatusForbidden, "invalid CSRF token")
+		return
+	}
+	var change customPakNameRequest
+	if err := decodeJSON(response, request, &change); err != nil {
+		writeError(response, http.StatusBadRequest, err.Error())
+		return
+	}
+	view, err := m.stageCustomPakDeletion(change.Name)
+	if err != nil {
+		writeError(response, customPakHTTPStatus(err), err.Error())
+		return
+	}
+	m.auditRequestEvent(request, session.Username, "custompak_deletion_staged",
+		map[string]string{"name": change.Name})
+	writeJSON(response, http.StatusOK, view)
+}
+
+func (m *Manager) customPakDeleteCancelHandler(
+	response http.ResponseWriter,
+	request *http.Request,
+	session Session,
+) {
+	if request.Method != http.MethodPost {
+		response.Header().Set("Allow", http.MethodPost)
+		http.Error(response, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !validCSRF(request, session) {
+		writeError(response, http.StatusForbidden, "invalid CSRF token")
+		return
+	}
+	var change customPakNameRequest
+	if err := decodeJSON(response, request, &change); err != nil {
+		writeError(response, http.StatusBadRequest, err.Error())
+		return
+	}
+	view, err := m.cancelCustomPakDeletion(change.Name)
+	if err != nil {
+		writeError(response, customPakHTTPStatus(err), err.Error())
+		return
+	}
+	m.auditRequestEvent(request, session.Username, "custompak_deletion_canceled",
+		map[string]string{"name": change.Name})
 	writeJSON(response, http.StatusOK, view)
 }
 

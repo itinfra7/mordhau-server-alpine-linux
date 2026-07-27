@@ -60,6 +60,9 @@ type Manager struct {
 	configMu sync.Mutex
 	modioMu  sync.Mutex
 
+	customPaksMu   sync.Mutex
+	customPakPaths customPakPaths
+
 	modsMu                 sync.RWMutex
 	modRefreshSettingsMu   sync.Mutex
 	modRefreshSettings     modRefreshSettingsFile
@@ -93,6 +96,7 @@ type loginAttempt struct {
 }
 
 func New(trustedProxies ...netip.Prefix) (*Manager, error) {
+	customPaks := defaultCustomPakPaths()
 	for _, dir := range []string{
 		stateDir,
 		runtimeDir,
@@ -100,6 +104,9 @@ func New(trustedProxies ...netip.Prefix) (*Manager, error) {
 		backupDir,
 		logDir,
 		unicodeBridgeSpoolDir,
+		customPaks.activeDir,
+		customPaks.inactiveDir,
+		customPaks.uploadDir,
 	} {
 		if err := os.MkdirAll(dir, 0700); err != nil {
 			return nil, err
@@ -124,6 +131,7 @@ func New(trustedProxies ...netip.Prefix) (*Manager, error) {
 		runtimeRequestPath:  runtimeBridgeRequestPath,
 		runtimeResponsePath: runtimeBridgeResponsePath,
 		runtimeTargetCache:  make(map[string]runtimeTargetCacheEntry),
+		customPakPaths:      customPaks,
 	}
 	for _, prefix := range trustedProxies {
 		canonical, err := canonicalTrustedProxyPrefix(prefix)

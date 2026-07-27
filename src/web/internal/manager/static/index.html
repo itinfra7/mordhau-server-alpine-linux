@@ -9,17 +9,17 @@
   <link rel="stylesheet" href="/static/app.css?v=2.1.1">
   <script src="/static/app.js?v=2.1.1" defer></script>
 </head>
-<body>
+<body id="page-top">
   <div class="ambient ambient-one"></div>
   <div class="ambient ambient-two"></div>
   <header class="topbar">
-    <div class="brand">
+    <a class="brand" href="#page-top" aria-label="MORDHAU Control — back to top">
       <div class="brand-mark small" aria-hidden="true">M</div>
       <div>
         <p class="eyebrow">DEDICATED SERVER</p>
         <h1>MORDHAU Control</h1>
       </div>
-    </div>
+    </a>
     <div class="top-actions">
       <button id="theme-toggle" class="ghost compact theme-toggle" type="button"
               aria-label="Switch to dark mode" aria-pressed="false">
@@ -46,6 +46,7 @@
       <button class="tab" data-panel="runtime">Runtime</button>
       <button class="tab" data-panel="configuration">Configuration</button>
       <button class="tab" data-panel="mods">Mods</button>
+      <button class="tab" data-panel="custompaks">CustomPaks</button>
       <button class="tab" data-panel="accounts">Accounts</button>
       <button class="tab" data-panel="access">Network access</button>
     </nav>
@@ -403,6 +404,68 @@
             Disable keeps an entry visible but prevents it from being applied at the next start.
             Remove deletes only that Resource ID; dependencies are not removed automatically because
             another configured mod may share them.
+          </p>
+        </article>
+      </div>
+    </section>
+
+    <section id="panel-custompaks" class="panel">
+      <div class="custompak-grid">
+        <article class="card custompak-upload-card">
+          <div class="card-heading wrap">
+            <div>
+              <p class="eyebrow">MANUAL PAK UPLOAD</p>
+              <h2>Add a CustomPak</h2>
+            </div>
+            <span id="custompak-upload-limit" class="muted">Checking storage</span>
+          </div>
+          <p class="hint">
+            Upload one <code>.pak</code> file at a time. The file remains staged and cannot
+            affect the running game server until its next managed start or restart.
+          </p>
+          <div id="custompak-dropzone" class="custompak-dropzone">
+            <div class="custompak-drop-icon" aria-hidden="true">↓</div>
+            <strong>Drop a PAK file here</strong>
+            <span>or choose it from this device</span>
+            <button id="custompak-browse" class="secondary" type="button">Upload PAK</button>
+            <input id="custompak-file" class="sr-only" type="file"
+                   accept=".pak,application/octet-stream">
+          </div>
+          <div id="custompak-upload-progress" class="custompak-upload-progress hidden"
+               aria-live="polite">
+            <div class="custompak-progress-heading">
+              <span id="custompak-progress-text">Preparing upload</span>
+              <button id="custompak-upload-cancel" class="ghost compact" type="button">
+                Cancel
+              </button>
+            </div>
+            <progress id="custompak-progress" max="100" value="0">0%</progress>
+          </div>
+          <p class="hint">
+            Filenames must be valid UTF-8, end in <code>.pak</code>, and contain no path.
+            Existing names are never overwritten.
+          </p>
+        </article>
+
+        <article class="card custompak-list-card">
+          <div class="card-heading wrap">
+            <div>
+              <p class="eyebrow">CUSTOMPAKS</p>
+              <h2>Manually installed packages</h2>
+            </div>
+            <div class="custompak-heading-actions">
+              <span id="custompak-stage" class="stage-pill">Loading</span>
+              <button id="custompak-refresh" class="ghost compact" type="button">Refresh</button>
+            </div>
+          </div>
+          <div id="custompak-summary" class="policy-note">
+            Loading manually installed CustomPaks.
+          </div>
+          <div id="custompak-list" class="custompak-list"></div>
+          <p class="hint">
+            Active, inactive, and delete changes are applied at the next managed server
+            start or restart. Repository-managed packages are protected and omitted from
+            this list.
           </p>
         </article>
       </div>

@@ -45,6 +45,11 @@ func main() {
 	var trustedProxies trustedProxyFlags
 	listen := flag.String("listen", "0.0.0.0:8080", "HTTP listen address")
 	initOnly := flag.Bool("init", false, "initialize persistent state and exit")
+	applyCustomPaks := flag.Bool(
+		"apply-custompaks",
+		false,
+		"apply staged CustomPaks changes and exit",
+	)
 	recoverDisabledFrom := flag.String(
 		"recover-disabled-from",
 		"",
@@ -71,6 +76,19 @@ func main() {
 		"trusted reverse-proxy IP address or CIDR prefix; repeat for multiple proxies",
 	)
 	flag.Parse()
+
+	if *applyCustomPaks {
+		count, err := manager.ApplyPendingCustomPaks()
+		if err != nil {
+			log.Fatalf("apply staged CustomPaks changes: %v", err)
+		}
+		if count == 0 {
+			fmt.Println("No staged CustomPaks changes.")
+		} else {
+			fmt.Printf("Applied %d staged CustomPaks change(s).\n", count)
+		}
+		return
+	}
 
 	app, err := manager.New(trustedProxies...)
 	if err != nil {
