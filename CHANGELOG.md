@@ -4,6 +4,8 @@ All notable changes to this repository are documented in this file.
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-07-27
+
 ### Added
 
 - Add a Players tab between Runtime and Configuration with a most-recent-first
@@ -39,6 +41,8 @@ All notable changes to this repository are documented in this file.
   records.
 - Apply staged CustomPaks changes after Steam validation and immediately before
   each managed start or restart.
+- Use validated BusyBox-compatible `find` cleanup for installer, bridge-build,
+  and integration-test temporary directories.
 
 ### Security
 

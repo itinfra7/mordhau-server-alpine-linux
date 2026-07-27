@@ -2,7 +2,7 @@
 
 set -eu
 
-PROJECT_VERSION="2.1.1"
+PROJECT_VERSION="2.2.0"
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 MORDHAU_ROOT="/root/mordhau"
 STEAMCMD_ROOT="/root/steamcmd"
@@ -89,7 +89,9 @@ cleanup() {
     if [ -n "$TMP_DIR" ]; then
         case "$TMP_DIR" in
             /tmp/mordhau-server-alpine-linux.*)
-                rm -rf "$TMP_DIR"
+                if [ -e "$TMP_DIR" ]; then
+                    find "$TMP_DIR" -xdev -depth -delete
+                fi
                 ;;
         esac
     fi

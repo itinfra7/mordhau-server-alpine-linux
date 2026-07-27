@@ -9,7 +9,9 @@ TEST_DIR=$(mktemp -d /tmp/mordhau-runtime-bridge-test.XXXXXX)
 cleanup() {
     case "$TEST_DIR" in
         /tmp/mordhau-runtime-bridge-test.*)
-            rm -rf "$TEST_DIR"
+            if [ -e "$TEST_DIR" ]; then
+                find "$TEST_DIR" -xdev -depth -delete
+            fi
             ;;
     esac
 }

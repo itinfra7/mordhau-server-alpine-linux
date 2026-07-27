@@ -2151,7 +2151,9 @@ func TestDashboardThemeAndServerPromptMarkup(t *testing.T) {
 	for _, expected := range []string{
 		`id="theme-toggle"`,
 		`content="width=device-width, initial-scale=1, viewport-fit=cover"`,
-		`src="/static/theme.js?v=2.1.1"`,
+		`src="/static/theme.js?v=2.2.0"`,
+		`href="/static/app.css?v=2.2.0"`,
+		`src="/static/app.js?v=2.2.0"`,
 		`<body id="page-top">`,
 		`class="brand" href="#page-top"`,
 		`<p class="eyebrow">SERVER EVENTS</p>`,
@@ -2226,8 +2228,11 @@ func TestDashboardThemeAndServerPromptMarkup(t *testing.T) {
 		t.Fatal(err)
 	}
 	loginSource := string(loginData)
-	if !strings.Contains(loginSource, `src="/static/theme.js?v=2.1.1"`) {
+	if !strings.Contains(loginSource, `src="/static/theme.js?v=2.2.0"`) {
 		t.Fatal("login page does not initialize the persisted theme")
+	}
+	if !strings.Contains(loginSource, `href="/static/app.css?v=2.2.0"`) {
+		t.Fatal("login page does not use the release stylesheet version")
 	}
 	if !strings.Contains(loginSource, `viewport-fit=cover`) {
 		t.Fatal("login page does not enable mobile safe-area layout")

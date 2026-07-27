@@ -13,7 +13,9 @@ ACTOR="SpawnServerActorsOnMapLoad=/MordhauUnicodeBridge/BP_MordhauUnicodeBridge.
 cleanup() {
     case "$TEST_ROOT" in
         /tmp/mordhau-unicode-bridge-test.*)
-            rm -rf "$TEST_ROOT"
+            if [ -e "$TEST_ROOT" ]; then
+                find "$TEST_ROOT" -xdev -depth -delete
+            fi
             ;;
     esac
 }

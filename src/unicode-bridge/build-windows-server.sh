@@ -28,7 +28,9 @@ cleanup() {
     if [ -n "$BUILD_TEMP" ]; then
         case "$BUILD_TEMP" in
             /tmp/mordhau-unicode-bridge.*)
-                rm -rf "$BUILD_TEMP"
+                if [ -e "$BUILD_TEMP" ]; then
+                    find "$BUILD_TEMP" -xdev -depth -delete
+                fi
                 ;;
         esac
     fi
