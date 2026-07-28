@@ -10,6 +10,7 @@ import (
 	"math/big"
 	"os"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -25,6 +26,10 @@ const (
 	runtimeTargetCacheLifetime  = time.Second
 	runtimeBridgeStatusLimit    = 4 << 20
 	runtimeEnumValueLimit       = 1024
+	runtimePlayerLevelPoll      = 2 * time.Second
+	runtimePlayerLevelInitial   = 5 * time.Second
+	runtimePlayerLevelRefresh   = 5 * time.Minute
+	runtimePlayerLevelRetry     = 10 * time.Second
 )
 
 var (
@@ -47,6 +52,12 @@ type runtimeBridgeStatusFile struct {
 type runtimeTargetCacheEntry struct {
 	View      RuntimeTargetView
 	ExpiresAt time.Time
+}
+
+type runtimePlayerLevelTarget struct {
+	PlayerSlot         int
+	PlayFabID          string
+	PlayerControllerID string
 }
 
 type runtimeBridgeProtocolError struct {
@@ -189,6 +200,13 @@ func (m *Manager) sampleRuntimeBridgeStatus() {
 			len(target.Class) > 191 ||
 			!validRuntimePlayerName(target.PlayerName) ||
 			!validRuntimePlayFabID(target.PlayFabID) ||
+			!validPlayerPlatformIdentity(
+				target.Platform,
+				target.PlatformAccountID,
+			) ||
+			(target.Kind != "player_controller" &&
+				(target.Platform != "" ||
+					target.PlatformAccountID != "")) ||
 			target.PlayerSlot < -1 ||
 			target.PlayerSlot > 1023 {
 			summary.Status = "invalid_status"
@@ -278,6 +296,9 @@ func (m *Manager) sampleRuntimeBridgeStatus() {
 	summary.GameModeClass = status.GameModeClass
 	summary.SampledAt = info.ModTime()
 	m.setRuntimeState(summary, status.Targets)
+	m.recordPlayerPlatformObservations(
+		runtimePlayerPlatformObservations(status.Targets),
+	)
 }
 
 func (m *Manager) runtimeBridgeStatusLoop(ctx context.Context) {
@@ -290,6 +311,162 @@ func (m *Manager) runtimeBridgeStatusLoop(ctx context.Context) {
 			return
 		case <-ticker.C:
 			m.sampleRuntimeBridgeStatus()
+		}
+	}
+}
+
+func runtimePlayerPlatformObservations(
+	targets []RuntimeTarget,
+) []playerPlatformObservation {
+	observations := make([]playerPlatformObservation, 0, len(targets))
+	for _, target := range targets {
+		if target.Kind != "player_controller" ||
+			!validMordhauPlayerID(target.PlayFabID) ||
+			!validPlayerPlatformIdentity(
+				target.Platform,
+				target.PlatformAccountID,
+			) ||
+			target.Platform == "" {
+			continue
+		}
+		observations = append(observations, playerPlatformObservation{
+			PlayFabID:         strings.ToUpper(target.PlayFabID),
+			Platform:          target.Platform,
+			PlatformAccountID: target.PlatformAccountID,
+		})
+	}
+	return observations
+}
+
+func (m *Manager) runtimePlayerLevelTargets() []runtimePlayerLevelTarget {
+	m.runtimeMu.RLock()
+	targets := append([]RuntimeTarget(nil), m.runtimeTargets...)
+	ready := m.runtimeSummary.Ready
+	m.runtimeMu.RUnlock()
+	if !ready {
+		return nil
+	}
+	result := make([]runtimePlayerLevelTarget, 0, len(targets))
+	for _, target := range targets {
+		if target.Kind == "player_controller" &&
+			validMordhauPlayerID(target.PlayFabID) {
+			result = append(result, runtimePlayerLevelTarget{
+				PlayerSlot:         target.PlayerSlot,
+				PlayFabID:          strings.ToUpper(target.PlayFabID),
+				PlayerControllerID: target.ID,
+			})
+		}
+	}
+	sort.Slice(result, func(left, right int) bool {
+		return result[left].PlayerSlot < result[right].PlayerSlot
+	})
+	return result
+}
+
+func runtimePlayerLevel(view RuntimeTargetView) (int, bool) {
+	if view.Target.Kind != "player_controller" ||
+		view.AccountProgress == nil ||
+		view.AccountProgress.XP < 0 ||
+		view.AccountProgress.Level < 1 ||
+		view.AccountProgress.Level > playerMaximumLevel {
+		return 0, false
+	}
+	return view.AccountProgress.Level, true
+}
+
+func (m *Manager) runtimePlayerLevelTargetCurrent(
+	target runtimePlayerLevelTarget,
+) bool {
+	for _, current := range m.runtimePlayerLevelTargets() {
+		if current.PlayerSlot == target.PlayerSlot &&
+			current.PlayFabID == target.PlayFabID &&
+			current.PlayerControllerID == target.PlayerControllerID {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *Manager) sampleRuntimePlayerLevel(
+	ctx context.Context,
+	target runtimePlayerLevelTarget,
+) error {
+	view, err := m.runtimeTarget(ctx, target.PlayerControllerID)
+	if err != nil {
+		return err
+	}
+	level, ok := runtimePlayerLevel(view)
+	if !ok {
+		return errors.New("runtime inventory did not expose valid account progress")
+	}
+	if !m.runtimePlayerLevelTargetCurrent(target) {
+		return errors.New("runtime player target changed while sampling level")
+	}
+	m.recordPlayerLevelObservations([]playerLevelObservation{{
+		PlayFabID: target.PlayFabID,
+		Level:     level,
+	}})
+	return nil
+}
+
+func (m *Manager) runtimePlayerLevelLoop(ctx context.Context) {
+	firstSeen := make(map[string]time.Time)
+	lastAttempt := make(map[string]time.Time)
+	lastSuccess := make(map[string]time.Time)
+	ticker := time.NewTicker(runtimePlayerLevelPoll)
+	defer ticker.Stop()
+
+	sample := func() {
+		now := time.Now()
+		targets := m.runtimePlayerLevelTargets()
+		live := make(map[string]struct{}, len(targets))
+		for _, target := range targets {
+			live[target.PlayerControllerID] = struct{}{}
+			seenAt, seen := firstSeen[target.PlayerControllerID]
+			if !seen {
+				firstSeen[target.PlayerControllerID] = now
+				continue
+			}
+			if now.Sub(seenAt) < runtimePlayerLevelInitial {
+				continue
+			}
+			if succeeded := lastSuccess[target.PlayerControllerID]; !succeeded.IsZero() &&
+				now.Sub(succeeded) < runtimePlayerLevelRefresh {
+				continue
+			}
+			if attempted := lastAttempt[target.PlayerControllerID]; !attempted.IsZero() &&
+				now.Sub(attempted) < runtimePlayerLevelRetry {
+				continue
+			}
+			lastAttempt[target.PlayerControllerID] = now
+			if err := m.sampleRuntimePlayerLevel(ctx, target); err == nil {
+				lastSuccess[target.PlayerControllerID] = time.Now()
+			}
+			if ctx.Err() != nil {
+				return
+			}
+		}
+		for targetID := range lastAttempt {
+			if _, exists := live[targetID]; !exists {
+				delete(firstSeen, targetID)
+				delete(lastAttempt, targetID)
+				delete(lastSuccess, targetID)
+			}
+		}
+		for targetID := range firstSeen {
+			if _, exists := live[targetID]; !exists {
+				delete(firstSeen, targetID)
+			}
+		}
+	}
+
+	sample()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			sample()
 		}
 	}
 }
@@ -794,6 +971,13 @@ func (m *Manager) runtimeTarget(
 		len(view.Target.Class) > 191 ||
 		!validRuntimePlayerName(view.Target.PlayerName) ||
 		!validRuntimePlayFabID(view.Target.PlayFabID) ||
+		!validPlayerPlatformIdentity(
+			view.Target.Platform,
+			view.Target.PlatformAccountID,
+		) ||
+		(view.Target.Kind != "player_controller" &&
+			(view.Target.Platform != "" ||
+				view.Target.PlatformAccountID != "")) ||
 		view.Target.PlayerSlot < -1 ||
 		view.Target.PlayerSlot > 1023 ||
 		((view.Target.Kind == "game_mode" ||
@@ -808,6 +992,11 @@ func (m *Manager) runtimeTarget(
 		(view.Target.Kind != "player_controller" &&
 			(view.Target.PlayerName != "" ||
 				view.Target.PlayFabID != "")) ||
+		(view.AccountProgress != nil &&
+			(view.Target.Kind != "player_controller" ||
+				view.AccountProgress.XP < 0 ||
+				view.AccountProgress.Level < 1 ||
+				view.AccountProgress.Level > playerMaximumLevel)) ||
 		view.PropertyCount != len(view.Properties) ||
 		view.PropertyCount < 0 ||
 		view.PropertyCount > 8192 ||

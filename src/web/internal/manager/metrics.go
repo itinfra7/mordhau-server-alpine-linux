@@ -212,13 +212,25 @@ func (m *Manager) snapshot() Snapshot {
 		start = len(m.rconEvents) - 120
 	}
 	events := append([]RCONEvent(nil), m.rconEvents[start:]...)
+	currentMap := m.currentMap
+	currentGameMode := m.currentGameMode
 	m.rconMu.RUnlock()
 
 	pid, running := serverProcess()
+	runtime := m.runtimeSummaryView()
+	if running && runtime.Ready && runtime.GameModeClass != "" {
+		currentGameMode = runtime.GameModeClass
+	}
+	if !running {
+		currentMap = ""
+		currentGameMode = ""
+	}
 	return Snapshot{
 		Metrics:              metrics,
 		ServerRunning:        running,
 		ServerPID:            pid,
+		CurrentMap:           currentMap,
+		CurrentGameMode:      currentGameMode,
 		Language:             m.currentLanguage(),
 		Languages:            append([]Language(nil), supportedLanguages...),
 		PendingConfig:        pendingConfigExists(),
@@ -228,7 +240,7 @@ func (m *Manager) snapshot() Snapshot {
 		ServerEvents:         events,
 		ModRevision:          m.currentModRevision(),
 		PlayerRevision:       m.currentPlayerRevision(),
-		RuntimeBridge:        m.runtimeSummaryView(),
+		RuntimeBridge:        runtime,
 		GeneratedAt:          time.Now(),
 	}
 }

@@ -18,8 +18,12 @@ import (
 )
 
 const (
-	gameLogPollInterval = 250 * time.Millisecond
-	gameLogReadLimit    = 4 << 20
+	gameLogPollInterval          = 250 * time.Millisecond
+	gameLogReadLimit             = 4 << 20
+	matchStateWaitingToStartText = "MatchState: Waiting to start"
+	matchStateLeavingMapText     = "MatchState: Leaving map"
+	mordhauLoadMapMarker         = "LogLoad: LoadMap: "
+	mordhauGameClassMarker       = "LogLoad: Game class is '"
 )
 
 type gameLogFollower struct {
@@ -55,9 +59,13 @@ type pendingGameConnection struct {
 }
 
 type gameLogProcessor struct {
-	players     map[string]gameLogPlayer
-	pending     map[string]gameLogPlayer
-	connections []pendingGameConnection
+	players                  map[string]gameLogPlayer
+	pending                  map[string]gameLogPlayer
+	connections              []pendingGameConnection
+	emptyWaitingToStartShown bool
+	emptyLeavingMapShown     bool
+	currentMap               string
+	currentGameMode          string
 }
 
 func newGameLogProcessor() *gameLogProcessor {
@@ -71,6 +79,38 @@ func (processor *gameLogProcessor) reset() {
 	clear(processor.players)
 	clear(processor.pending)
 	processor.connections = nil
+	processor.currentMap = ""
+	processor.currentGameMode = ""
+	// Empty-state suppression spans log rotation and server restarts. Only a
+	// player joining opens a new visible window for idle map-state events.
+}
+
+func (processor *gameLogProcessor) gameContext() (string, string) {
+	return processor.currentMap, processor.currentGameMode
+}
+
+func (processor *gameLogProcessor) resetEmptyMatchStateWindow() {
+	processor.emptyWaitingToStartShown = false
+	processor.emptyLeavingMapShown = false
+}
+
+func (processor *gameLogProcessor) allowMatchStateEvent(text string) bool {
+	if len(processor.players) > 0 {
+		return true
+	}
+	switch text {
+	case matchStateWaitingToStartText:
+		if processor.emptyWaitingToStartShown || processor.emptyLeavingMapShown {
+			return false
+		}
+		processor.emptyWaitingToStartShown = true
+	case matchStateLeavingMapText:
+		if processor.emptyLeavingMapShown {
+			return false
+		}
+		processor.emptyLeavingMapShown = true
+	}
+	return true
 }
 
 func (follower *gameLogFollower) initialize(onLine func(string)) (bool, error) {
@@ -218,6 +258,56 @@ func parseMordhauLogEnvelope(line string) (time.Time, string, bool) {
 	}
 	frameEnd := timestampEnd + 1 + frameEndRelative
 	return eventTime, strings.TrimSpace(line[frameEnd+1:]), true
+}
+
+func validMordhauObjectName(value string) bool {
+	if value == "" || len(value) > 191 {
+		return false
+	}
+	for _, character := range value {
+		if (character >= 'a' && character <= 'z') ||
+			(character >= 'A' && character <= 'Z') ||
+			(character >= '0' && character <= '9') ||
+			character == '_' || character == '-' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func parseMordhauLoadedMap(body string) (string, bool) {
+	if !strings.HasPrefix(body, mordhauLoadMapMarker) {
+		return "", false
+	}
+	value := strings.TrimSpace(strings.TrimPrefix(body, mordhauLoadMapMarker))
+	if options := strings.IndexByte(value, '?'); options >= 0 {
+		value = value[:options]
+	}
+	value = strings.TrimSuffix(strings.TrimSpace(value), "/")
+	if separator := strings.LastIndexByte(value, '/'); separator >= 0 {
+		value = value[separator+1:]
+	}
+	if !validMordhauObjectName(value) {
+		return "", false
+	}
+	return value, true
+}
+
+func parseMordhauGameClass(body string) (string, bool) {
+	if !strings.HasPrefix(body, mordhauGameClassMarker) {
+		return "", false
+	}
+	value := strings.TrimPrefix(body, mordhauGameClassMarker)
+	end := strings.IndexByte(value, '\'')
+	if end < 1 || strings.TrimSpace(value[end+1:]) != "" {
+		return "", false
+	}
+	value = value[:end]
+	if !validMordhauObjectName(value) {
+		return "", false
+	}
+	return value, true
 }
 
 func validMordhauPlayerID(value string) bool {
@@ -571,6 +661,15 @@ func (processor *gameLogProcessor) processLine(line string) []gameLogEvent {
 		return nil
 	}
 
+	if mapName, ok := parseMordhauLoadedMap(body); ok {
+		processor.currentMap = mapName
+		processor.currentGameMode = ""
+		return nil
+	}
+	if gameMode, ok := parseMordhauGameClass(body); ok {
+		processor.currentGameMode = gameMode
+		return nil
+	}
 	if address, ok := parseMordhauAcceptedGameConnection(body); ok {
 		processor.addConnection(address, eventTime)
 		return nil
@@ -596,6 +695,9 @@ func (processor *gameLogProcessor) processLine(line string) []gameLogEvent {
 			processor.players[playerID] = existing
 			delete(processor.pending, playerID)
 			return nil
+		}
+		if len(processor.players) == 0 {
+			processor.resetEmptyMatchStateWindow()
 		}
 		player := gameLogPlayer{
 			name:     name,
@@ -644,6 +746,9 @@ func (processor *gameLogProcessor) processLine(line string) []gameLogEvent {
 		if !active {
 			return nil
 		}
+		if len(processor.players) == 0 {
+			processor.resetEmptyMatchStateWindow()
+		}
 		return []gameLogEvent{{
 			Time: eventTime,
 			Kind: "login",
@@ -661,6 +766,9 @@ func (processor *gameLogProcessor) processLine(line string) []gameLogEvent {
 		}}
 	}
 	if text, ok := parseMordhauMatchState(body); ok {
+		if !processor.allowMatchStateEvent(text) {
+			return nil
+		}
 		return []gameLogEvent{{Time: eventTime, Kind: "matchstate", Text: text}}
 	}
 	if kind, text, ok := parseMordhauFeed(body); ok {
@@ -676,6 +784,13 @@ func (manager *Manager) setEventSourceState(connected bool, status string) {
 	manager.rconMu.Lock()
 	manager.eventSourceConnected = connected
 	manager.eventSourceStatus = status
+	manager.rconMu.Unlock()
+}
+
+func (manager *Manager) setGameContext(mapName, gameMode string) {
+	manager.rconMu.Lock()
+	manager.currentMap = mapName
+	manager.currentGameMode = gameMode
 	manager.rconMu.Unlock()
 }
 
@@ -695,6 +810,10 @@ func (manager *Manager) gameLogLoop(ctx context.Context) {
 		lastReadError = err.Error()
 		log.Printf("initialize MORDHAU game-log follower: %v", err)
 	}
+	if wasRunning {
+		mapName, gameMode := processor.gameContext()
+		manager.setGameContext(mapName, gameMode)
+	}
 
 	for {
 		if ctx.Err() != nil {
@@ -707,6 +826,7 @@ func (manager *Manager) gameLogLoop(ctx context.Context) {
 				processor.reset()
 			}
 			wasRunning = false
+			manager.setGameContext("", "")
 			manager.setEventSourceState(false, "Waiting for server")
 		} else {
 			wasRunning = true
@@ -751,6 +871,8 @@ func (manager *Manager) gameLogLoop(ctx context.Context) {
 							}
 						}
 					}
+					mapName, gameMode := processor.gameContext()
+					manager.setGameContext(mapName, gameMode)
 					manager.recordPlayerGameEvents(playerEvents)
 				}
 			}

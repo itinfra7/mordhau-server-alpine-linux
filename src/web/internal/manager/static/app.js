@@ -37,6 +37,9 @@ const app = {
   playerDetailLoading: false,
   playerDetailRequestSequence: 0,
   playerMutationRunning: false,
+  mapCatalog: null,
+  mapCatalogLoading: false,
+  mapChanging: false,
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -137,6 +140,22 @@ function setMeter(name, percent) {
   $(`#${name}-meter`).style.width = `${safe}%`;
 }
 
+function gameModeDisplayName(className) {
+  if (typeof className !== "string" || !className) return "";
+  const known = Array.isArray(app.mapCatalog?.game_modes)
+    ? app.mapCatalog.game_modes.find((mode) => mode.class === className)
+    : null;
+  if (known?.name) return known.name;
+  const trimmed = className
+    .replace(/^BP_/, "")
+    .replace(/_C$/, "")
+    .replace(/GameMode$/, "")
+    .replaceAll(/[_-]+/g, " ")
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .trim();
+  return trimmed || className;
+}
+
 function renderSnapshot(snapshot) {
   app.snapshot = snapshot;
   if (Number.isSafeInteger(snapshot.mod_revision)) {
@@ -177,6 +196,15 @@ function renderSnapshot(snapshot) {
   $("#server-dot").classList.toggle("online", snapshot.server_running);
   $("#server-label").textContent = snapshot.server_running ? "Server online" : "Server stopped";
   $("#server-pid").textContent = snapshot.server_running ? `PID ${snapshot.server_pid}` : "PID —";
+  const currentMap = snapshot.current_map ||
+    (snapshot.server_running ? "Detecting…" : "—");
+  const currentGameModeClass = snapshot.current_game_mode || "";
+  const currentGameMode = gameModeDisplayName(currentGameModeClass) ||
+    (snapshot.server_running ? "Detecting…" : "—");
+  $("#current-map").textContent = currentMap;
+  $("#current-map").title = currentMap;
+  $("#current-game-mode").textContent = currentGameMode;
+  $("#current-game-mode").title = currentGameModeClass || currentGameMode;
   $("#pending-banner").classList.toggle("hidden", !snapshot.pending_config);
 
   const operation = snapshot.operation;
@@ -200,6 +228,9 @@ function renderSnapshot(snapshot) {
       (action === "stop" && !snapshot.server_running) ||
       (action === "update" && snapshot.server_running);
   });
+  $("#change-map-open").disabled = operation.running ||
+    !snapshot.server_running ||
+    app.mapChanging;
 
   const languageSelect = $("#language-select");
   if (!languageSelect.options.length) {
@@ -259,6 +290,147 @@ async function serverAction(action) {
     toast(`${action} operation accepted.`);
   } catch (error) {
     toast(error.message, true);
+  }
+}
+
+function closeMapChangeDialog() {
+  const dialog = $("#map-change-dialog");
+  if (typeof dialog.close === "function" && dialog.open) dialog.close();
+  else dialog.removeAttribute("open");
+}
+
+function selectedMapCatalogMode() {
+  const modes = Array.isArray(app.mapCatalog?.game_modes)
+    ? app.mapCatalog.game_modes
+    : [];
+  return modes.find((mode) => mode.id === $("#map-game-mode").value) || null;
+}
+
+function updateMapCatalogSelection() {
+  const mode = selectedMapCatalogMode();
+  const mapSelect = $("#map-name");
+  const previous = mapSelect.value;
+  mapSelect.replaceChildren();
+  const maps = Array.isArray(mode?.maps) ? mode.maps : [];
+  for (const entry of maps) {
+    const option = document.createElement("option");
+    option.value = entry.name;
+    option.textContent = `${entry.name} · ${entry.source}`;
+    mapSelect.append(option);
+  }
+  const currentMap = app.snapshot?.current_map || "";
+  if (maps.some((entry) => entry.name === previous)) {
+    mapSelect.value = previous;
+  } else if (maps.some((entry) => entry.name === currentMap)) {
+    mapSelect.value = currentMap;
+  }
+  const selected = maps.find((entry) => entry.name === mapSelect.value) || null;
+  $("#map-selection-source").textContent = selected?.source || "No compatible map";
+  $("#map-selection-class").textContent = mode?.class || "—";
+  $("#map-change-submit").disabled = app.mapChanging ||
+    !app.snapshot?.server_running ||
+    !mode ||
+    !selected;
+}
+
+function renderMapCatalog() {
+  const catalog = app.mapCatalog;
+  const modes = Array.isArray(catalog?.game_modes) ? catalog.game_modes : [];
+  const modeSelect = $("#map-game-mode");
+  modeSelect.replaceChildren();
+  for (const mode of modes) {
+    const option = document.createElement("option");
+    option.value = mode.id;
+    const count = Array.isArray(mode.maps) ? mode.maps.length : 0;
+    option.textContent = `${mode.name} · ${count} map${count === 1 ? "" : "s"}`;
+    modeSelect.append(option);
+  }
+  const currentMode = app.snapshot?.current_game_mode || "";
+  const currentMap = app.snapshot?.current_map || "";
+  const preferred = modes.find((mode) => mode.class === currentMode) ||
+    modes.find((mode) =>
+      Array.isArray(mode.maps) &&
+      mode.maps.some((entry) => entry.name === currentMap));
+  if (preferred) modeSelect.value = preferred.id;
+
+  const warnings = Array.isArray(catalog?.warnings) ? catalog.warnings : [];
+  $("#map-catalog-warnings").classList.toggle("hidden", warnings.length === 0);
+  const warningList = $("#map-catalog-warning-list");
+  warningList.replaceChildren();
+  for (const warning of warnings) {
+    const item = document.createElement("li");
+    item.textContent = warning;
+    warningList.append(item);
+  }
+  $("#map-catalog-loading").classList.add("hidden");
+  $("#map-catalog-error").classList.add("hidden");
+  $("#map-catalog-controls").classList.remove("hidden");
+  const currentGameModeClass = app.snapshot?.current_game_mode || "";
+  if (currentGameModeClass) {
+    $("#current-game-mode").textContent = gameModeDisplayName(currentGameModeClass);
+    $("#current-game-mode").title = currentGameModeClass;
+  }
+  updateMapCatalogSelection();
+}
+
+async function loadMapCatalog() {
+  app.mapCatalogLoading = true;
+  $("#map-catalog-loading").classList.remove("hidden");
+  $("#map-catalog-controls").classList.add("hidden");
+  $("#map-catalog-error").classList.add("hidden");
+  $("#map-change-submit").disabled = true;
+  try {
+    app.mapCatalog = await api("/api/maps");
+    renderMapCatalog();
+  } catch (error) {
+    app.mapCatalog = null;
+    $("#map-catalog-loading").classList.add("hidden");
+    const message = $("#map-catalog-error");
+    message.textContent = error.message;
+    message.classList.remove("hidden");
+  } finally {
+    app.mapCatalogLoading = false;
+  }
+}
+
+async function openMapChangeDialog() {
+  if (!app.snapshot?.server_running || app.snapshot?.operation?.running) return;
+  const dialog = $("#map-change-dialog");
+  if (typeof dialog.showModal === "function") dialog.showModal();
+  else dialog.setAttribute("open", "");
+  await loadMapCatalog();
+}
+
+async function submitMapChange(event) {
+  event.preventDefault();
+  const mode = selectedMapCatalogMode();
+  const maps = Array.isArray(mode?.maps) ? mode.maps : [];
+  const selected = maps.find((entry) => entry.name === $("#map-name").value);
+  if (!mode || !selected || app.mapChanging) return;
+  if (!confirm(
+    `Change the live server to ${selected.name} (${mode.name}) now? ` +
+    "Connected players will travel with the server.",
+  )) return;
+
+  app.mapChanging = true;
+  $("#map-change-submit").disabled = true;
+  $("#change-map-open").disabled = true;
+  try {
+    await api("/api/maps/change", {
+      method: "POST",
+      body: { mode_id: mode.id, map: selected.name },
+    });
+    closeMapChangeDialog();
+    toast(`Changing map to ${selected.name} · ${mode.name}.`);
+  } catch (error) {
+    toast(error.message, true);
+  } finally {
+    app.mapChanging = false;
+    const snapshot = app.snapshot;
+    $("#change-map-open").disabled = !snapshot ||
+      snapshot.operation.running ||
+      !snapshot.server_running;
+    updateMapCatalogSelection();
   }
 }
 
@@ -946,6 +1118,23 @@ function formatPlayerDuration(totalSeconds) {
   return `${seconds}s`;
 }
 
+function observedPlayerLevel(value) {
+  const level = Number(value);
+  return Number.isInteger(level) && level >= 1 && level <= 2147483647
+    ? level
+    : null;
+}
+
+function validSteamID64(value) {
+  return typeof value === "string" && /^[0-9]{17}$/.test(value);
+}
+
+function steamProfileURL(value) {
+  return validSteamID64(value)
+    ? `https://steamcommunity.com/profiles/${value}`
+    : "";
+}
+
 function countryFlagEmoji(countryCode) {
   const code = typeof countryCode === "string"
     ? countryCode.trim().toUpperCase()
@@ -1111,11 +1300,20 @@ function renderPlayerList() {
     flag.textContent = countryFlagEmoji(player.last_location?.country_code);
     flag.title = playerLocationLabel(player.last_location);
     flag.setAttribute("aria-label", flag.title);
+    const level = document.createElement("span");
+    level.className = `player-level-badge${
+      observedPlayerLevel(player.last_level) === null ? " unknown" : ""
+    }`;
+    level.textContent = observedPlayerLevel(player.last_level) === null
+      ? "Lv. —"
+      : `Lv. ${observedPlayerLevel(player.last_level)}`;
+    level.title = "Last observed account level · not Duel or Teamfight rank";
+    level.setAttribute("aria-label", level.title + ": " + level.textContent);
     const nickname = document.createElement("strong");
     nickname.textContent = player.last_nickname || "Unknown nickname";
     const playFabID = document.createElement("code");
     playFabID.textContent = player.playfab_id;
-    nicknameRow.append(flag, nickname);
+    nicknameRow.append(flag, level, nickname);
     identity.append(nicknameRow, playFabID);
 
     const meta = document.createElement("span");
@@ -1286,6 +1484,29 @@ function renderPlayerProfile() {
   $("#player-current-session").textContent = detail.connected
     ? `Online since ${formatPlayerDate(detail.active_since)}`
     : "Offline";
+  const lastLevel = observedPlayerLevel(detail.last_level);
+  $("#player-last-level").textContent = lastLevel === null
+    ? "Not observed"
+    : String(lastLevel);
+  $("#player-last-level").title =
+    "General MORDHAU account level; not Duel or Teamfight rank.";
+  const steamProfile = $("#player-steam-profile");
+  const steamID = detail.platform === "Steam" &&
+    validSteamID64(detail.platform_account_id)
+    ? detail.platform_account_id
+    : "";
+  steamProfile.classList.toggle("hidden", !steamID);
+  $("#player-steam-id").textContent = steamID || "—";
+  if (steamID) {
+    steamProfile.href = steamProfileURL(steamID);
+    steamProfile.setAttribute(
+      "aria-label",
+      `Open Steam profile ${steamID} in a new tab`,
+    );
+  } else {
+    steamProfile.removeAttribute("href");
+    steamProfile.removeAttribute("aria-label");
+  }
   renderPlayerLiveDuration();
 
   const onlineBadge = $("#player-profile-online");
@@ -2500,6 +2721,15 @@ function bindEvents() {
   }));
   $$("[data-server-action]").forEach((button) =>
     button.addEventListener("click", () => serverAction(button.dataset.serverAction)));
+  $("#change-map-open").addEventListener("click", openMapChangeDialog);
+  $("#map-change-close").addEventListener("click", closeMapChangeDialog);
+  $("#map-change-cancel").addEventListener("click", closeMapChangeDialog);
+  $("#map-game-mode").addEventListener("change", updateMapCatalogSelection);
+  $("#map-name").addEventListener("change", updateMapCatalogSelection);
+  $("#map-change-form").addEventListener("submit", submitMapChange);
+  $("#map-change-dialog").addEventListener("cancel", (event) => {
+    if (app.mapChanging) event.preventDefault();
+  });
   $("#server-prompt-form").addEventListener("submit", submitServerPrompt);
   $("#server-prompt-mode").addEventListener("change", updateServerPromptMode);
   $("#runtime-refresh-targets").addEventListener("click", async () => {

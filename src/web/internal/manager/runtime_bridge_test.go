@@ -234,6 +234,84 @@ func TestRuntimeBridgeStatusRejectsIdentityOnNonControllerTarget(t *testing.T) {
 	}
 }
 
+func TestRuntimeBridgeStatusPersistsVerifiedSteamIdentity(t *testing.T) {
+	directory := t.TempDir()
+	statusPath := filepath.Join(directory, "status.json")
+	historyPath := filepath.Join(directory, "players.json")
+	status := runtimeBridgeStatusFile{
+		Version:               1,
+		Ready:                 true,
+		PlayerControllerCount: 1,
+		TargetCount:           1,
+		Targets: []RuntimeTarget{{
+			ID:                "player_controller:11:21",
+			Kind:              "player_controller",
+			Class:             "BP_TestController_C",
+			PlayerSlot:        0,
+			PlayerName:        "Test Player",
+			PlayFabID:         testPlayerID,
+			Platform:          "Steam",
+			PlatformAccountID: testSteamID64,
+		}},
+	}
+	if err := writeJSONAtomic(statusPath, status, 0600); err != nil {
+		t.Fatal(err)
+	}
+	manager := &Manager{
+		runtimeStatusPath:    statusPath,
+		runtimeServerProcess: func() (int, bool) { return 123, true },
+		playerHistoryFile:    historyPath,
+		playerHistory: playerHistoryFile{
+			Version: playerHistoryVersion,
+		},
+	}
+	manager.sampleRuntimeBridgeStatus()
+	if summary := manager.runtimeSummaryView(); !summary.Ready {
+		t.Fatalf("valid Steam identity rejected: %+v", summary)
+	}
+	if len(manager.playerHistory.Players) != 1 ||
+		manager.playerHistory.Players[0].Platform != "Steam" ||
+		manager.playerHistory.Players[0].PlatformAccountID !=
+			testSteamID64 {
+		t.Fatalf(
+			"Steam identity was not persisted: %+v",
+			manager.playerHistory.Players,
+		)
+	}
+}
+
+func TestRuntimeBridgeStatusRejectsMalformedSteamID64(t *testing.T) {
+	directory := t.TempDir()
+	statusPath := filepath.Join(directory, "status.json")
+	status := runtimeBridgeStatusFile{
+		Version:               1,
+		Ready:                 true,
+		PlayerControllerCount: 1,
+		TargetCount:           1,
+		Targets: []RuntimeTarget{{
+			ID:                "player_controller:11:21",
+			Kind:              "player_controller",
+			Class:             "BP_TestController_C",
+			PlayerSlot:        0,
+			PlayFabID:         testPlayerID,
+			Platform:          "Steam",
+			PlatformAccountID: "not-a-steam-id",
+		}},
+	}
+	if err := writeJSONAtomic(statusPath, status, 0600); err != nil {
+		t.Fatal(err)
+	}
+	manager := &Manager{
+		runtimeStatusPath:    statusPath,
+		runtimeServerProcess: func() (int, bool) { return 123, true },
+	}
+	manager.sampleRuntimeBridgeStatus()
+	if summary := manager.runtimeSummaryView(); summary.Ready ||
+		summary.Status != "invalid_status" {
+		t.Fatalf("malformed SteamID64 accepted: %+v", summary)
+	}
+}
+
 func TestRuntimePropertyEditorsAndValidation(t *testing.T) {
 	value := func(text string) *string { return &text }
 	testCases := []struct {

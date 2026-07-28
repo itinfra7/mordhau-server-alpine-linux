@@ -37,6 +37,8 @@ func (m *Manager) Handler() http.Handler {
 	mux.HandleFunc("/api/players/restriction", m.withSession(m.playerRestrictionHandler))
 	mux.HandleFunc("/api/players/comments", m.withSession(m.playerCommentHandler))
 	mux.HandleFunc("/api/server/action", m.withSession(m.serverActionHandler))
+	mux.HandleFunc("/api/maps", m.withSession(m.mapCatalogHandler))
+	mux.HandleFunc("/api/maps/change", m.withSession(m.mapChangeHandler))
 	mux.HandleFunc("/api/server/events/history", m.withSession(m.rconHistoryHandler))
 	mux.HandleFunc("/api/rcon/history", m.withSession(m.rconHistoryHandler))
 	mux.HandleFunc("/api/rcon/message", m.withSession(m.rconMessageHandler))
@@ -650,6 +652,139 @@ func (m *Manager) serverActionHandler(response http.ResponseWriter, request *htt
 		"action": body.Action,
 	})
 	writeJSON(response, http.StatusAccepted, map[string]string{"status": "accepted"})
+}
+
+func (m *Manager) mapCatalogHandler(
+	response http.ResponseWriter,
+	request *http.Request,
+	_ Session,
+) {
+	if request.Method != http.MethodGet {
+		response.Header().Set("Allow", http.MethodGet)
+		http.Error(response, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	view, err := m.mapCatalog(request.Context())
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, errMapCatalogUnavailable) {
+			status = http.StatusServiceUnavailable
+		}
+		writeError(response, status, err.Error())
+		return
+	}
+	writeJSON(response, http.StatusOK, view)
+}
+
+type mapChangeRequest struct {
+	ModeID string `json:"mode_id"`
+	Map    string `json:"map"`
+}
+
+func (m *Manager) mapChangeHandler(
+	response http.ResponseWriter,
+	request *http.Request,
+	session Session,
+) {
+	if request.Method != http.MethodPost {
+		response.Header().Set("Allow", http.MethodPost)
+		http.Error(response, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !validCSRF(request, session) {
+		writeError(response, http.StatusForbidden, "invalid CSRF token")
+		return
+	}
+	var change mapChangeRequest
+	if err := decodeJSON(response, request, &change); err != nil {
+		writeError(response, http.StatusBadRequest, err.Error())
+		return
+	}
+	if change.ModeID == "" || len(change.ModeID) > 64 ||
+		!validMordhauObjectName(change.Map) {
+		writeError(response, http.StatusBadRequest, errMapSelectionInvalid.Error())
+		return
+	}
+	view, err := m.mapCatalog(request.Context())
+	if err != nil {
+		writeError(response, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	mode, selectedMap, ok := findMapSelection(view, change.ModeID, change.Map)
+	if !ok {
+		m.auditRequestEvent(
+			request,
+			session.Username,
+			"map_change_rejected",
+			map[string]string{
+				"mode_id": change.ModeID,
+				"map":     change.Map,
+				"reason":  errMapSelectionInvalid.Error(),
+			},
+		)
+		writeError(response, http.StatusBadRequest, errMapSelectionInvalid.Error())
+		return
+	}
+	if !m.mapGameServerRunning() {
+		writeError(response, http.StatusConflict, "the dedicated server is not running")
+		return
+	}
+
+	command := "changelevel " + selectedMap.Name
+	m.rconCommandMu.Lock()
+	defer m.rconCommandMu.Unlock()
+
+	execute := m.runRCONCommand
+	if m.rconCommandExecute != nil {
+		execute = m.rconCommandExecute
+	}
+	result, err := execute(command)
+	if err == nil {
+		for _, line := range result.Lines {
+			if strings.Contains(strings.ToLower(line), "failed to change level") {
+				err = errors.New(line)
+				break
+			}
+		}
+	}
+	if err != nil {
+		m.addRCONEvent("command-error", "Map change failed: "+err.Error())
+		m.auditRequestEvent(
+			request,
+			session.Username,
+			"map_change_failed",
+			map[string]string{
+				"map":       selectedMap.Name,
+				"game_mode": mode.Class,
+				"source":    selectedMap.Source,
+				"error":     err.Error(),
+			},
+		)
+		writeError(response, http.StatusConflict, err.Error())
+		return
+	}
+	m.addRCONEvent(
+		"command",
+		session.Username+" changed map to "+selectedMap.Name+" · "+mode.Name,
+	)
+	for _, line := range result.Lines {
+		m.addRCONEvent("response", line)
+	}
+	m.auditRequestEvent(
+		request,
+		session.Username,
+		"map_change_executed",
+		map[string]string{
+			"map":       selectedMap.Name,
+			"game_mode": mode.Class,
+			"source":    selectedMap.Source,
+		},
+	)
+	writeJSON(response, http.StatusOK, map[string]any{
+		"status":    "accepted",
+		"map":       selectedMap,
+		"game_mode": mode,
+	})
 }
 
 func (m *Manager) rconMessageHandler(

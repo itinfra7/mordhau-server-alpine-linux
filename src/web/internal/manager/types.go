@@ -135,6 +135,8 @@ type Snapshot struct {
 	Metrics              Metrics              `json:"metrics"`
 	ServerRunning        bool                 `json:"server_running"`
 	ServerPID            int                  `json:"server_pid,omitempty"`
+	CurrentMap           string               `json:"current_map,omitempty"`
+	CurrentGameMode      string               `json:"current_game_mode,omitempty"`
 	Language             string               `json:"language"`
 	Languages            []Language           `json:"languages"`
 	PendingConfig        bool                 `json:"pending_config"`
@@ -157,12 +159,19 @@ type RuntimeBridgeSummary struct {
 }
 
 type RuntimeTarget struct {
-	ID         string `json:"id"`
-	Kind       string `json:"kind"`
-	Class      string `json:"class"`
-	PlayerSlot int    `json:"player_slot"`
-	PlayerName string `json:"player_name,omitempty"`
-	PlayFabID  string `json:"playfab_id,omitempty"`
+	ID                string `json:"id"`
+	Kind              string `json:"kind"`
+	Class             string `json:"class"`
+	PlayerSlot        int    `json:"player_slot"`
+	PlayerName        string `json:"player_name,omitempty"`
+	PlayFabID         string `json:"playfab_id,omitempty"`
+	Platform          string `json:"platform,omitempty"`
+	PlatformAccountID string `json:"platform_account_id,omitempty"`
+}
+
+type RuntimeAccountProgress struct {
+	XP    int `json:"xp"`
+	Level int `json:"level"`
 }
 
 type RuntimeReplication struct {
@@ -212,16 +221,17 @@ type RuntimeStatusView struct {
 }
 
 type RuntimeTargetView struct {
-	Version               int               `json:"version"`
-	RequestID             string            `json:"request_id"`
-	OK                    bool              `json:"ok"`
-	PlayerControllerCount int               `json:"player_controller_count"`
-	Target                RuntimeTarget     `json:"target"`
-	ClassChain            []string          `json:"class_chain"`
-	Properties            []RuntimeProperty `json:"properties"`
-	PropertyCount         int               `json:"property_count"`
-	NetworkNote           string            `json:"network_note"`
-	Error                 *RuntimeError     `json:"error,omitempty"`
+	Version               int                     `json:"version"`
+	RequestID             string                  `json:"request_id"`
+	OK                    bool                    `json:"ok"`
+	PlayerControllerCount int                     `json:"player_controller_count"`
+	Target                RuntimeTarget           `json:"target"`
+	AccountProgress       *RuntimeAccountProgress `json:"account_progress,omitempty"`
+	ClassChain            []string                `json:"class_chain"`
+	Properties            []RuntimeProperty       `json:"properties"`
+	PropertyCount         int                     `json:"property_count"`
+	NetworkNote           string                  `json:"network_note"`
+	Error                 *RuntimeError           `json:"error,omitempty"`
 }
 
 type RuntimePropertyChange struct {

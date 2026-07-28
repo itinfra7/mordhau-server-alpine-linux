@@ -55,6 +55,8 @@ type Manager struct {
 	rconLogPath          string
 	rconCommandMu        sync.Mutex
 	rconCommandExecute   func(command string) (rconCommandResult, error)
+	currentMap           string
+	currentGameMode      string
 
 	playersMu                  sync.RWMutex
 	playerHistory              playerHistoryFile
@@ -87,6 +89,12 @@ type Manager struct {
 
 	customPaksMu   sync.Mutex
 	customPakPaths customPakPaths
+
+	mapCatalogMu        sync.Mutex
+	mapCatalogCache     mapCatalogCache
+	mapCatalogRepakPath string
+	mapCatalogViewBuild func(context.Context) (MapCatalogView, error)
+	mapServerProcess    func() (int, bool)
 
 	modsMu                 sync.RWMutex
 	modRefreshSettingsMu   sync.Mutex
@@ -162,6 +170,7 @@ func New(trustedProxies ...netip.Prefix) (*Manager, error) {
 		playerArchiveDirectory: logDir,
 		playerCurrentLogFile:   gameLogPath,
 		playerServerProcess:    serverProcess,
+		mapServerProcess:       serverProcess,
 		geoIPDatabaseFile:      geoIPDatabasePath,
 		geoIPStateFile:         geoIPStatePath,
 		geoIPIgnoreFile:        geoIPIgnorePath,
@@ -223,6 +232,7 @@ func (m *Manager) StartBackground(ctx context.Context) {
 	m.auditActorEvent("system", "local", "web_manager_started", nil)
 	go m.metricsLoop(ctx)
 	go m.runtimeBridgeStatusLoop(ctx)
+	go m.runtimePlayerLevelLoop(ctx)
 	go m.gameLogLoop(ctx)
 	go m.geoIPUpdateLoop(ctx)
 	go m.cleanupLoop(ctx)

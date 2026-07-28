@@ -433,6 +433,37 @@ input:focus, select:focus, textarea:focus { border-color: rgba(233, 79, 81, .65)
 .field-row label { color: var(--label); font-size: .8rem; }
 .language-row { margin-top: 1rem; flex-wrap: wrap; }
 .language-row select { min-width: 12rem; }
+.server-context-grid {
+  display: grid;
+  grid-template-columns: minmax(0, .85fr) minmax(0, 1.15fr) auto;
+  align-items: stretch;
+  gap: .55rem;
+  margin-top: .85rem;
+}
+.server-context-value {
+  display: grid;
+  align-content: center;
+  min-width: 0;
+  gap: .25rem;
+  padding: .7rem .75rem;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: var(--surface-soft);
+}
+.server-context-value span {
+  color: var(--muted);
+  font-size: .64rem;
+  font-weight: 750;
+  text-transform: uppercase;
+  letter-spacing: .07em;
+}
+.server-context-value strong {
+  overflow: hidden;
+  font: .74rem/1.35 ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.server-context-grid > button { white-space: nowrap; }
 .operation-box {
   margin-top: 1rem;
   padding: .85rem;
@@ -755,7 +786,8 @@ input:focus, select:focus, textarea:focus { border-color: rgba(233, 79, 81, .65)
   color: var(--staged-text);
   background: rgba(243, 185, 95, .08);
 }
-.runtime-edit-dialog {
+.runtime-edit-dialog,
+.map-change-dialog {
   width: min(46rem, calc(100% - 2rem));
   max-height: calc(100dvh - 2rem);
   padding: 0;
@@ -766,11 +798,65 @@ input:focus, select:focus, textarea:focus { border-color: rgba(233, 79, 81, .65)
   background: var(--panel-solid);
   box-shadow: 0 28px 90px rgba(0, 0, 0, .38);
 }
-.runtime-edit-dialog::backdrop {
+.runtime-edit-dialog::backdrop,
+.map-change-dialog::backdrop {
   background: rgba(3, 5, 9, .66);
   backdrop-filter: blur(4px);
 }
-.runtime-edit-dialog form { padding: clamp(1rem, 3vw, 1.5rem); }
+.runtime-edit-dialog form,
+.map-change-dialog form { padding: clamp(1rem, 3vw, 1.5rem); }
+.map-catalog-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 8rem;
+  gap: .6rem;
+  color: var(--muted);
+  font-size: .78rem;
+}
+.map-catalog-controls {
+  display: grid;
+  gap: .75rem;
+  margin-top: 1rem;
+}
+.map-catalog-controls > label {
+  display: grid;
+  gap: .4rem;
+  color: var(--label);
+  font-size: .75rem;
+}
+.map-catalog-controls select { width: 100%; }
+.map-selection-summary {
+  display: grid;
+  min-width: 0;
+  gap: .25rem;
+  padding: .7rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-soft);
+}
+.map-selection-summary span {
+  color: var(--label);
+  font-size: .73rem;
+}
+.map-selection-summary code {
+  overflow: hidden;
+  color: var(--muted);
+  font: .68rem/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.map-catalog-warnings {
+  color: var(--staged-text);
+  font-size: .72rem;
+}
+.map-catalog-warnings ul {
+  margin: .55rem 0 0;
+  padding-left: 1.15rem;
+  color: var(--muted);
+}
+.map-catalog-error { margin-top: 1rem; color: var(--danger-text); }
+.map-change-actions { justify-content: flex-end; margin-top: 1rem; }
 .runtime-value-field {
   display: grid;
   gap: .45rem;
@@ -892,6 +978,23 @@ input:focus, select:focus, textarea:focus { border-color: rgba(233, 79, 81, .65)
   gap: .38rem;
 }
 .player-list-name strong { min-width: 0; }
+.player-level-badge {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  padding: .16rem .34rem;
+  border: 1px solid rgba(108, 75, 209, .28);
+  border-radius: 999px;
+  color: var(--secondary-text);
+  background: rgba(108, 75, 209, .09);
+  font: 800 .58rem/1.15 ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: nowrap;
+}
+.player-level-badge.unknown {
+  border-color: var(--line);
+  color: var(--muted);
+  background: var(--surface-inset);
+}
 .player-country-flag {
   display: inline-flex;
   flex: 0 0 auto;
@@ -1012,7 +1115,7 @@ input:focus, select:focus, textarea:focus { border-color: rgba(233, 79, 81, .65)
 }
 .player-stat-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: .6rem;
   margin-bottom: .8rem;
 }
@@ -1032,6 +1135,58 @@ input:focus, select:focus, textarea:focus { border-color: rgba(233, 79, 81, .65)
 .player-stat strong {
   overflow-wrap: anywhere;
   font-size: .82rem;
+}
+.player-steam-profile {
+  display: flex;
+  align-items: center;
+  gap: .7rem;
+  margin-bottom: .8rem;
+  padding: .72rem .82rem;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  color: var(--text);
+  background: var(--surface-soft);
+  text-decoration: none;
+  transition: border-color .16s ease, transform .16s ease,
+    background-color .16s ease;
+}
+.player-steam-profile:hover,
+.player-steam-profile:focus-visible {
+  border-color: var(--accent);
+  background: var(--surface-inset);
+  transform: translateY(-1px);
+}
+.player-steam-icon {
+  width: 2.35rem;
+  height: 2.35rem;
+  flex: 0 0 auto;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 3;
+}
+.player-steam-identity {
+  display: grid;
+  gap: .18rem;
+  min-width: 0;
+}
+.player-steam-identity small {
+  color: var(--muted);
+  font-size: .61rem;
+  font-weight: 850;
+  letter-spacing: .1em;
+}
+.player-steam-identity code {
+  overflow-wrap: anywhere;
+  font: .78rem/1.35 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.player-steam-open {
+  margin-left: auto;
+  color: var(--accent);
+  font-size: .72rem;
+  font-weight: 800;
+  white-space: nowrap;
 }
 .player-profile-section {
   min-width: 0;
@@ -1838,6 +1993,7 @@ input:focus, select:focus, textarea:focus { border-color: rgba(233, 79, 81, .65)
   }
   .mod-refresh-setting { justify-content: space-between; }
   .mod-refresh-controls > button { width: 100%; }
+  .player-steam-open { display: none; }
   .runtime-target-list { grid-template-columns: 1fr; }
   .runtime-filter-bar { grid-template-columns: 1fr; }
   .runtime-checkbox { min-height: 44px; }
@@ -1851,11 +2007,14 @@ input:focus, select:focus, textarea:focus { border-color: rgba(233, 79, 81, .65)
     width: 100%;
     max-width: none;
   }
-  .runtime-edit-dialog {
+  .runtime-edit-dialog,
+  .map-change-dialog {
     width: calc(100% - 1rem);
     max-height: calc(100dvh - 1rem);
     border-radius: 14px;
   }
+  .server-context-grid { grid-template-columns: 1fr; }
+  .server-context-grid > button { width: 100%; }
   .player-directory-status {
     align-items: stretch;
     flex-direction: column;

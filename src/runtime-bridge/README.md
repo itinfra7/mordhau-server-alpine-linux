@@ -43,7 +43,15 @@ RepNotify function, exported value, and editability. Enum-backed byte and enum
 properties also include their `UEnum` value names. Each controller target
 includes the current `PlayerState.PlayerNamePrivate` value and the PlayFab ID
 exported by `MordhauPlayerState.PlayFabPlayer`, allowing the manager to group
-the three player-owned runtime targets under one identity.
+the three player-owned runtime targets under one identity. A Steam-backed
+identity also includes its strictly validated 17-digit SteamID64.
+
+Controller detail requests can include account progress read through the
+supported executable's `UMordhauInventory::GetPlayerXP` and
+`UMordhauUtilityLibrary::GetRankFromXP` implementations. These calls are
+enabled only when all pinned function prologues match the supported binary.
+Inventory data that is not yet available is omitted instead of being inferred
+from replicated or competitive rank fields.
 
 ## Property Changes and Replication
 

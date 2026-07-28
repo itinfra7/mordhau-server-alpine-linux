@@ -26,7 +26,8 @@ The repository provides:
 - A shared live PlayerController count collected once by the server and
   distributed to every authenticated administrator
 - Persistent player connection history with PlayFab ID and nickname search,
-  known nickname and IP history, accumulated play time, moderation controls,
+  known nickname and IP history, last observed general account level,
+  verified Steam profile links, accumulated play time, moderation controls,
   and attributed administrator comments
 - Bidirectional player ordering by last connection or accumulated server time,
   plus local country, region, and city enrichment from DB-IP City Lite
@@ -39,8 +40,11 @@ The repository provides:
 - Optional active-mod update detection with an in-game restart countdown and
   managed automatic restart
 - Persistent initial-map and dedicated-server port selection
+- Current map and game-mode display plus catalog-validated live map travel
+  across shipped, enabled mod.io, and active CustomPak content
 - UTF-8 server-event following from `Mordhau.log`, including player lifecycle,
-  chat, match-state, killfeed, scorefeed, and punishment records
+  chat, match-state, killfeed, scorefeed, and punishment records, with repeated
+  idle empty-server map states suppressed
 - A unified RCON/SAY prompt with retained administrative command responses and
   acknowledged multilingual server messages
 - Persistent latest lifecycle results and append-only server-event history
@@ -51,10 +55,10 @@ The repository provides:
   fallback
 - Per-account JSON Lines web access and change auditing
 
-MORDHAU, SteamCMD, Wine, and their assets are downloaded from their respective
-upstream distribution channels and are not included in this repository. The
-DB-IP City Lite database is also downloaded at runtime and is not redistributed
-in the source archive.
+MORDHAU, SteamCMD, Wine, `repak`, and their assets are downloaded from their
+respective upstream distribution channels and are not included in this
+repository. The DB-IP City Lite database is also downloaded at runtime and is
+not redistributed in the source archive.
 
 ## Supported Environment
 
@@ -63,7 +67,8 @@ in the source archive.
 - OpenRC
 - Root privileges
 - Internet access to Alpine package mirrors, SteamCMD, Steam content servers,
-  Go module sources, and the DB-IP City Lite download host
+  Go module sources, GitHub Releases for the checksum-pinned `repak` helper,
+  and the DB-IP City Lite download host
 - A mod.io API key when URL lookup, metadata, and recursive dependency
   inspection are required
 - A modern desktop or mobile browser
@@ -115,12 +120,12 @@ history remains in the versioned changelog asset instead of being repeated in
 every Release body.
 
 ```sh
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.2.1/mordhau-server-alpine-linux-v2.2.1.tar.gz
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.2.1/CHANGELOG-v2.2.1.md
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.2.1/SHA256SUMS
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.2.2/mordhau-server-alpine-linux-v2.2.2.tar.gz
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.2.2/CHANGELOG-v2.2.2.md
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.2.2/SHA256SUMS
 sha256sum -c SHA256SUMS
-tar -xzf mordhau-server-alpine-linux-v2.2.1.tar.gz
-cd mordhau-server-alpine-linux-v2.2.1
+tar -xzf mordhau-server-alpine-linux-v2.2.2.tar.gz
+cd mordhau-server-alpine-linux-v2.2.2
 chmod +x src/mordhau-server-alpine-linux.sh
 ./src/mordhau-server-alpine-linux.sh
 ```
@@ -253,7 +258,8 @@ The web manager provides:
 - Ascending or descending player ordering by last connection or accumulated
   server time
 - Per-player last connection, accumulated server time, current-session state,
-  known nicknames, and known IP addresses
+  last observed general account level, verified Steam profile link, known
+  nicknames, and known IP addresses
 - Country flags and approximate country, region, and city labels resolved
   locally from the latest available DB-IP City Lite database
 - Verified server mute/unmute and ban/unban controls plus attributed
@@ -267,6 +273,8 @@ The web manager provides:
 - Boot startup mode controls for both OpenRC services
 - Persistent web-service port selection
 - Persistent initial-map selection
+- Current map and game-mode display plus validated live map selection grouped
+  by compatible installed game mode
 - Game, RCON, beacon, and query port selection with range and collision checks
 - Launch-language selection
 - Optional mod.io API-key validation, mod lookup, per-mod recursive dependency
@@ -284,7 +292,7 @@ The web manager provides:
   running
 - UTF-8 `Mordhau.log` following for player lifecycle, chat, match state,
   killfeed, scorefeed, and punishment events, including partial-write and log
-  replacement handling
+  replacement handling and repeated idle empty-server match-state suppression
 - A terminal-style RCON/SAY prompt below the shared server-event window
 - Administrative RCON command execution with bounded response collection and
   immediate output in retained server-event history
@@ -355,8 +363,26 @@ matches PlayFab ID, the latest nickname, and every retained historical
 nickname. Administrators can order results in either direction by last
 connection or accumulated server time. A selected record shows its last
 connection, accumulated completed and current-session time, nickname history,
-and canonical IPv4 or IPv6 addresses. Browser-local date and time formatting
-is used for displayed timestamps.
+last observed general MORDHAU account level, and canonical IPv4 or IPv6
+addresses. The same level appears as a visually distinct badge between the
+country flag and nickname in the player list. Browser-local date and time
+formatting is used for displayed timestamps.
+
+The native Runtime bridge reads XP through the supported server build's
+`UMordhauInventory::GetPlayerXP` implementation and converts it with
+`UMordhauUtilityLibrary::GetRankFromXP`. The web manager samples that result
+when a player is connected, retries transient inventory unavailability, and
+refreshes a still-connected player every five minutes. The last valid account
+level is retained in player history; an unavailable value is shown as not
+observed rather than inferred from `ReplicatedRank`, Duel rank, or Teamfight
+rank.
+
+When the live `PlayFabPlayer` identity identifies a Steam account, the
+validated 17-digit SteamID64 is retained with the player record. Player
+Profile shows an inline Steam account link that opens the corresponding
+`steamcommunity.com/profiles/<SteamID64>` page in a new tab. This identity
+comes from the running server and does not require a Steam Web API key or an
+external profile lookup.
 
 Country flags and approximate country, administrative region, and city names
 come from the free monthly DB-IP City Lite MMDB database. The web manager
@@ -638,6 +664,13 @@ managed log replacement. When the web service starts while the game is
 running, it scans existing records only to reconstruct connected-player state
 and does not replay the historical file into the dashboard.
 
+While no player is connected, the collector retains at most one
+`MatchState: Waiting to start` followed by one `MatchState: Leaving map`.
+After the first `Leaving map`, both idle states are omitted until a player
+authenticates. All match-state events remain visible while at least one player
+is connected. When the final player disconnects, a new empty-server window
+allows one more initial idle reset sequence.
+
 `bLogChat`, `bLogKillfeed`, and `bLogScore` under
 `[/Script/Mordhau.MordhauGameMode]` are initialized to `True` when they are
 missing or false. An item or whole section explicitly disabled through the
@@ -828,6 +861,41 @@ Removing a mod deletes only that ID from Game.ini; dependencies are retained
 because another configured mod may use them. The game server downloads active
 mods during its normal startup process.
 
+## Live Map and Game Mode
+
+The dashboard reads `LoadMap` and game-class records from the authoritative
+`Mordhau.log` stream. While the native Runtime bridge is ready, its current
+GameMode class takes precedence over the last log-derived class. These values
+are collected once by the web manager and distributed through the shared
+snapshot; connected browsers do not independently inspect the game process.
+
+The Change map dialog builds a server-side catalog from shipped
+`*WindowsServer.pak` files, enabled mod.io resources, and active CustomPaks.
+Known official mode prefixes provide a fast classification path. An official
+map without a conventional prefix is still included when its packaged default
+GameMode is unambiguous; map names such as `LiteMordhauTestLevel` therefore do
+not need an `FFA_` prefix to appear under Deathmatch. Internal initialization,
+main-menu, and base GameMode destinations are omitted. A mod map is offered
+only when its name is declared by available mod.io metadata and its packaged
+default GameMode is unambiguous. An active CustomPak without mod.io metadata
+is offered only when its packaged default GameMode can be identified
+unambiguously. A PAK that cannot be inspected is omitted and reported as a
+catalog warning.
+
+PAK indexes and selected map assets are read with checksum-pinned `repak`
+0.2.3 under bounded command time and output limits. The helper is installed
+at `/root/mordhau/bin/repak.exe`; its Apache-2.0 and MIT license texts are
+stored under `/root/mordhau/licenses/repak`. The resulting catalog is cached
+by installed-content fingerprint and rebuilt after relevant PAK or enabled
+mod state changes.
+
+The browser submits only a catalog mode ID and exact map name. The manager
+revalidates that pair against its current catalog, requires a running game
+server and authenticated CSRF-protected session, then issues only
+`changelevel <validated-map-name>`. The selected map's packaged default
+GameMode controls the destination mode. The requester and canonical client
+address are audited, while the command result is retained in Server Events.
+
 ## Launch Map and Ports
 
 The dashboard stores an optional initial map and passes it immediately after
@@ -889,6 +957,9 @@ Changing a boot mode does not change the current process state.
 - CustomPaks upload and inactive storage are root-only. Package mutations share
   the lifecycle lock, reject paths and overwrite conflicts, and are not
   applied while a managed server launch is in progress.
+- Live map requests accept only an exact server-generated catalog pair. PAK
+  inspection uses direct process arguments, read-only `list`/`get` operations,
+  bounded output, and a timeout; ambiguous mod map/game-mode pairs are omitted.
 - Session tokens are stored as SHA-256 digests.
 - Login attempts are rate-limited.
 - CSRF tokens and same-site HTTP-only cookies protect authenticated changes.
@@ -991,7 +1062,8 @@ idempotent archived/current player-history import, session-duration
 accounting, attributed persistent comments, verified mute/ban command
 handling, GeoIP edition and ignored-prefix validation, local location-record
 normalization, fixed-origin download failure handling,
-match/kill/score/punishment parsing,
+match/kill/score/punishment parsing, current map and game-mode parsing, idle
+match-state suppression,
 missing-log creation, partial writes, truncation, and log replacement,
 ASCII-only Unicode token commands, UTF-8 message staging, spool permissions and
 stale-file cleanup, bridge acknowledgements, input validation, start-map
@@ -1009,6 +1081,15 @@ and cache reuse, target-ID validation, player-identity placement,
 multilingual property values,
 type-derived editor selection, exact enum choices, integer boundary handling,
 finite floating-point parsing, and structured-text delimiter validation.
+Map-catalog tests cover packaged default-mode ambiguity, unprefixed official
+maps, internal-destination rejection, declared mod-map scope, exact mode/map
+pair validation, fixed RCON command construction, requester auditing, and an
+opt-in check against installed shipped and mod content. Player-level tests
+accept only native inventory XP conversion,
+validate the known `90435` XP to level `38` pair, reject replicated and
+competitive-rank substitutes, normalize the earlier zero-value sentinel, and
+retain the latest valid observation. Platform-identity tests enforce strict
+SteamID64 validation and safe profile-link construction.
 The shell integration test covers PAK installation, active and staged Game.ini
 registration, existing server-actor preservation, backup creation, and
 idempotent reinstallation. Static asset tests verify the default-light theme
@@ -1034,8 +1115,9 @@ property, and restoration of the original value.
 ## Update and Rollback
 
 Run the installer from a newer release to update repository-managed scripts,
-services, the Unicode Bridge, the supported native runtime bridge, and the Go
-web manager. The bundled PAK replaces the repository-managed Unicode Bridge
+services, the checksum-pinned PAK inspection helper, the Unicode Bridge, the
+supported native runtime bridge, and the Go web manager. The bundled PAK
+replaces the repository-managed Unicode Bridge
 version, and the required server-actor entry is added without duplicating
 existing entries. A native runtime bridge is replaced only after the current
 shipping executable passes its supported-build digest check. Existing
@@ -1079,4 +1161,5 @@ or other third-party software.
 - DB-IP City Lite: https://db-ip.com/db/lite.php
 - MaxMind DB Reader for Go: https://github.com/oschwald/maxminddb-golang
 - Wine: https://www.winehq.org/
+- repak: https://github.com/trumank/repak
 - Author: itinfra7 (GitHub: https://github.com/itinfra7)

@@ -25,6 +25,7 @@ const (
 	playerMaximumNicknameRunes    = 128
 	playerMaximumCommentRunes     = 2000
 	playerMaximumCommentBytes     = 8192
+	playerMaximumLevel            = 2147483647
 	playerLogScannerMaximumBytes  = 16 << 20
 	playerRestrictionCacheLife    = 15 * time.Second
 	playerPendingConnectionMaxAge = 2 * time.Minute
@@ -58,15 +59,18 @@ type PlayerComment struct {
 }
 
 type playerRecord struct {
-	PlayFabID     string             `json:"playfab_id"`
-	LastNickname  string             `json:"last_nickname,omitempty"`
-	LastConnected time.Time          `json:"last_connected_at,omitempty"`
-	Nicknames     []playerKnownValue `json:"nicknames,omitempty"`
-	Addresses     []playerKnownValue `json:"addresses,omitempty"`
-	Connections   []playerConnection `json:"connections,omitempty"`
-	Muted         bool               `json:"muted"`
-	Banned        bool               `json:"banned"`
-	Comments      []PlayerComment    `json:"comments,omitempty"`
+	PlayFabID         string             `json:"playfab_id"`
+	LastNickname      string             `json:"last_nickname,omitempty"`
+	LastLevel         *int               `json:"last_level,omitempty"`
+	Platform          string             `json:"platform,omitempty"`
+	PlatformAccountID string             `json:"platform_account_id,omitempty"`
+	LastConnected     time.Time          `json:"last_connected_at,omitempty"`
+	Nicknames         []playerKnownValue `json:"nicknames,omitempty"`
+	Addresses         []playerKnownValue `json:"addresses,omitempty"`
+	Connections       []playerConnection `json:"connections,omitempty"`
+	Muted             bool               `json:"muted"`
+	Banned            bool               `json:"banned"`
+	Comments          []PlayerComment    `json:"comments,omitempty"`
 }
 
 type playerImportedLog struct {
@@ -83,15 +87,18 @@ type playerHistoryFile struct {
 }
 
 type PlayerSummary struct {
-	PlayFabID     string          `json:"playfab_id"`
-	LastNickname  string          `json:"last_nickname,omitempty"`
-	LastConnected time.Time       `json:"last_connected_at,omitempty"`
-	Nicknames     []string        `json:"nicknames,omitempty"`
-	TotalSeconds  int64           `json:"total_seconds"`
-	LastLocation  *PlayerLocation `json:"last_location,omitempty"`
-	Connected     bool            `json:"connected"`
-	Muted         bool            `json:"muted"`
-	Banned        bool            `json:"banned"`
+	PlayFabID         string          `json:"playfab_id"`
+	LastNickname      string          `json:"last_nickname,omitempty"`
+	LastLevel         *int            `json:"last_level,omitempty"`
+	Platform          string          `json:"platform,omitempty"`
+	PlatformAccountID string          `json:"platform_account_id,omitempty"`
+	LastConnected     time.Time       `json:"last_connected_at,omitempty"`
+	Nicknames         []string        `json:"nicknames,omitempty"`
+	TotalSeconds      int64           `json:"total_seconds"`
+	LastLocation      *PlayerLocation `json:"last_location,omitempty"`
+	Connected         bool            `json:"connected"`
+	Muted             bool            `json:"muted"`
+	Banned            bool            `json:"banned"`
 }
 
 type PlayerKnownValue struct {
@@ -101,18 +108,21 @@ type PlayerKnownValue struct {
 }
 
 type PlayerDetail struct {
-	PlayFabID     string             `json:"playfab_id"`
-	LastNickname  string             `json:"last_nickname,omitempty"`
-	LastConnected time.Time          `json:"last_connected_at,omitempty"`
-	Connected     bool               `json:"connected"`
-	ActiveSince   *time.Time         `json:"active_since,omitempty"`
-	TotalSeconds  int64              `json:"total_seconds"`
-	Nicknames     []PlayerKnownValue `json:"nicknames"`
-	Addresses     []PlayerKnownValue `json:"addresses"`
-	Muted         bool               `json:"muted"`
-	Banned        bool               `json:"banned"`
-	Comments      []PlayerComment    `json:"comments"`
-	GeneratedAt   time.Time          `json:"generated_at"`
+	PlayFabID         string             `json:"playfab_id"`
+	LastNickname      string             `json:"last_nickname,omitempty"`
+	LastLevel         *int               `json:"last_level,omitempty"`
+	Platform          string             `json:"platform,omitempty"`
+	PlatformAccountID string             `json:"platform_account_id,omitempty"`
+	LastConnected     time.Time          `json:"last_connected_at,omitempty"`
+	Connected         bool               `json:"connected"`
+	ActiveSince       *time.Time         `json:"active_since,omitempty"`
+	TotalSeconds      int64              `json:"total_seconds"`
+	Nicknames         []PlayerKnownValue `json:"nicknames"`
+	Addresses         []PlayerKnownValue `json:"addresses"`
+	Muted             bool               `json:"muted"`
+	Banned            bool               `json:"banned"`
+	Comments          []PlayerComment    `json:"comments"`
+	GeneratedAt       time.Time          `json:"generated_at"`
 }
 
 type PlayerRestrictionStatus struct {
@@ -202,6 +212,25 @@ func normalizePlayerAddress(value string) (string, bool) {
 	return address.String(), true
 }
 
+func validSteamID64(value string) bool {
+	if len(value) != 17 {
+		return false
+	}
+	for _, character := range value {
+		if character < '0' || character > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func validPlayerPlatformIdentity(platform, accountID string) bool {
+	if platform == "" && accountID == "" {
+		return true
+	}
+	return platform == "Steam" && validSteamID64(accountID)
+}
+
 func normalizePlayerComment(value string) (string, error) {
 	if !utf8.ValidString(value) {
 		return "", fmt.Errorf("%w: comment must be valid UTF-8", errPlayerCommentInvalid)
@@ -274,6 +303,20 @@ func validatePlayerHistory(history *playerHistoryFile) error {
 			len(player.Comments) > playerMaximumComments {
 			return fmt.Errorf("player history record %q exceeds a storage limit", player.PlayFabID)
 		}
+		if player.LastLevel != nil &&
+			(*player.LastLevel < 1 ||
+				*player.LastLevel > playerMaximumLevel) {
+			return fmt.Errorf("player history record %q contains an invalid level", player.PlayFabID)
+		}
+		if !validPlayerPlatformIdentity(
+			player.Platform,
+			player.PlatformAccountID,
+		) {
+			return fmt.Errorf(
+				"player history record %q contains an invalid platform identity",
+				player.PlayFabID,
+			)
+		}
 		for _, nickname := range player.Nicknames {
 			normalized, ok := normalizePlayerNickname(nickname.Value)
 			if !ok || normalized != nickname.Value || nickname.LastSeenAt.IsZero() {
@@ -317,9 +360,25 @@ func validatePlayerHistory(history *playerHistoryFile) error {
 	return nil
 }
 
+func normalizeLegacyPlayerProgress(history *playerHistoryFile) bool {
+	changed := false
+	for index := range history.Players {
+		if history.Players[index].LastLevel != nil &&
+			*history.Players[index].LastLevel == 0 {
+			history.Players[index].LastLevel = nil
+			changed = true
+		}
+	}
+	if changed {
+		history.Revision++
+	}
+	return changed
+}
+
 func (m *Manager) loadOrCreatePlayerHistory() error {
 	path := m.playerHistoryPath()
 	created := false
+	migrated := false
 	history := playerHistoryFile{
 		Version: playerHistoryVersion,
 		Players: make([]playerRecord, 0),
@@ -329,14 +388,17 @@ func (m *Manager) loadOrCreatePlayerHistory() error {
 			return fmt.Errorf("load player history: %w", err)
 		}
 		created = true
-	} else if err := validatePlayerHistory(&history); err != nil {
-		return err
+	} else {
+		migrated = normalizeLegacyPlayerProgress(&history)
+		if err := validatePlayerHistory(&history); err != nil {
+			return err
+		}
 	}
 
 	m.playersMu.Lock()
 	m.playerHistory = history
 	changed, err := m.importPlayerLogsLocked()
-	if err == nil && (changed || created) {
+	if err == nil && (changed || created || migrated) {
 		err = m.savePlayerHistoryLocked()
 	}
 	m.playersMu.Unlock()
@@ -593,6 +655,100 @@ func (m *Manager) recordPlayerGameEvents(events []gameLogEvent) {
 	}
 }
 
+type playerLevelObservation struct {
+	PlayFabID string
+	Level     int
+}
+
+type playerPlatformObservation struct {
+	PlayFabID         string
+	Platform          string
+	PlatformAccountID string
+}
+
+func applyPlayerPlatformObservations(
+	history *playerHistoryFile,
+	observations []playerPlatformObservation,
+) bool {
+	changed := false
+	for _, observation := range observations {
+		if !validMordhauPlayerID(observation.PlayFabID) ||
+			!validPlayerPlatformIdentity(
+				observation.Platform,
+				observation.PlatformAccountID,
+			) ||
+			observation.Platform == "" {
+			continue
+		}
+		player, created := ensurePlayerRecord(history, observation.PlayFabID)
+		if created ||
+			player.Platform != observation.Platform ||
+			player.PlatformAccountID != observation.PlatformAccountID {
+			player.Platform = observation.Platform
+			player.PlatformAccountID = observation.PlatformAccountID
+			changed = true
+		}
+	}
+	return changed
+}
+
+func (m *Manager) recordPlayerPlatformObservations(
+	observations []playerPlatformObservation,
+) {
+	if len(observations) == 0 {
+		return
+	}
+	m.playersMu.Lock()
+	defer m.playersMu.Unlock()
+	if !applyPlayerPlatformObservations(&m.playerHistory, observations) {
+		return
+	}
+	m.playerHistory.Revision++
+	if err := m.savePlayerHistoryLocked(); err != nil {
+		log.Printf("save MORDHAU player platform identities: %v", err)
+	}
+}
+
+func applyPlayerLevelObservations(
+	history *playerHistoryFile,
+	observations []playerLevelObservation,
+) bool {
+	changed := false
+	for _, observation := range observations {
+		if !validMordhauPlayerID(observation.PlayFabID) ||
+			observation.Level < 1 ||
+			observation.Level > playerMaximumLevel {
+			continue
+		}
+		player, created := ensurePlayerRecord(history, observation.PlayFabID)
+		if created ||
+			player.LastLevel == nil ||
+			*player.LastLevel != observation.Level {
+			level := observation.Level
+			player.LastLevel = &level
+			changed = true
+		}
+	}
+	return changed
+}
+
+func (m *Manager) recordPlayerLevelObservations(
+	observations []playerLevelObservation,
+) {
+	if len(observations) == 0 {
+		return
+	}
+	m.playersMu.Lock()
+	defer m.playersMu.Unlock()
+	if !applyPlayerLevelObservations(&m.playerHistory, observations) {
+		return
+	}
+	m.playerHistory.Revision++
+	if err := m.savePlayerHistoryLocked(); err != nil {
+		log.Printf("save MORDHAU player levels: %v", err)
+	}
+}
+
 func importedPlayerLogMatches(
 	imported []playerImportedLog,
 	name string,
@@ -784,15 +940,23 @@ func playerSummary(player playerRecord, now time.Time) PlayerSummary {
 	for _, nickname := range nicknames {
 		names = append(names, nickname.Value)
 	}
+	var lastLevel *int
+	if player.LastLevel != nil {
+		value := *player.LastLevel
+		lastLevel = &value
+	}
 	return PlayerSummary{
-		PlayFabID:     player.PlayFabID,
-		LastNickname:  player.LastNickname,
-		LastConnected: player.LastConnected,
-		Nicknames:     names,
-		TotalSeconds:  playerTotalSeconds(player, now),
-		Connected:     connected,
-		Muted:         player.Muted,
-		Banned:        player.Banned,
+		PlayFabID:         player.PlayFabID,
+		LastNickname:      player.LastNickname,
+		LastLevel:         lastLevel,
+		Platform:          player.Platform,
+		PlatformAccountID: player.PlatformAccountID,
+		LastConnected:     player.LastConnected,
+		Nicknames:         names,
+		TotalSeconds:      playerTotalSeconds(player, now),
+		Connected:         connected,
+		Muted:             player.Muted,
+		Banned:            player.Banned,
 	}
 }
 
@@ -813,19 +977,27 @@ func latestPlayerAddress(player playerRecord) string {
 
 func playerDetail(player playerRecord, now time.Time) PlayerDetail {
 	connected, activeSince := playerConnectedAt(player)
+	var lastLevel *int
+	if player.LastLevel != nil {
+		value := *player.LastLevel
+		lastLevel = &value
+	}
 	return PlayerDetail{
-		PlayFabID:     player.PlayFabID,
-		LastNickname:  player.LastNickname,
-		LastConnected: player.LastConnected,
-		Connected:     connected,
-		ActiveSince:   activeSince,
-		TotalSeconds:  playerTotalSeconds(player, now),
-		Nicknames:     sortedPlayerKnownValues(player.Nicknames),
-		Addresses:     sortedPlayerKnownValues(player.Addresses),
-		Muted:         player.Muted,
-		Banned:        player.Banned,
-		Comments:      sortedPlayerComments(player.Comments),
-		GeneratedAt:   now,
+		PlayFabID:         player.PlayFabID,
+		LastNickname:      player.LastNickname,
+		LastLevel:         lastLevel,
+		Platform:          player.Platform,
+		PlatformAccountID: player.PlatformAccountID,
+		LastConnected:     player.LastConnected,
+		Connected:         connected,
+		ActiveSince:       activeSince,
+		TotalSeconds:      playerTotalSeconds(player, now),
+		Nicknames:         sortedPlayerKnownValues(player.Nicknames),
+		Addresses:         sortedPlayerKnownValues(player.Addresses),
+		Muted:             player.Muted,
+		Banned:            player.Banned,
+		Comments:          sortedPlayerComments(player.Comments),
+		GeneratedAt:       now,
 	}
 }
 

@@ -2,7 +2,7 @@
 
 set -eu
 
-PROJECT_VERSION="2.2.1"
+PROJECT_VERSION="2.2.2"
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 MORDHAU_ROOT="/root/mordhau"
 STEAMCMD_ROOT="/root/steamcmd"
@@ -11,6 +11,8 @@ RUNTIME_DIR="$STATE_DIR/runtime"
 CONFIG_DIR="$MORDHAU_ROOT/Mordhau/Saved/Config/WindowsServer"
 INSTALL_LOCK="/run/mordhau-server-alpine-linux.lock"
 STEAMCMD_URL="https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip"
+REPAK_URL="https://github.com/trumank/repak/releases/download/v0.2.3/repak_cli-x86_64-pc-windows-msvc.zip"
+REPAK_SHA256="6720d602144d75df477a99d5bedb6ea780997546afc335901d4937cafeaa73fa"
 TMP_DIR=""
 WEB_PORT=""
 START_WEB=0
@@ -40,7 +42,8 @@ Usage: ./src/mordhau-server-alpine-linux.sh [options]
 Installs or updates the Windows MORDHAU Dedicated Server, SteamCMD, the Go
 management web application, the server-only Unicode Bridge, and OpenRC service
 definitions on Alpine Linux. The supported dedicated-server build also receives
-the native runtime-reflection bridge used by the authenticated Runtime panel.
+the native runtime-reflection bridge used by the authenticated Runtime panel
+and a checksum-pinned PAK inspection helper for live map selection.
 
 Options:
   --web-port PORT   Persist the web service port (default: existing value or 8080)
@@ -163,6 +166,7 @@ ensure_packages() {
 ensure_layout() {
     install -d -m 0700 \
         "$MORDHAU_ROOT" \
+        "$MORDHAU_ROOT/bin" \
         "$STEAMCMD_ROOT" \
         "$STATE_DIR" \
         "$STATE_DIR/backups" \
@@ -170,6 +174,7 @@ ensure_layout() {
         "$STATE_DIR/custompaks-upload" \
         "$STATE_DIR/pending" \
         "$RUNTIME_DIR" \
+        "$MORDHAU_ROOT/licenses/repak" \
         "$MORDHAU_ROOT/log" \
         "$XDG_RUNTIME_DIR"
 
@@ -259,6 +264,25 @@ install_runtime_files() {
         chmod 0600 "$ports_temp"
         mv "$ports_temp" "$STATE_DIR/server-ports"
     fi
+}
+
+install_repak() {
+    archive="$TMP_DIR/repak.zip"
+    extract_dir="$TMP_DIR/repak"
+    log "Installing the repak PAK-index helper..."
+    wget -qO "$archive" "$REPAK_URL"
+    actual_sha256=$(sha256sum "$archive" | awk '{print $1}')
+    [ "$actual_sha256" = "$REPAK_SHA256" ] ||
+        die "repak archive checksum verification failed"
+    install -d -m 0700 "$extract_dir"
+    unzip -q "$archive" -d "$extract_dir"
+    [ -s "$extract_dir/repak.exe" ] ||
+        die "repak extraction did not create repak.exe"
+    install -m 0700 "$extract_dir/repak.exe" "$MORDHAU_ROOT/bin/repak.exe"
+    install -m 0644 \
+        "$extract_dir/LICENSE-APACHE" \
+        "$extract_dir/LICENSE-MIT" \
+        "$MORDHAU_ROOT/licenses/repak/"
 }
 
 install_steamcmd() {
@@ -386,6 +410,7 @@ main() {
     remember_and_stop_services
     install_runtime_files
     install_steamcmd
+    install_repak
     install_mordhau
     install_runtime_bridge
     run_initial_generation

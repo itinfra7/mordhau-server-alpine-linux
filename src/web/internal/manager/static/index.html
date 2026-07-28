@@ -5,9 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="light dark">
   <title>MORDHAU Control</title>
-  <script src="/static/theme.js?v=2.2.1"></script>
-  <link rel="stylesheet" href="/static/app.css?v=2.2.1">
-  <script src="/static/app.js?v=2.2.1" defer></script>
+  <script src="/static/theme.js?v=2.2.2"></script>
+  <link rel="stylesheet" href="/static/app.css?v=2.2.2">
+  <script src="/static/app.js?v=2.2.2" defer></script>
 </head>
 <body id="page-top">
   <div class="ambient ambient-one"></div>
@@ -98,6 +98,19 @@
             <button class="danger" data-server-action="stop">Stop</button>
             <button class="secondary" data-server-action="restart">Restart</button>
             <button class="ghost" data-server-action="update">Update only</button>
+          </div>
+          <div class="server-context-grid">
+            <div class="server-context-value">
+              <span>Current map</span>
+              <strong id="current-map">—</strong>
+            </div>
+            <div class="server-context-value">
+              <span>Current game mode</span>
+              <strong id="current-game-mode">—</strong>
+            </div>
+            <button id="change-map-open" class="secondary" type="button">
+              Change map
+            </button>
           </div>
           <div class="field-row language-row">
             <label for="language-select">Launch language</label>
@@ -365,7 +378,29 @@
                 <span>Current session</span>
                 <strong id="player-current-session">Offline</strong>
               </div>
+              <div class="player-stat">
+                <span>Account level · last observed</span>
+                <strong id="player-last-level">Not observed</strong>
+              </div>
             </div>
+
+            <a id="player-steam-profile"
+               class="player-steam-profile hidden"
+               target="_blank"
+               rel="noopener noreferrer">
+              <svg class="player-steam-icon" viewBox="0 0 48 48"
+                   aria-hidden="true">
+                <circle cx="24" cy="24" r="22"></circle>
+                <circle cx="31.5" cy="16.5" r="6.5"></circle>
+                <circle cx="15" cy="32.5" r="5.5"></circle>
+                <path d="M19.8 29.7 26.1 20.8M20.2 34.2l8.1 3.2"></path>
+              </svg>
+              <span class="player-steam-identity">
+                <small>STEAM ACCOUNT</small>
+                <code id="player-steam-id">—</code>
+              </span>
+              <span class="player-steam-open">Open profile ↗</span>
+            </a>
 
             <section class="player-profile-section">
               <div class="player-section-heading">
@@ -694,6 +729,52 @@
       </article>
     </section>
   </main>
+
+  <dialog id="map-change-dialog" class="map-change-dialog">
+    <form id="map-change-form">
+      <div class="card-heading">
+        <div>
+          <p class="eyebrow">LIVE SERVER TRAVEL</p>
+          <h2>Change map</h2>
+        </div>
+        <button id="map-change-close" class="ghost compact" type="button"
+                aria-label="Close map selection">Close</button>
+      </div>
+      <p class="hint">
+        Choose an installed game mode, then a compatible map. Active mod.io and
+        CustomPak maps are included when their packaged default game mode can be verified.
+      </p>
+      <div id="map-catalog-loading" class="map-catalog-loading">
+        <span class="spinner"></span>
+        <span>Inspecting installed server content…</span>
+      </div>
+      <div id="map-catalog-controls" class="map-catalog-controls hidden">
+        <label>
+          <span>Game mode</span>
+          <select id="map-game-mode" required></select>
+        </label>
+        <label>
+          <span>Map</span>
+          <select id="map-name" required></select>
+        </label>
+        <div class="map-selection-summary">
+          <span id="map-selection-source">—</span>
+          <code id="map-selection-class">—</code>
+        </div>
+        <details id="map-catalog-warnings" class="map-catalog-warnings hidden">
+          <summary>Some installed PAKs could not be inspected</summary>
+          <ul id="map-catalog-warning-list"></ul>
+        </details>
+      </div>
+      <p id="map-catalog-error" class="policy-note danger-note hidden"></p>
+      <div class="control-row map-change-actions">
+        <button id="map-change-submit" class="primary" type="submit" disabled>
+          Change map now
+        </button>
+        <button id="map-change-cancel" class="ghost" type="button">Cancel</button>
+      </div>
+    </form>
+  </dialog>
 
   <dialog id="runtime-edit-dialog" class="runtime-edit-dialog">
     <form id="runtime-edit-form">

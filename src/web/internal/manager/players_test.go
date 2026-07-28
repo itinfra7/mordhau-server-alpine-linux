@@ -16,6 +16,7 @@ import (
 const (
 	testPlayerID      = "FEDCBA9876543210"
 	testOtherPlayerID = "0123456789ABCDEF"
+	testSteamID64     = "76561197960265728"
 )
 
 func testPlayerLogLines(

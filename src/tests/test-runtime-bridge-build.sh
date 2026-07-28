@@ -34,6 +34,18 @@ grep -Fq \
     'RVA_AACTOR_FLUSH_NET_DORMANCY = 0x02A24C30' \
     "$PROJECT_ROOT/src/runtime-bridge/runtime_bridge.c"
 grep -Fq \
+    'RVA_MORDHAU_INVENTORY_GET_PLAYER_XP = 0x015202F0' \
+    "$PROJECT_ROOT/src/runtime-bridge/runtime_bridge.c"
+grep -Fq \
+    'RVA_MORDHAU_INVENTORY_IS_AVAILABLE = 0x01525940' \
+    "$PROJECT_ROOT/src/runtime-bridge/runtime_bridge.c"
+grep -Fq \
+    'RVA_MORDHAU_UTILITY_GET_INVENTORY = 0x01569210' \
+    "$PROJECT_ROOT/src/runtime-bridge/runtime_bridge.c"
+grep -Fq \
+    'RVA_MORDHAU_UTILITY_GET_RANK_FROM_XP = 0x0156D620' \
+    "$PROJECT_ROOT/src/runtime-bridge/runtime_bridge.c"
+grep -Fq \
     'FBYTEPROPERTY_ENUM = 0x0078' \
     "$PROJECT_ROOT/src/runtime-bridge/runtime_bridge.c"
 grep -Fq \
@@ -56,6 +68,18 @@ grep -Fq \
     "$PROJECT_ROOT/src/runtime-bridge/runtime_bridge.c"
 grep -Fq \
     '"PlayFabId"' \
+    "$PROJECT_ROOT/src/runtime-bridge/runtime_bridge.c"
+grep -Fq \
+    '"PlatformAccountID"' \
+    "$PROJECT_ROOT/src/runtime-bridge/runtime_bridge.c"
+grep -Fq \
+    'steam_id64_is_valid(platform_account_id)' \
+    "$PROJECT_ROOT/src/runtime-bridge/runtime_bridge.c"
+grep -Fq \
+    '"account_progress\":{\"xp\":%d,\"level\":%d}' \
+    "$PROJECT_ROOT/src/runtime-bridge/runtime_bridge.c"
+grep -Fq \
+    'g_inventory_is_available(inventory, &playfab_id)' \
     "$PROJECT_ROOT/src/runtime-bridge/runtime_bridge.c"
 grep -Fq \
     'is_registered_uobject(enum_object)' \

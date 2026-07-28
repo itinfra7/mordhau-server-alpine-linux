@@ -1347,6 +1347,82 @@ func TestGameLogProcessorEmitsMatchKillScoreAndPunishmentEvents(t *testing.T) {
 	}
 }
 
+func TestGameLogProcessorSuppressesRepeatedEmptyServerMatchStates(t *testing.T) {
+	processor := newGameLogProcessor()
+	lines := []string{
+		`[2026.07.28-15.40.00:001][200]LogGameMode: Display: Match State Changed from LeavingMap to WaitingToStart`,
+		`[2026.07.28-15.40.01:002][201]LogGameMode: Display: Match State Changed from EnteringMap to WaitingToStart`,
+		`[2026.07.28-15.50.00:003][202]LogGameMode: Display: Match State Changed from WaitingToStart to LeavingMap`,
+		`[2026.07.28-15.50.01:004][203]LogGameMode: Display: Match State Changed from LeavingMap to WaitingToStart`,
+		`[2026.07.28-16.00.00:005][204]LogGameMode: Display: Match State Changed from WaitingToStart to LeavingMap`,
+	}
+	want := []string{
+		matchStateWaitingToStartText,
+		"",
+		matchStateLeavingMapText,
+		"",
+		"",
+	}
+	for index, line := range lines {
+		events := processor.processLine(line)
+		if want[index] == "" {
+			if len(events) != 0 {
+				t.Fatalf("line %d was not suppressed: %#v", index, events)
+			}
+			continue
+		}
+		if len(events) != 1 || events[0].Text != want[index] {
+			t.Fatalf("line %d events = %#v, want %q", index, events, want[index])
+		}
+	}
+
+	processor.reset()
+	for _, line := range lines[3:] {
+		if events := processor.processLine(line); len(events) != 0 {
+			t.Fatalf("empty-state suppression was reset without a player: %#v", events)
+		}
+	}
+}
+
+func TestGameLogProcessorReopensEmptyMatchStateWindowAfterPlayerSession(t *testing.T) {
+	const playerID = "FEDCBA9876543210"
+	processor := newGameLogProcessor()
+	waiting := `[2026.07.28-15.40.00:001][200]LogGameMode: Display: Match State Changed from LeavingMap to WaitingToStart`
+	leaving := `[2026.07.28-15.50.00:002][201]LogGameMode: Display: Match State Changed from WaitingToStart to LeavingMap`
+	for _, line := range []string{waiting, leaving} {
+		if events := processor.processLine(line); len(events) != 1 {
+			t.Fatalf("initial empty-state event was not emitted: %#v", events)
+		}
+	}
+
+	loginLines := []string{
+		`[2026.07.28-15.51.00:001][202]LogNet: Login request: ?Name=Player userId: MordhauOnlineSubsystem:` + playerID + ` platform: Steam`,
+		`[2026.07.28-15.51.01:002][203]LogMordhauGameSession: Player authentication for Player (` + playerID + `) completed successfully`,
+	}
+	for _, line := range loginLines {
+		processor.processLine(line)
+	}
+	for _, line := range []string{waiting, leaving, waiting} {
+		if events := processor.processLine(line); len(events) != 1 {
+			t.Fatalf("match state was suppressed while a player was active: %#v", events)
+		}
+	}
+
+	logout := `[2026.07.28-15.52.00:001][204]LogNet: UChannel::CleanUp: ChIndex == 0. Closing connection. [UNetConnection] RemoteAddr: 203.0.113.45:45000, Name: IpConnection_1, Driver: GameNetDriver IpNetDriver_1, IsServer: YES, UniqueId: MordhauOnlineSubsystem:` + playerID
+	if events := processor.processLine(logout); len(events) != 1 ||
+		events[0].PlayerAction != "logout" {
+		t.Fatalf("logout event = %#v", events)
+	}
+	for _, line := range []string{waiting, leaving} {
+		if events := processor.processLine(line); len(events) != 1 {
+			t.Fatalf("new empty-state event was not emitted: %#v", events)
+		}
+	}
+	if events := processor.processLine(waiting); len(events) != 0 {
+		t.Fatalf("new empty-state repetition was not suppressed: %#v", events)
+	}
+}
+
 func TestRCONTransportStatusEventsAreHidden(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "mordhau-rcon.log")
 	manager := &Manager{rconLogPath: path}
@@ -2151,9 +2227,9 @@ func TestDashboardThemeAndServerPromptMarkup(t *testing.T) {
 	for _, expected := range []string{
 		`id="theme-toggle"`,
 		`content="width=device-width, initial-scale=1, viewport-fit=cover"`,
-		`src="/static/theme.js?v=2.2.1"`,
-		`href="/static/app.css?v=2.2.1"`,
-		`src="/static/app.js?v=2.2.1"`,
+		`src="/static/theme.js?v=2.2.2"`,
+		`href="/static/app.css?v=2.2.2"`,
+		`src="/static/app.js?v=2.2.2"`,
 		`<body id="page-top">`,
 		`class="brand" href="#page-top"`,
 		`<p class="eyebrow">SERVER EVENTS</p>`,
@@ -2180,6 +2256,12 @@ func TestDashboardThemeAndServerPromptMarkup(t *testing.T) {
 			`      <button class="tab" data-panel="players">Players</button>` + "\n" +
 			`      <button class="tab" data-panel="configuration">Configuration</button>`,
 		`id="players-value"`,
+		`id="current-map"`,
+		`id="current-game-mode"`,
+		`id="change-map-open"`,
+		`id="map-change-dialog"`,
+		`id="map-game-mode"`,
+		`id="map-name"`,
 		`id="runtime-targets"`,
 		`id="runtime-properties"`,
 		`id="runtime-edit-dialog"`,
@@ -2197,6 +2279,12 @@ func TestDashboardThemeAndServerPromptMarkup(t *testing.T) {
 		`id="player-ban-toggle"`,
 		`id="player-comment-form"`,
 		`id="player-comment-body"`,
+		`id="player-last-level"`,
+		`Account level · last observed`,
+		`id="player-steam-profile"`,
+		`id="player-steam-id"`,
+		`target="_blank"`,
+		`rel="noopener noreferrer"`,
 		`placeholder="Name, type, class, or current value"`,
 		`placeholder="10.0.0.4 | 10.0.0.0/24 | 10.0.0.4-10.0.0.9"`,
 		`id="new-rule-comment"`,
@@ -2228,10 +2316,10 @@ func TestDashboardThemeAndServerPromptMarkup(t *testing.T) {
 		t.Fatal(err)
 	}
 	loginSource := string(loginData)
-	if !strings.Contains(loginSource, `src="/static/theme.js?v=2.2.1"`) {
+	if !strings.Contains(loginSource, `src="/static/theme.js?v=2.2.2"`) {
 		t.Fatal("login page does not initialize the persisted theme")
 	}
-	if !strings.Contains(loginSource, `href="/static/app.css?v=2.2.1"`) {
+	if !strings.Contains(loginSource, `href="/static/app.css?v=2.2.2"`) {
 		t.Fatal("login page does not use the release stylesheet version")
 	}
 	if !strings.Contains(loginSource, `viewport-fit=cover`) {
@@ -2266,6 +2354,17 @@ func TestDashboardThemeAndServerPromptMarkup(t *testing.T) {
 		`/api/custompaks/upload`,
 		`/api/custompaks/enabled`,
 		`/api/custompaks/delete`,
+		`/api/maps`,
+		`/api/maps/change`,
+		`function gameModeDisplayName(className)`,
+		`function openMapChangeDialog()`,
+		`function observedPlayerLevel(value)`,
+		`function validSteamID64(value)`,
+		`function steamProfileURL(value)`,
+		`https://steamcommunity.com/profiles/${value}`,
+		`detail.platform === "Steam"`,
+		`player-level-badge`,
+		`Last observed account level · not Duel or Teamfight rank`,
 		`function renderCustomPaks(data)`,
 		`function uploadCustomPak(file)`,
 		`new XMLHttpRequest()`,

@@ -25,6 +25,10 @@ enum {
     RVA_FPROPERTY_IMPORT_TEXT = 0x01299EF0,
     RVA_AACTOR_FLUSH_NET_DORMANCY = 0x02A24C30,
     RVA_AACTOR_FORCE_NET_UPDATE = 0x02A25190,
+    RVA_MORDHAU_INVENTORY_GET_PLAYER_XP = 0x015202F0,
+    RVA_MORDHAU_INVENTORY_IS_AVAILABLE = 0x01525940,
+    RVA_MORDHAU_UTILITY_GET_INVENTORY = 0x01569210,
+    RVA_MORDHAU_UTILITY_GET_RANK_FROM_XP = 0x0156D620,
     RVA_GWARN = 0x05201A80,
     UWORLD_AUTHORITY_GAME_MODE = 0x0118,
     UWORLD_GAME_STATE = 0x0120,
@@ -104,6 +108,16 @@ typedef const wchar_t *(__fastcall *FPropertyImportTextFn)(
 );
 typedef void (__fastcall *AActorFlushNetDormancyFn)(void *actor);
 typedef void (__fastcall *AActorForceNetUpdateFn)(void *actor);
+typedef int (__fastcall *MordhauInventoryGetPlayerXPFn)(
+    void *inventory,
+    const FString *playfab_id
+);
+typedef uint8_t (__fastcall *MordhauInventoryIsAvailableFn)(
+    void *inventory,
+    const FString *playfab_id
+);
+typedef void *(__fastcall *MordhauUtilityGetInventoryFn)(void);
+typedef int (__fastcall *MordhauUtilityGetRankFromXPFn)(int xp);
 
 typedef struct {
     int32_t object_index;
@@ -149,6 +163,8 @@ typedef struct {
     int player_slot;
     char player_name[512];
     char playfab_id[128];
+    char platform[32];
+    char platform_account_id[128];
 } RuntimeTarget;
 
 static INIT_ONCE g_proxy_once = INIT_ONCE_STATIC_INIT;
@@ -162,6 +178,10 @@ static FStringDestructorFn g_fstring_destructor;
 static FPropertyImportTextFn g_property_import_text;
 static AActorFlushNetDormancyFn g_flush_net_dormancy;
 static AActorForceNetUpdateFn g_force_net_update;
+static MordhauInventoryGetPlayerXPFn g_inventory_get_player_xp;
+static MordhauInventoryIsAvailableFn g_inventory_is_available;
+static MordhauUtilityGetInventoryFn g_utility_get_inventory;
+static MordhauUtilityGetRankFromXPFn g_utility_get_rank_from_xp;
 static ULONGLONG g_last_sample_ms;
 static HANDLE g_response_event;
 static volatile LONG g_request_state;
@@ -909,6 +929,65 @@ static int copy_quoted_ascii_field(
     return 1;
 }
 
+static int copy_unquoted_ascii_field(
+    const char *text,
+    const char *field_name,
+    char *out,
+    size_t out_capacity
+)
+{
+    char marker[96];
+    const char *value;
+    size_t length = 0;
+
+    if (text == NULL || field_name == NULL || out == NULL ||
+        out_capacity < 2 ||
+        snprintf(marker, sizeof(marker), "%s=", field_name) <= 0) {
+        return 0;
+    }
+    value = strstr(text, marker);
+    if (value == NULL) {
+        return 0;
+    }
+    value += strlen(marker);
+    while (*value != '\0' && *value != ',' && *value != ')' &&
+           length + 1 < out_capacity) {
+        unsigned char character = (unsigned char)*value++;
+
+        if (!((character >= 'a' && character <= 'z') ||
+              (character >= 'A' && character <= 'Z') ||
+              (character >= '0' && character <= '9') ||
+              character == '-' || character == '_' ||
+              character == '.')) {
+            out[0] = '\0';
+            return 0;
+        }
+        out[length++] = (char)character;
+    }
+    if ((*value != ',' && *value != ')' && *value != '\0') ||
+        length == 0 || length + 1 >= out_capacity) {
+        out[0] = '\0';
+        return 0;
+    }
+    out[length] = '\0';
+    return 1;
+}
+
+static int steam_id64_is_valid(const char *value)
+{
+    size_t index;
+
+    if (value == NULL || strlen(value) != 17) {
+        return 0;
+    }
+    for (index = 0; index < 17; ++index) {
+        if (value[index] < '0' || value[index] > '9') {
+            return 0;
+        }
+    }
+    return 1;
+}
+
 static void populate_runtime_player_identity(
     RuntimeTarget *controller_target,
     void *player_state
@@ -916,6 +995,8 @@ static void populate_runtime_player_identity(
 {
     uint8_t *property;
     char playfab_player[4096];
+    char platform[32] = "";
+    char platform_account_id[128] = "";
 
     if (controller_target == NULL || player_state == NULL ||
         strcmp(controller_target->kind, "player_controller") != 0) {
@@ -945,6 +1026,31 @@ static void populate_runtime_player_identity(
             controller_target->playfab_id,
             sizeof(controller_target->playfab_id)
         );
+        if (copy_unquoted_ascii_field(
+                playfab_player,
+                "Platform",
+                platform,
+                sizeof(platform)) &&
+            copy_quoted_ascii_field(
+                playfab_player,
+                "PlatformAccountID",
+                platform_account_id,
+                sizeof(platform_account_id)) &&
+            strcmp(platform, "Steam") == 0 &&
+            steam_id64_is_valid(platform_account_id)) {
+            snprintf(
+                controller_target->platform,
+                sizeof(controller_target->platform),
+                "%s",
+                platform
+            );
+            snprintf(
+                controller_target->platform_account_id,
+                sizeof(controller_target->platform_account_id),
+                "%s",
+                platform_account_id
+            );
+        }
     }
 }
 
@@ -1385,6 +1491,66 @@ static int import_property_utf8(
     return success;
 }
 
+static int runtime_account_progress(
+    const RuntimeTarget *target,
+    int *xp,
+    int *level
+)
+{
+    wchar_t playfab_wide[128];
+    FString playfab_id;
+    void *inventory;
+    size_t length;
+    size_t index;
+    int player_xp;
+    int player_level;
+
+    if (target == NULL || xp == NULL || level == NULL ||
+        strcmp(target->kind, "player_controller") != 0 ||
+        target->playfab_id[0] == '\0' ||
+        g_inventory_get_player_xp == NULL ||
+        g_inventory_is_available == NULL ||
+        g_utility_get_inventory == NULL ||
+        g_utility_get_rank_from_xp == NULL) {
+        return 0;
+    }
+    length = strlen(target->playfab_id);
+    if (length == 0 || length >= ARRAY_COUNT(playfab_wide)) {
+        return 0;
+    }
+    for (index = 0; index < length; ++index) {
+        unsigned char character = (unsigned char)target->playfab_id[index];
+
+        if (!((character >= 'a' && character <= 'z') ||
+              (character >= 'A' && character <= 'Z') ||
+              (character >= '0' && character <= '9'))) {
+            return 0;
+        }
+        playfab_wide[index] = (wchar_t)character;
+    }
+    playfab_wide[length] = L'\0';
+    playfab_id.data = playfab_wide;
+    playfab_id.count = (int32_t)length + 1;
+    playfab_id.capacity = (int32_t)length + 1;
+
+    inventory = g_utility_get_inventory();
+    if (!is_registered_uobject(inventory) ||
+        !g_inventory_is_available(inventory, &playfab_id)) {
+        return 0;
+    }
+    player_xp = g_inventory_get_player_xp(inventory, &playfab_id);
+    if (player_xp < 0) {
+        return 0;
+    }
+    player_level = g_utility_get_rank_from_xp(player_xp);
+    if (player_level < 1) {
+        return 0;
+    }
+    *xp = player_xp;
+    *level = player_level;
+    return 1;
+}
+
 static void append_target_json(
     JsonBuilder *builder,
     const RuntimeTarget *target
@@ -1408,6 +1574,14 @@ static void append_target_json(
     if (target->playfab_id[0] != '\0') {
         json_append(builder, ",\"playfab_id\":");
         json_append_string(builder, target->playfab_id);
+    }
+    if (target->platform[0] != '\0') {
+        json_append(builder, ",\"platform\":");
+        json_append_string(builder, target->platform);
+    }
+    if (target->platform_account_id[0] != '\0') {
+        json_append(builder, ",\"platform_account_id\":");
+        json_append_string(builder, target->platform_account_id);
     }
     json_append(builder, "}");
 }
@@ -1709,6 +1883,8 @@ static void build_get_response(
     int class_depth;
     int property_count = 0;
     int first;
+    int account_xp;
+    int account_level;
 
     target_count = collect_runtime_targets(
         world,
@@ -1739,6 +1915,14 @@ static void build_get_response(
     );
     json_append_format(builder, "%d,\"target\":", player_count);
     append_target_json(builder, target);
+    if (runtime_account_progress(target, &account_xp, &account_level)) {
+        json_append_format(
+            builder,
+            ",\"account_progress\":{\"xp\":%d,\"level\":%d}",
+            account_xp,
+            account_level
+        );
+    }
     json_append(builder, ",\"class_chain\":[");
     class_object = *(uint8_t **)((uint8_t *)target->object + UOBJECT_CLASS_PRIVATE);
     class_depth = 0;
@@ -2465,6 +2649,18 @@ static BOOL install_world_tick_hook(void)
         0x56, 0x57, 0x41, 0x54, 0x41,
         0x55, 0x41, 0x56, 0x41, 0x57,
     };
+    static const uint8_t expected_inventory_member_prologue[10] = {
+        0x48, 0x89, 0x5C, 0x24, 0x08,
+        0x57, 0x48, 0x83, 0xEC, 0x20,
+    };
+    static const uint8_t expected_get_inventory_prologue[6] = {
+        0x40, 0x53, 0x48, 0x83, 0xEC, 0x20,
+    };
+    static const uint8_t expected_get_rank_prologue[15] = {
+        0x48, 0x89, 0x5C, 0x24, 0x08,
+        0x48, 0x89, 0x74, 0x24, 0x10,
+        0x57, 0x48, 0x83, 0xEC, 0x20,
+    };
     uint8_t *target;
     uint8_t *trampoline;
     uint8_t patch[15];
@@ -2511,6 +2707,43 @@ static BOOL install_world_tick_hook(void)
     g_force_net_update = (AActorForceNetUpdateFn)(uintptr_t)(
         g_image_base + RVA_AACTOR_FORCE_NET_UPDATE
     );
+    if (memcmp(
+            g_image_base + RVA_MORDHAU_INVENTORY_GET_PLAYER_XP,
+            expected_inventory_member_prologue,
+            sizeof(expected_inventory_member_prologue)) == 0 &&
+        memcmp(
+            g_image_base + RVA_MORDHAU_INVENTORY_IS_AVAILABLE,
+            expected_inventory_member_prologue,
+            sizeof(expected_inventory_member_prologue)) == 0 &&
+        memcmp(
+            g_image_base + RVA_MORDHAU_UTILITY_GET_INVENTORY,
+            expected_get_inventory_prologue,
+            sizeof(expected_get_inventory_prologue)) == 0 &&
+        memcmp(
+            g_image_base + RVA_MORDHAU_UTILITY_GET_RANK_FROM_XP,
+            expected_get_rank_prologue,
+            sizeof(expected_get_rank_prologue)) == 0) {
+        g_inventory_get_player_xp =
+            (MordhauInventoryGetPlayerXPFn)(uintptr_t)(
+                g_image_base + RVA_MORDHAU_INVENTORY_GET_PLAYER_XP
+            );
+        g_inventory_is_available =
+            (MordhauInventoryIsAvailableFn)(uintptr_t)(
+                g_image_base + RVA_MORDHAU_INVENTORY_IS_AVAILABLE
+            );
+        g_utility_get_inventory =
+            (MordhauUtilityGetInventoryFn)(uintptr_t)(
+                g_image_base + RVA_MORDHAU_UTILITY_GET_INVENTORY
+            );
+        g_utility_get_rank_from_xp =
+            (MordhauUtilityGetRankFromXPFn)(uintptr_t)(
+                g_image_base + RVA_MORDHAU_UTILITY_GET_RANK_FROM_XP
+            );
+    } else {
+        append_log(
+            "account progress unavailable: pinned function prologue mismatch"
+        );
+    }
     g_response_event = CreateEventW(NULL, TRUE, FALSE, NULL);
     if (g_response_event == NULL) {
         append_log("bridge disabled: response event creation failed");
