@@ -191,6 +191,110 @@ func TestDisabledRCONEntryRemainsIntentionallyDisabled(t *testing.T) {
 	}
 }
 
+func TestSynchronizeRCONPortUpdatesEveryActiveValue(t *testing.T) {
+	data := []byte("; retained\r\n[" + mordhauGameSessionSection + "]\r\n" +
+		"RconPort=7778\r\nOther=Value\r\nrconport=8888\r\n")
+	store := newDisabledINIFile()
+
+	updated, changed, err := synchronizeRCONPort(data, &store, 50007)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Fatal("RCON port synchronization reported no change")
+	}
+	result := string(updated)
+	if strings.Count(strings.ToLower(result), "rconport=50007") != 2 {
+		t.Fatalf("not every RCON port value was synchronized: %q", result)
+	}
+	for _, retained := range []string{"; retained\r\n", "Other=Value\r\n"} {
+		if !strings.Contains(result, retained) {
+			t.Fatalf("synchronization did not preserve %q in %q", retained, result)
+		}
+	}
+}
+
+func TestSynchronizeRCONPortPreservesDisabledEntry(t *testing.T) {
+	data := []byte("[" + mordhauGameSessionSection + "]\nOther=Value\n")
+	store := newDisabledINIFile()
+	store.Entries = append(store.Entries, disabledINIEntry{
+		ID:       "disabled-rcon-port",
+		File:     "Game.ini",
+		Section:  mordhauGameSessionSection,
+		Position: 0,
+		Key:      "RconPort",
+		Value:    "7778",
+	})
+
+	updated, changed, err := synchronizeRCONPort(data, &store, 50007)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Fatal("disabled RCON port synchronization reported no change")
+	}
+	if !bytes.Equal(updated, data) {
+		t.Fatalf("disabled RCON port was written into active INI data: %q", updated)
+	}
+	if store.Entries[0].Value != "50007" {
+		t.Fatalf("disabled RCON port = %q, want 50007", store.Entries[0].Value)
+	}
+}
+
+func TestSynchronizeRCONPortPreservesDisabledSection(t *testing.T) {
+	data := []byte("[" + mordhauGameSessionSection + "]\n")
+	store := newDisabledINIFile()
+	store.Sections = append(store.Sections, disabledINISection{
+		ID:       "disabled-game-session",
+		File:     "Game.ini",
+		Name:     mordhauGameSessionSection,
+		Position: 0,
+	})
+
+	updated, changed, err := synchronizeRCONPort(data, &store, 50007)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Fatal("disabled section synchronization reported no change")
+	}
+	if !bytes.Equal(updated, data) {
+		t.Fatalf("disabled section was re-enabled in active INI data: %q", updated)
+	}
+	if len(store.Entries) != 1 ||
+		store.Entries[0].Section != mordhauGameSessionSection ||
+		store.Entries[0].Key != "RconPort" ||
+		store.Entries[0].Value != "50007" {
+		t.Fatalf("disabled RCON port was not added to the disabled section: %+v", store.Entries)
+	}
+}
+
+func TestSynchronizeRCONPortAddsMissingActiveValue(t *testing.T) {
+	data := []byte("[Other]\nValue=1\n")
+	store := newDisabledINIFile()
+
+	updated, changed, err := synchronizeRCONPort(data, &store, 50007)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Fatal("missing RCON port synchronization reported no change")
+	}
+	value, enabled := iniValue(updated, mordhauGameSessionSection, "RconPort")
+	if !enabled || value != "50007" {
+		t.Fatalf("active RCON port = %q, enabled %t", value, enabled)
+	}
+}
+
+func TestSynchronizeRCONPortRejectsInvalidValue(t *testing.T) {
+	store := newDisabledINIFile()
+	for _, port := range []int{0, 65536} {
+		if _, _, err := synchronizeRCONPort(nil, &store, port); err == nil {
+			t.Fatalf("RCON port %d was accepted", port)
+		}
+	}
+}
+
 func TestServerEventLogValuesAreEnabledUnlessExplicitlyDisabled(t *testing.T) {
 	const section = "/Script/Mordhau.MordhauGameMode"
 	data := []byte("[" + section + "]\n" +
@@ -2274,9 +2378,9 @@ func TestDashboardThemeAndServerPromptMarkup(t *testing.T) {
 	for _, expected := range []string{
 		`id="theme-toggle"`,
 		`content="width=device-width, initial-scale=1, viewport-fit=cover"`,
-		`src="/static/theme.js?v=2.3.2"`,
-		`href="/static/app.css?v=2.3.2"`,
-		`src="/static/app.js?v=2.3.2"`,
+		`src="/static/theme.js?v=2.3.3"`,
+		`href="/static/app.css?v=2.3.3"`,
+		`src="/static/app.js?v=2.3.3"`,
 		`<body id="page-top">`,
 		`class="brand" href="#page-top"`,
 		`<p class="eyebrow">SERVER EVENTS</p>`,
@@ -2383,10 +2487,10 @@ func TestDashboardThemeAndServerPromptMarkup(t *testing.T) {
 		t.Fatal(err)
 	}
 	loginSource := string(loginData)
-	if !strings.Contains(loginSource, `src="/static/theme.js?v=2.3.2"`) {
+	if !strings.Contains(loginSource, `src="/static/theme.js?v=2.3.3"`) {
 		t.Fatal("login page does not initialize the persisted theme")
 	}
-	if !strings.Contains(loginSource, `href="/static/app.css?v=2.3.2"`) {
+	if !strings.Contains(loginSource, `href="/static/app.css?v=2.3.3"`) {
 		t.Fatal("login page does not use the release stylesheet version")
 	}
 	if !strings.Contains(loginSource, `viewport-fit=cover`) {

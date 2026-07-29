@@ -132,12 +132,12 @@ history remains in the versioned changelog asset instead of being repeated in
 every Release body.
 
 ```sh
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.3.2/mordhau-server-alpine-linux-v2.3.2.tar.gz
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.3.2/CHANGELOG-v2.3.2.md
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.3.2/SHA256SUMS
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.3.3/mordhau-server-alpine-linux-v2.3.3.tar.gz
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.3.3/CHANGELOG-v2.3.3.md
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.3.3/SHA256SUMS
 sha256sum -c SHA256SUMS
-tar -xzf mordhau-server-alpine-linux-v2.3.2.tar.gz
-cd mordhau-server-alpine-linux-v2.3.2
+tar -xzf mordhau-server-alpine-linux-v2.3.3.tar.gz
+cd mordhau-server-alpine-linux-v2.3.3
 chmod +x src/mordhau-server-alpine-linux.sh
 ./src/mordhau-server-alpine-linux.sh
 ```
@@ -1080,7 +1080,10 @@ enabled in MORDHAU configuration.
 
 The selected map and ports are stored with mode `0600` under
 `/root/mordhau/.manager`. On-demand web RCON and SAY requests automatically
-follow the saved RCON port.
+follow the saved RCON port. The saved dashboard RCON port is also synchronized
+to `RconPort` in `Game.ini`. A running server receives that INI change through
+the pending configuration applied on its next managed start or restart;
+existing disabled-entry or disabled-section state remains disabled.
 
 ## OpenRC
 

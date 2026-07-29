@@ -4,6 +4,31 @@ All notable changes to this repository are documented in this file.
 
 ## [Unreleased]
 
+## [2.3.3] - 2026-07-29
+
+### Fixed
+
+- Synchronize the dashboard RCON port with `RconPort` in `Game.ini` when
+  dedicated-server ports are saved and when an existing installation starts
+  the updated web manager.
+- Stage the synchronized INI value while the game server is running and update
+  the active configuration while it is stopped, preventing configuration
+  display and managed launch settings from diverging.
+
+### Security
+
+- Preserve intentionally disabled `RconPort` entries and disabled game-session
+  sections while updating their stored value, and serialize dashboard port
+  changes with configuration and lifecycle operations.
+- Restore the prior server-port state if the corresponding INI synchronization
+  cannot be persisted.
+
+### Validation
+
+- Verify synchronization of duplicate active values, disabled entries,
+  disabled sections, missing values, CRLF input, unrelated INI content, and
+  invalid port rejection.
+
 ## [2.3.2] - 2026-07-29
 
 ### Fixed

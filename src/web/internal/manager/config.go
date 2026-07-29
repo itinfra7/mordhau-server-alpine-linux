@@ -675,12 +675,15 @@ func snapshotConfigFile(path string) (configFileSnapshot, error) {
 	return configFileSnapshot{exists: true, data: data}, nil
 }
 
-func restoreConfigFile(path string, snapshot configFileSnapshot) {
+func restoreConfigFile(path string, snapshot configFileSnapshot) error {
 	if snapshot.exists {
-		_ = writeFileAtomic(path, snapshot.data, 0600)
-		return
+		return writeFileAtomic(path, snapshot.data, 0600)
 	}
-	_ = os.Remove(path)
+	err := os.Remove(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	return err
 }
 
 func persistConfigState(
@@ -741,7 +744,7 @@ func persistConfigState(
 		}
 		if writeStore {
 			if err := writeFileAtomic(targetStore, newStoreData, 0600); err != nil {
-				restoreConfigFile(targetConfig, configSnapshot)
+				_ = restoreConfigFile(targetConfig, configSnapshot)
 				return err
 			}
 		}
@@ -754,7 +757,7 @@ func persistConfigState(
 	}
 	if writeConfig {
 		if err := writeFileAtomic(targetConfig, newData, 0600); err != nil {
-			restoreConfigFile(targetStore, storeSnapshot)
+			_ = restoreConfigFile(targetStore, storeSnapshot)
 			return err
 		}
 	}
@@ -1076,6 +1079,90 @@ func setIniValue(document *iniDocument, section, key, value string) {
 	document.lines[end] = key + "=" + value
 }
 
+const mordhauGameSessionSection = "/Script/Mordhau.MordhauGameSession"
+
+func synchronizeRCONPort(
+	data []byte,
+	store *disabledINIFile,
+	port int,
+) ([]byte, bool, error) {
+	if port < 1 || port > 65535 {
+		return nil, false, errors.New("RCON port must be between 1 and 65535")
+	}
+	const key = "RconPort"
+	desired := strconv.Itoa(port)
+	document := parseIni(data)
+	changed := false
+	found := false
+
+	if start, end, sectionFound := findSectionBounds(
+		document.lines,
+		mordhauGameSessionSection,
+	); sectionFound {
+		for index := start + 1; index < end; index++ {
+			existingKey, existingValue, enabled, ok := configEntryParts(document.lines[index])
+			if !ok || !strings.EqualFold(existingKey, key) {
+				continue
+			}
+			found = true
+			if strings.TrimSpace(existingValue) == desired {
+				continue
+			}
+			document.lines[index] = formatConfigEntry(existingKey, desired, enabled)
+			changed = true
+		}
+	}
+
+	for index := range store.Entries {
+		entry := &store.Entries[index]
+		if entry.File != "Game.ini" ||
+			entry.Section != mordhauGameSessionSection ||
+			!strings.EqualFold(entry.Key, key) {
+			continue
+		}
+		found = true
+		if strings.TrimSpace(entry.Value) != desired {
+			entry.Value = desired
+			changed = true
+		}
+	}
+
+	if found {
+		return document.bytes(), changed, nil
+	}
+
+	if _, disabledSection := disabledINISectionByName(
+		store,
+		"Game.ini",
+		mordhauGameSessionSection,
+	); disabledSection != nil {
+		id, err := randomID()
+		if err != nil {
+			return nil, false, err
+		}
+		position := 0
+		view := makeConfigViewWithDisabled("Game.ini", data, false, *store)
+		for _, section := range view.Sections {
+			if configSectionStorageName(section) == mordhauGameSessionSection {
+				position = len(section.Entries)
+				break
+			}
+		}
+		store.Entries = append(store.Entries, disabledINIEntry{
+			ID:       id,
+			File:     "Game.ini",
+			Section:  mordhauGameSessionSection,
+			Position: position,
+			Key:      key,
+			Value:    desired,
+		})
+		return document.bytes(), true, nil
+	}
+
+	setIniValue(&document, mordhauGameSessionSection, key, desired)
+	return document.bytes(), true, nil
+}
+
 func iniValue(data []byte, section, key string) (string, bool) {
 	value, enabled, exists := iniEntryState(data, section, key)
 	return value, exists && enabled
@@ -1189,22 +1276,28 @@ func (m *Manager) EnsureEngineNetworkDefaults() error {
 }
 
 func (m *Manager) ensureRCONConfig() error {
-	path := configPath("Game.ini", false)
-	data, err := os.ReadFile(path)
+	m.configMu.Lock()
+	defer m.configMu.Unlock()
+
+	data, staged, err := readConfig("Game.ini")
 	if err != nil {
 		return fmt.Errorf("read generated Game.ini: %w", err)
 	}
-	document := parseIni(data)
-	store, err := loadDisabledINIFile(false)
+	storeStaged, err := disabledINIStateStaged(staged)
 	if err != nil {
 		return err
 	}
-	const section = "/Script/Mordhau.MordhauGameSession"
+	document := parseIni(data)
+	store, err := loadDisabledINIFile(storeStaged)
+	if err != nil {
+		return err
+	}
+	oldStore := cloneDisabledINIFile(store)
 	password, passwordEnabled, passwordExists := iniEntryStateWithDisabled(
 		data,
 		store,
 		"Game.ini",
-		section,
+		mordhauGameSessionSection,
 		"RconPassword",
 	)
 	changed := false
@@ -1213,28 +1306,62 @@ func (m *Manager) ensureRCONConfig() error {
 		if err != nil {
 			return err
 		}
-		setIniValue(&document, section, "RconPassword", password)
+		setIniValue(&document, mordhauGameSessionSection, "RconPassword", password)
 		changed = true
 	}
-	port, portEnabled, portExists := iniEntryStateWithDisabled(
-		data,
-		store,
-		"Game.ini",
-		section,
-		"RconPort",
+	updated, portChanged, err := synchronizeRCONPort(
+		document.bytes(),
+		&store,
+		savedServerPorts().RCON,
 	)
-	portNumber, parseErr := strconv.Atoi(port)
-	if !portExists || (portEnabled && (parseErr != nil || portNumber < 1 || portNumber > 65535)) {
-		setIniValue(&document, section, "RconPort", strconv.Itoa(defaultRCONPort))
-		changed = true
+	if err != nil {
+		return err
 	}
+	changed = changed || portChanged
 	if changed {
-		if err := backupConfig("Game.ini", data); err != nil {
-			return err
-		}
-		return writeFileAtomic(path, document.bytes(), 0600)
+		targetStaged := staged || storeStaged || serverRunning()
+		return persistConfigState(
+			"Game.ini",
+			data,
+			updated,
+			oldStore,
+			store,
+			targetStaged,
+		)
 	}
-	return os.Chmod(path, 0600)
+	return os.Chmod(configPath("Game.ini", staged), 0600)
+}
+
+func (m *Manager) synchronizeSavedRCONPort(port int) error {
+	data, staged, err := readConfig("Game.ini")
+	if err != nil {
+		return fmt.Errorf("read Game.ini for RCON port synchronization: %w", err)
+	}
+	storeStaged, err := disabledINIStateStaged(staged)
+	if err != nil {
+		return err
+	}
+	store, err := loadDisabledINIFile(storeStaged)
+	if err != nil {
+		return err
+	}
+	oldStore := cloneDisabledINIFile(store)
+	updated, changed, err := synchronizeRCONPort(data, &store, port)
+	if err != nil {
+		return err
+	}
+	if !changed {
+		return nil
+	}
+	targetStaged := staged || storeStaged || serverRunning()
+	return persistConfigState(
+		"Game.ini",
+		data,
+		updated,
+		oldStore,
+		store,
+		targetStaged,
+	)
 }
 
 func (m *Manager) ensureServerEventLogConfig() error {

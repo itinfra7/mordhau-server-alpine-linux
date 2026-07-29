@@ -35,7 +35,6 @@ const (
 	runtimeBridgeStatusPath   = runtimeDir + "/runtime-bridge-status.json"
 	runtimeBridgeRequestPath  = runtimeDir + "/runtime-bridge-request.txt"
 	runtimeBridgeResponsePath = runtimeDir + "/runtime-bridge-response.json"
-	defaultRCONPort           = 7778
 	emergencyDuration         = 30 * time.Minute
 )
 

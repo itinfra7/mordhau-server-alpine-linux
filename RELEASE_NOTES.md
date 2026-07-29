@@ -1,29 +1,28 @@
-This release contains the following changes relative to v2.3.1.
+This release contains the following changes relative to v2.3.2.
 
 ## Changelog
 
 ### Fixed
 
-- Resolve MORDHAU App ID `629800` metadata before the first SteamCMD update,
-  explicitly select the Windows 64-bit depot, and retry only a transient
-  `Missing configuration` result with bounded delays.
-- Require an exact MORDHAU command and Wine process identity for game-server
-  status so unrelated shell or diagnostic command lines cannot produce a
-  false running state.
-- Identify an unmanaged web-manager process by its exact `/proc` executable
-  target instead of a command-line substring.
+- Synchronize the dashboard RCON port with `RconPort` in `Game.ini` when
+  dedicated-server ports are saved and when an existing installation starts
+  the updated web manager.
+- Stage the synchronized INI value while the game server is running and update
+  the active configuration while it is stopped.
+
+### Security
+
+- Preserve intentionally disabled `RconPort` entries and disabled game-session
+  sections while updating their stored value.
+- Serialize dashboard port changes with configuration and lifecycle operations,
+  and restore the prior server-port state if INI synchronization cannot be
+  persisted.
 
 ### Validation
 
-- Verify SteamCMD command ordering, bounded metadata-only retries, and
-  immediate failure for unrelated update errors.
-- Verify exact launcher and shipping-process matching plus rejection of shell,
-  unrelated Wine, and alternate-path false positives.
-- Verify an empty SteamCMD cache and isolated Wine prefix reach the App ID
-  `629800` Windows depot download.
-- Complete an Alpine installation through SteamCMD validation, native bridge
-  installation, initial configuration, Unicode Bridge installation, Go tests,
-  web-manager build, and OpenRC setup.
+- Verify duplicate active values, disabled entries, disabled sections, missing
+  values, CRLF input, unrelated INI content, and invalid port rejection.
+- Verify the complete Go test suite and both upgraded Alpine installations.
 
 ## Documentation
 
@@ -41,6 +40,6 @@ sha256sum -c SHA256SUMS
 
 Repository-authored source is available under the MIT License.
 
-Previous release: [v2.3.1](https://github.com/itinfra7/mordhau-server-alpine-linux/releases/tag/v2.3.1)
+Previous release: [v2.3.2](https://github.com/itinfra7/mordhau-server-alpine-linux/releases/tag/v2.3.2)
 
-Full comparison: [v2.3.1...v2.3.2](https://github.com/itinfra7/mordhau-server-alpine-linux/compare/v2.3.1...v2.3.2)
+Full comparison: [v2.3.2...v2.3.3](https://github.com/itinfra7/mordhau-server-alpine-linux/compare/v2.3.2...v2.3.3)

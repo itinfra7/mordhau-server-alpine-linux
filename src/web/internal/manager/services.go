@@ -204,11 +204,37 @@ func savedServerPorts() ServerPorts {
 	return ports
 }
 
-func setSavedServerPorts(ports ServerPorts) error {
+func (m *Manager) setSavedServerPorts(ports ServerPorts) error {
 	if err := validateServerPortsForWeb(ports, savedWebPort()); err != nil {
 		return err
 	}
-	return writeFileAtomic(serverPortsPath, formatServerPorts(ports), 0600)
+	m.configMu.Lock()
+	defer m.configMu.Unlock()
+
+	lock, err := acquireLifecycleLock()
+	if err != nil {
+		return err
+	}
+	defer releaseLifecycleLock(lock)
+
+	previous, err := snapshotConfigFile(serverPortsPath)
+	if err != nil {
+		return err
+	}
+	if err := writeFileAtomic(serverPortsPath, formatServerPorts(ports), 0600); err != nil {
+		return err
+	}
+	if err := m.synchronizeSavedRCONPort(ports.RCON); err != nil {
+		if rollbackErr := restoreConfigFile(serverPortsPath, previous); rollbackErr != nil {
+			return fmt.Errorf(
+				"synchronize Game.ini RconPort: %v; restore server ports: %w",
+				err,
+				rollbackErr,
+			)
+		}
+		return fmt.Errorf("synchronize Game.ini RconPort: %w", err)
+	}
+	return nil
 }
 
 func validateStartMap(value string) error {

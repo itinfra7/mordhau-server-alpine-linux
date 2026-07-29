@@ -2188,7 +2188,7 @@ func (m *Manager) serverPortsHandler(response http.ResponseWriter, request *http
 		writeError(response, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := setSavedServerPorts(ports); err != nil {
+	if err := m.setSavedServerPorts(ports); err != nil {
 		writeError(response, http.StatusBadRequest, err.Error())
 		return
 	}
