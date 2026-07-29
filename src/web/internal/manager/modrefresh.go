@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -12,20 +13,29 @@ const (
 	defaultModRefreshMinutes  = 5
 	minimumModRefreshMinutes  = 1
 	maximumModRefreshMinutes  = 10080
-	modRefreshSettingsVersion = 2
+	modRefreshSettingsVersion = 3
 	maximumModRefreshRetry    = 5 * time.Minute
+	modRestartPolicyCountdown = "countdown"
+	modRestartPolicyWhenEmpty = "when_empty"
+	modRestartPolicyScheduled = "scheduled"
+	defaultModRestartTime     = "04:00"
 )
 
 type modRefreshSettingsFile struct {
-	Version         int  `json:"version"`
-	IntervalMinutes int  `json:"interval_minutes"`
-	RestartOnUpdate bool `json:"restart_on_update"`
+	Version         int    `json:"version"`
+	IntervalMinutes int    `json:"interval_minutes"`
+	RestartOnUpdate bool   `json:"restart_on_update"`
+	RestartPolicy   string `json:"restart_policy"`
+	ScheduledTime   string `json:"scheduled_time"`
 }
 
 type ModRefreshView struct {
 	IntervalMinutes  int        `json:"interval_minutes"`
 	RestartOnUpdate  bool       `json:"restart_on_update"`
+	RestartPolicy    string     `json:"restart_policy"`
+	ScheduledTime    string     `json:"scheduled_time"`
 	RestartScheduled bool       `json:"restart_scheduled"`
+	WaitingForEmpty  bool       `json:"waiting_for_empty"`
 	RestartAt        *time.Time `json:"restart_at,omitempty"`
 	RestartModIDs    []int      `json:"restart_mod_ids"`
 	Refreshing       bool       `json:"refreshing"`
@@ -37,6 +47,20 @@ type ModRefreshView struct {
 
 func validModRefreshMinutes(minutes int) bool {
 	return minutes >= minimumModRefreshMinutes && minutes <= maximumModRefreshMinutes
+}
+
+func validModRestartPolicy(policy string) bool {
+	switch policy {
+	case modRestartPolicyCountdown, modRestartPolicyWhenEmpty, modRestartPolicyScheduled:
+		return true
+	default:
+		return false
+	}
+}
+
+func validModRestartTime(value string) bool {
+	_, err := time.Parse("15:04", value)
+	return err == nil
 }
 
 func (m *Manager) modRefreshSettingsFilePath() string {
@@ -51,6 +75,8 @@ func (m *Manager) loadOrCreateModRefreshSettings() error {
 	settings := modRefreshSettingsFile{
 		Version:         modRefreshSettingsVersion,
 		IntervalMinutes: defaultModRefreshMinutes,
+		RestartPolicy:   modRestartPolicyCountdown,
+		ScheduledTime:   defaultModRestartTime,
 	}
 	changed := false
 	if err := readJSON(path, &settings); err != nil {
@@ -66,11 +92,19 @@ func (m *Manager) loadOrCreateModRefreshSettings() error {
 		}
 		switch settings.Version {
 		case 1:
-			settings.Version = modRefreshSettingsVersion
 			settings.RestartOnUpdate = false
+			fallthrough
+		case 2:
+			settings.Version = modRefreshSettingsVersion
+			settings.RestartPolicy = modRestartPolicyCountdown
+			settings.ScheduledTime = defaultModRestartTime
 			changed = true
 		case modRefreshSettingsVersion:
 		default:
+			return errors.New("stored mod refresh settings are invalid")
+		}
+		if !validModRestartPolicy(settings.RestartPolicy) ||
+			!validModRestartTime(settings.ScheduledTime) {
 			return errors.New("stored mod refresh settings are invalid")
 		}
 		if settings.RestartOnUpdate {
@@ -103,9 +137,19 @@ func timeView(value time.Time) *time.Time {
 }
 
 func (m *Manager) modRefreshViewLocked() ModRefreshView {
+	restartPolicy := m.modRefreshSettings.RestartPolicy
+	if !validModRestartPolicy(restartPolicy) {
+		restartPolicy = modRestartPolicyCountdown
+	}
+	scheduledTime := m.modRefreshSettings.ScheduledTime
+	if !validModRestartTime(scheduledTime) {
+		scheduledTime = defaultModRestartTime
+	}
 	view := ModRefreshView{
 		IntervalMinutes: m.modRefreshSettings.IntervalMinutes,
 		RestartOnUpdate: m.modRefreshSettings.RestartOnUpdate,
+		RestartPolicy:   restartPolicy,
+		ScheduledTime:   scheduledTime,
 		RestartModIDs:   []int{},
 		Refreshing:      m.modRefreshing,
 		LastAttemptAt:   timeView(m.modLastAttempt),
@@ -115,6 +159,7 @@ func (m *Manager) modRefreshViewLocked() ModRefreshView {
 	}
 	if schedule := m.modUpdateState.Schedule; schedule != nil {
 		view.RestartScheduled = true
+		view.WaitingForEmpty = schedule.Policy == modRestartPolicyWhenEmpty
 		view.RestartAt = timeView(schedule.RestartAt)
 		for _, update := range schedule.Updates {
 			view.RestartModIDs = append(view.RestartModIDs, update.ModID)
@@ -263,6 +308,11 @@ func (m *Manager) refreshModCacheInternal(force bool) (ModManagementView, error)
 
 	m.signalModRefreshLoop()
 	m.handleModUpdateDetection(detection)
+	if refreshError != "" {
+		m.queueMonitoringAlert("mod_refresh_failed", map[string]string{
+			"error": safeAuditText(refreshError, 200),
+		})
+	}
 	if err != nil {
 		return result, err
 	}
@@ -292,7 +342,17 @@ func (m *Manager) setModRefreshSettings(
 	minutes *int,
 	restartOnUpdate *bool,
 ) (ModManagementView, error) {
-	if minutes == nil && restartOnUpdate == nil {
+	return m.setModRefreshSettingsWithPolicy(minutes, restartOnUpdate, nil, nil)
+}
+
+func (m *Manager) setModRefreshSettingsWithPolicy(
+	minutes *int,
+	restartOnUpdate *bool,
+	restartPolicy *string,
+	scheduledTime *string,
+) (ModManagementView, error) {
+	if minutes == nil && restartOnUpdate == nil &&
+		restartPolicy == nil && scheduledTime == nil {
 		return ModManagementView{}, errors.New("no mod refresh setting was supplied")
 	}
 	if minutes != nil && !validModRefreshMinutes(*minutes) {
@@ -301,6 +361,20 @@ func (m *Manager) setModRefreshSettings(
 			minimumModRefreshMinutes,
 			maximumModRefreshMinutes,
 		)
+	}
+	if restartPolicy != nil {
+		normalized := strings.TrimSpace(*restartPolicy)
+		if !validModRestartPolicy(normalized) {
+			return ModManagementView{}, errors.New("invalid mod update restart policy")
+		}
+		restartPolicy = &normalized
+	}
+	if scheduledTime != nil {
+		normalized := strings.TrimSpace(*scheduledTime)
+		if !validModRestartTime(normalized) {
+			return ModManagementView{}, errors.New("scheduled restart time must use HH:MM")
+		}
+		scheduledTime = &normalized
 	}
 	if restartOnUpdate != nil && *restartOnUpdate {
 		settings, err := m.modIOSettings()
@@ -318,8 +392,16 @@ func (m *Manager) setModRefreshSettings(
 	defer m.modRefreshSettingsMu.Unlock()
 	m.modsMu.Lock()
 	settings := m.modRefreshSettings
+	previousRestartPolicy := settings.RestartPolicy
+	previousScheduledTime := settings.ScheduledTime
 	if settings.IntervalMinutes == 0 {
 		settings.IntervalMinutes = defaultModRefreshMinutes
+	}
+	if !validModRestartPolicy(settings.RestartPolicy) {
+		settings.RestartPolicy = modRestartPolicyCountdown
+	}
+	if !validModRestartTime(settings.ScheduledTime) {
+		settings.ScheduledTime = defaultModRestartTime
 	}
 	settings.Version = modRefreshSettingsVersion
 	if minutes != nil {
@@ -327,6 +409,12 @@ func (m *Manager) setModRefreshSettings(
 	}
 	if restartOnUpdate != nil {
 		settings.RestartOnUpdate = *restartOnUpdate
+	}
+	if restartPolicy != nil {
+		settings.RestartPolicy = *restartPolicy
+	}
+	if scheduledTime != nil {
+		settings.ScheduledTime = *scheduledTime
 	}
 	if err := writeJSONAtomic(m.modRefreshSettingsFilePath(), settings, 0600); err != nil {
 		m.modsMu.Unlock()
@@ -342,6 +430,7 @@ func (m *Manager) setModRefreshSettings(
 	)
 	cancelled := false
 	cancelSaveFailed := false
+	stateSavePhase := "setting_disabled"
 	if !settings.RestartOnUpdate && m.modUpdateState.Schedule != nil {
 		state := cloneModUpdateState(m.modUpdateState)
 		state.Schedule = nil
@@ -350,6 +439,22 @@ func (m *Manager) setModRefreshSettings(
 		} else {
 			m.modUpdateState = state
 			cancelled = true
+		}
+	} else if settings.RestartOnUpdate &&
+		m.modUpdateState.Schedule != nil &&
+		(settings.RestartPolicy != previousRestartPolicy ||
+			settings.ScheduledTime != previousScheduledTime) {
+		stateSavePhase = "restart_policy_changed"
+		state := cloneModUpdateState(m.modUpdateState)
+		configureModRestartSchedule(
+			state.Schedule,
+			settings,
+			now,
+		)
+		if err := m.saveModUpdateStateValue(state); err != nil {
+			cancelSaveFailed = true
+		} else {
+			m.modUpdateState = state
 		}
 	}
 	m.modRevision++
@@ -364,7 +469,7 @@ func (m *Manager) setModRefreshSettings(
 	}
 	if cancelSaveFailed {
 		m.auditActorEvent("system", "local", "mod_update_state_save_failed",
-			map[string]string{"phase": "setting_disabled"})
+			map[string]string{"phase": stateSavePhase})
 	}
 
 	if !ready {

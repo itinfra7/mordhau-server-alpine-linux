@@ -43,8 +43,15 @@ RepNotify function, exported value, and editability. Enum-backed byte and enum
 properties also include their `UEnum` value names. Each controller target
 includes the current `PlayerState.PlayerNamePrivate` value and the PlayFab ID
 exported by `MordhauPlayerState.PlayFabPlayer`, allowing the manager to group
-the three player-owned runtime targets under one identity. A Steam-backed
-identity also includes its strictly validated 17-digit SteamID64.
+the three player-owned runtime targets under one identity. The identity also
+includes a normalized Steam, Epic, or Unknown platform and the provider
+account identifier. Steam identifiers are accepted only as strict 17-digit
+SteamID64 values.
+
+Each player identity includes live ping in milliseconds. The bridge prefers
+`ExactPing`; when only Unreal's compressed `Ping` byte is available, it
+applies the engine's four-millisecond scale. Missing, non-finite, or
+out-of-range values are omitted rather than guessed.
 
 Controller detail requests can include account progress read through the
 supported executable's `UMordhauInventory::GetPlayerXP` and
@@ -94,8 +101,9 @@ uses atomic request writes, validates response request IDs, limits response
 sizes, and caches target views briefly so simultaneous administrators do not
 multiply game-thread work. The status file is sampled once per second by the
 bridge and contains the current controller count and authenticated
-player-navigation identities. The Go manager then shares the cached
-PlayerController count through the existing authenticated event stream.
+player-navigation identities, including platform and ping. The Go manager then
+shares the cached connected-player directory and PlayerController count
+through the existing authenticated event stream.
 
 ## Build
 

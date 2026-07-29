@@ -31,7 +31,9 @@ func TestModRefreshSettingsDefaultAndVersionOneMigration(t *testing.T) {
 		}
 		if manager.modRefreshSettings.Version != modRefreshSettingsVersion ||
 			manager.modRefreshSettings.IntervalMinutes != 5 ||
-			manager.modRefreshSettings.RestartOnUpdate {
+			manager.modRefreshSettings.RestartOnUpdate ||
+			manager.modRefreshSettings.RestartPolicy != modRestartPolicyCountdown ||
+			manager.modRefreshSettings.ScheduledTime != defaultModRestartTime {
 			t.Fatalf("unexpected default settings: %+v", manager.modRefreshSettings)
 		}
 		info, err := os.Stat(path)
@@ -58,7 +60,8 @@ func TestModRefreshSettingsDefaultAndVersionOneMigration(t *testing.T) {
 		}
 		if manager.modRefreshSettings.Version != modRefreshSettingsVersion ||
 			manager.modRefreshSettings.IntervalMinutes != 10 ||
-			manager.modRefreshSettings.RestartOnUpdate {
+			manager.modRefreshSettings.RestartOnUpdate ||
+			manager.modRefreshSettings.RestartPolicy != modRestartPolicyCountdown {
 			t.Fatalf("migration changed the saved interval: %+v", manager.modRefreshSettings)
 		}
 		info, err := os.Stat(path)
@@ -69,6 +72,96 @@ func TestModRefreshSettingsDefaultAndVersionOneMigration(t *testing.T) {
 			t.Fatalf("migrated settings mode = %o, want 0600", info.Mode().Perm())
 		}
 	})
+}
+
+func TestNextScheduledModRestartAllowsFullCountdown(t *testing.T) {
+	now := time.Date(2026, 7, 24, 3, 30, 0, 0, time.FixedZone("test", 9*60*60))
+	got := nextScheduledModRestart(now, "04:00")
+	want := time.Date(2026, 7, 24, 4, 0, 0, 0, now.Location())
+	if !got.Equal(want) {
+		t.Fatalf("scheduled restart = %s, want %s", got, want)
+	}
+
+	now = time.Date(2026, 7, 24, 3, 55, 0, 0, now.Location())
+	got = nextScheduledModRestart(now, "04:00")
+	want = time.Date(2026, 7, 25, 4, 0, 0, 0, now.Location())
+	if !got.Equal(want) {
+		t.Fatalf("near scheduled restart = %s, want next day %s", got, want)
+	}
+}
+
+func TestModRestartWhenEmptyWaitsForRuntimePlayerCount(t *testing.T) {
+	temp := t.TempDir()
+	started := time.Date(2026, 7, 24, 13, 0, 0, 0, time.UTC)
+	state := modUpdateStateFile{
+		Version:  modUpdateStateVersion,
+		Baseline: []trackedModfile{{ModID: 42, ModfileID: 101}},
+		Schedule: &modRestartSchedule{
+			DetectedAt: started,
+			ServerPID:  9876,
+			Policy:     modRestartPolicyWhenEmpty,
+			Updates: []modfileUpdate{
+				{ModID: 42, PreviousFile: 100, CurrentFile: 101},
+			},
+		},
+	}
+	statePath := filepath.Join(temp, "mod-update-state.json")
+	if err := writeJSONAtomic(statePath, state, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	var messages []string
+	operations := 0
+	manager := &Manager{
+		modRefreshSettings: modRefreshSettingsFile{
+			Version:         modRefreshSettingsVersion,
+			IntervalMinutes: defaultModRefreshMinutes,
+			RestartOnUpdate: true,
+			RestartPolicy:   modRestartPolicyWhenEmpty,
+			ScheduledTime:   defaultModRestartTime,
+		},
+		modUpdateState:       state,
+		modUpdateStateFile:   statePath,
+		modUpdateStateLoaded: true,
+		auditPath:            filepath.Join(temp, "audit.log"),
+		runtimeSummary: RuntimeBridgeSummary{
+			Ready:                 true,
+			PlayerControllerCount: 1,
+		},
+		modServerProcess: func() (int, bool) {
+			return 9876, true
+		},
+		modRestartMessageSend: func(message string) error {
+			messages = append(messages, message)
+			return nil
+		},
+		operationStart: func(_, _, _, _ string) error {
+			operations++
+			return nil
+		},
+	}
+	manager.processModRestartSchedule(started)
+	if operations != 0 || len(messages) != 1 ||
+		messages[0] != emptyServerModRestartMessage() {
+		t.Fatalf("restart did not wait for players: operations=%d messages=%v", operations, messages)
+	}
+	manager.runtimeMu.Lock()
+	manager.runtimeSummary.PlayerControllerCount = 0
+	manager.runtimeMu.Unlock()
+	manager.processModRestartSchedule(started.Add(modRestartRetryDelay))
+	if operations != 0 {
+		t.Fatal("server restarted before the empty-server grace period")
+	}
+	manager.processModRestartSchedule(
+		started.Add(modRestartRetryDelay + modRestartEmptyGrace),
+	)
+	if operations != 1 || len(messages) != 2 ||
+		messages[1] != finalModRestartMessage() {
+		t.Fatalf("empty server did not restart: operations=%d messages=%v", operations, messages)
+	}
+	if manager.modUpdateState.Schedule != nil {
+		t.Fatal("accepted empty-server restart left a pending schedule")
+	}
 }
 
 func TestAutomaticModRestartRequiresSavedAPIKey(t *testing.T) {

@@ -101,6 +101,9 @@ func (m *Manager) writeAudit(record auditRecord) error {
 	m.auditMu.Lock()
 	defer m.auditMu.Unlock()
 
+	if err := m.rotateManagedLog(path); err != nil {
+		return err
+	}
 	file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
 	if err != nil {
 		return err

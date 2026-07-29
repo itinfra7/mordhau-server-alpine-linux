@@ -2227,9 +2227,9 @@ func TestDashboardThemeAndServerPromptMarkup(t *testing.T) {
 	for _, expected := range []string{
 		`id="theme-toggle"`,
 		`content="width=device-width, initial-scale=1, viewport-fit=cover"`,
-		`src="/static/theme.js?v=2.2.2"`,
-		`href="/static/app.css?v=2.2.2"`,
-		`src="/static/app.js?v=2.2.2"`,
+		`src="/static/theme.js?v=2.3.0"`,
+		`href="/static/app.css?v=2.3.0"`,
+		`src="/static/app.js?v=2.3.0"`,
 		`<body id="page-top">`,
 		`class="brand" href="#page-top"`,
 		`<p class="eyebrow">SERVER EVENTS</p>`,
@@ -2244,6 +2244,20 @@ func TestDashboardThemeAndServerPromptMarkup(t *testing.T) {
 		`min="1" max="10080"`,
 		`value="5"`,
 		`id="mods-restart-on-update"`,
+		`id="mods-restart-policy"`,
+		`value="when_empty"`,
+		`value="scheduled"`,
+		`id="mods-restart-time"`,
+		`id="mods-dependency-graph"`,
+		`id="mod-remove-dialog"`,
+		`id="maprotation-list"`,
+		`id="maprotation-save"`,
+		`data-panel="monitoring"`,
+		`id="resource-history-chart"`,
+		`id="player-history-chart"`,
+		`id="recovery-settings-form"`,
+		`id="logs-search-form"`,
+		`id="monitoring-settings-form"`,
 		`data-panel="mods">Mods</button>` + "\n" +
 			`      <button class="tab" data-panel="custompaks">CustomPaks</button>`,
 		`id="panel-custompaks"`,
@@ -2277,6 +2291,11 @@ func TestDashboardThemeAndServerPromptMarkup(t *testing.T) {
 		`id="player-list"`,
 		`id="player-mute-toggle"`,
 		`id="player-ban-toggle"`,
+		`id="player-restriction-duration"`,
+		`id="player-restriction-reason"`,
+		`id="player-action-form"`,
+		`id="player-sessions"`,
+		`id="connected-players-dialog"`,
 		`id="player-comment-form"`,
 		`id="player-comment-body"`,
 		`id="player-last-level"`,
@@ -2316,10 +2335,10 @@ func TestDashboardThemeAndServerPromptMarkup(t *testing.T) {
 		t.Fatal(err)
 	}
 	loginSource := string(loginData)
-	if !strings.Contains(loginSource, `src="/static/theme.js?v=2.2.2"`) {
+	if !strings.Contains(loginSource, `src="/static/theme.js?v=2.3.0"`) {
 		t.Fatal("login page does not initialize the persisted theme")
 	}
-	if !strings.Contains(loginSource, `href="/static/app.css?v=2.2.2"`) {
+	if !strings.Contains(loginSource, `href="/static/app.css?v=2.3.0"`) {
 		t.Fatal("login page does not use the release stylesheet version")
 	}
 	if !strings.Contains(loginSource, `viewport-fit=cover`) {
@@ -2350,7 +2369,14 @@ func TestDashboardThemeAndServerPromptMarkup(t *testing.T) {
 		`/api/players`,
 		`/api/players/detail`,
 		`/api/players/restriction`,
+		`/api/players/action`,
 		`/api/players/comments`,
+		`/api/recovery/settings`,
+		`/api/recovery/retry`,
+		`/api/monitoring/metrics`,
+		`/api/monitoring/logs`,
+		`/api/maprotation/save`,
+		`/api/mods/remove/plan`,
 		`/api/custompaks/upload`,
 		`/api/custompaks/enabled`,
 		`/api/custompaks/delete`,
@@ -2388,6 +2414,11 @@ func TestDashboardThemeAndServerPromptMarkup(t *testing.T) {
 		`loadRuntimeTarget({ manual: true })`,
 		`Last successful refresh:`,
 		`restart_on_update: enabled`,
+		`restart_policy: policy`,
+		`function renderModDependencyGraph(graph)`,
+		`function submitModRemoval(event)`,
+		`function renderConnectedPlayers(players)`,
+		`function renderMetricsHistory()`,
 		`resolvedOptions().timeZone`,
 		`comment: comment.value`,
 		`typeof rule.comment === "string"`,
@@ -2439,6 +2470,11 @@ func TestMobileLayoutHasTouchAndNarrowViewportRules(t *testing.T) {
 		`.custompak-row`,
 		`.custompak-switch`,
 		`.custompak-status.managed`,
+		`.dependency-graph-row`,
+		`.mod-remove-dialog`,
+		`.mod-restart-policy-fields`,
+		`.monitoring-grid`,
+		`.maprotation-row`,
 		`scroll-behavior: smooth`,
 	} {
 		if !strings.Contains(css, expected) {

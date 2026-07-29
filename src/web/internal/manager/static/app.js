@@ -10,6 +10,7 @@ const app = {
   modsLoading: false,
   modsReloadRequested: false,
   modRevision: null,
+  modRemovalPlan: null,
   customPaks: null,
   customPaksLoading: false,
   customPaksReloadRequested: false,
@@ -40,6 +41,15 @@ const app = {
   mapCatalog: null,
   mapCatalogLoading: false,
   mapChanging: false,
+  mapRotation: null,
+  mapRotationLoading: false,
+  mapRotationSaving: false,
+  mapRotationDragIndex: -1,
+  mapRotationDirty: false,
+  monitoring: null,
+  metricsHistory: null,
+  monitoringLoading: false,
+  logSearch: null,
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -188,10 +198,19 @@ function renderSnapshot(snapshot) {
   $("#players-value").textContent = runtimeReady && Number.isInteger(playerCount)
     ? String(playerCount)
     : "—";
-  $(".player-metric-card").classList.toggle("bridge-offline", !runtimeReady);
+  const connectedPlayers = Array.isArray(snapshot.connected_players)
+    ? snapshot.connected_players
+    : [];
+  const playerMetric = $("#players-metric");
+  const playerMetricActive = runtimeReady && playerCount > 0;
+  playerMetric.classList.toggle("bridge-offline", !runtimeReady);
+  playerMetric.classList.toggle("interactive", playerMetricActive);
+  playerMetric.tabIndex = playerMetricActive ? 0 : -1;
+  playerMetric.setAttribute("aria-disabled", String(!playerMetricActive));
   $("#runtime-bridge-summary").textContent = runtimeReady
     ? (runtime.game_mode_class || "Runtime bridge ready")
     : `Runtime bridge: ${(runtime.status || "unavailable").replaceAll("_", " ")}`;
+  renderConnectedPlayers(connectedPlayers);
 
   $("#server-dot").classList.toggle("online", snapshot.server_running);
   $("#server-label").textContent = snapshot.server_running ? "Server online" : "Server stopped";
@@ -249,6 +268,7 @@ function renderSnapshot(snapshot) {
   $("#server-prompt-input").disabled = operation.running || !snapshot.server_running;
   $("#server-prompt-mode").disabled = operation.running || !snapshot.server_running;
   appendServerEvents(snapshot.server_events || []);
+  renderRecovery(snapshot.recovery || {});
   if (customPaksMayHaveChanged) loadCustomPaks({ silent: true });
 }
 
@@ -282,6 +302,418 @@ function appendServerEvents(events) {
     app.eventLines -= 1;
   }
   if (added) consoleElement.scrollTop = consoleElement.scrollHeight;
+}
+
+function renderRecovery(recovery) {
+  const state = $("#recovery-state");
+  if (!state) return;
+  const settings = recovery.settings || {};
+  const enabledInput = $("#recovery-enabled");
+  const attemptsInput = $("#recovery-attempts");
+  const windowInput = $("#recovery-window");
+  if (document.activeElement !== enabledInput) {
+    enabledInput.checked = settings.enabled === true;
+  }
+  if (document.activeElement !== attemptsInput) {
+    attemptsInput.value = Number(settings.max_attempts) || 3;
+  }
+  if (document.activeElement !== windowInput) {
+    windowInput.value = Number(settings.window_minutes) || 30;
+  }
+  let label = "Armed";
+  let statusClass = "connected";
+  if (!settings.enabled) {
+    label = "Disabled";
+    statusClass = "";
+  } else if (recovery.exhausted) {
+    label = "Retry limit reached";
+    statusClass = "danger";
+  } else if (recovery.restart_scheduled) {
+    label = `Retry ${formatPlayerDate(recovery.next_attempt_at)}`;
+    statusClass = "warning";
+  } else if (recovery.desired_state !== "running") {
+    label = "Intentional stop";
+    statusClass = "";
+  }
+  state.textContent = label;
+  state.className = `connection-pill ${statusClass}`.trim();
+  $("#recovery-retry").disabled = recovery.desired_state !== "running" ||
+    app.snapshot?.server_running === true;
+
+  const diagnostic = $("#recovery-diagnostic");
+  const crash = recovery.last_crash;
+  if (!crash) {
+    diagnostic.textContent = "No crash diagnostic has been recorded.";
+    return;
+  }
+  const lines = [
+    `Detected: ${formatPlayerDate(crash.detected_at)}`,
+    `Cause: ${(crash.cause || "unknown").replaceAll("_", " ")}`,
+    `PID: ${crash.pid || "unknown"} · uptime: ${formatPlayerDuration(crash.uptime_seconds || 0)}`,
+    `Attempts in window: ${recovery.attempts_in_window || 0}`,
+  ];
+  if (recovery.last_attempt_error) {
+    lines.push(`Last retry error: ${recovery.last_attempt_error}`);
+  }
+  if (crash.console_tail) {
+    lines.push("", "Console tail:", crash.console_tail);
+  }
+  diagnostic.textContent = lines.join("\n");
+}
+
+function chartCSSColor(name, fallback) {
+  const value = getComputedStyle(document.documentElement)
+    .getPropertyValue(name).trim();
+  return value || fallback;
+}
+
+function prepareChart(canvas, height) {
+  const ratio = Math.max(1, window.devicePixelRatio || 1);
+  const width = Math.max(300, canvas.clientWidth || 800);
+  canvas.style.height = `${height}px`;
+  canvas.width = Math.round(width * ratio);
+  canvas.height = Math.round(height * ratio);
+  const context = canvas.getContext("2d");
+  context.setTransform(ratio, 0, 0, ratio, 0, 0);
+  return { context, width, height };
+}
+
+function drawHistoryChart(canvas, points, series, maximum, height) {
+  const { context, width } = prepareChart(canvas, height);
+  const left = 42;
+  const right = 12;
+  const top = 12;
+  const bottom = 28;
+  const plotWidth = Math.max(1, width - left - right);
+  const plotHeight = Math.max(1, height - top - bottom);
+  context.clearRect(0, 0, width, height);
+  context.font = "11px system-ui, sans-serif";
+  context.lineWidth = 1;
+  context.strokeStyle = chartCSSColor("--line", "rgba(128,128,128,.25)");
+  context.fillStyle = chartCSSColor("--muted", "#7d8490");
+  for (let step = 0; step <= 4; step += 1) {
+    const y = top + plotHeight * step / 4;
+    context.beginPath();
+    context.moveTo(left, y);
+    context.lineTo(left + plotWidth, y);
+    context.stroke();
+    const value = Math.round(maximum * (1 - step / 4));
+    context.fillText(String(value), 5, y + 4);
+  }
+  if (!points.length) {
+    context.fillText("No samples in this range", left + 10, top + plotHeight / 2);
+    return;
+  }
+  const first = new Date(points[0].time).getTime();
+  const last = new Date(points[points.length - 1].time).getTime();
+  const span = Math.max(1, last - first);
+  for (const definition of series) {
+    context.beginPath();
+    context.strokeStyle = definition.color;
+    context.lineWidth = 1.8;
+    let started = false;
+    for (const point of points) {
+      const value = Number(point[definition.key]);
+      const time = new Date(point.time).getTime();
+      if (!Number.isFinite(value) || !Number.isFinite(time)) continue;
+      const x = left + ((time - first) / span) * plotWidth;
+      const y = top + (1 - Math.max(0, Math.min(maximum, value)) / maximum) * plotHeight;
+      if (!started) {
+        context.moveTo(x, y);
+        started = true;
+      } else {
+        context.lineTo(x, y);
+      }
+    }
+    context.stroke();
+  }
+  context.fillStyle = chartCSSColor("--muted", "#7d8490");
+  context.fillText(new Date(first).toLocaleString(), left, height - 7);
+  const rightLabel = new Date(last).toLocaleString();
+  const labelWidth = context.measureText(rightLabel).width;
+  context.fillText(rightLabel, Math.max(left, width - right - labelWidth), height - 7);
+}
+
+function renderMetricsHistory() {
+  const points = Array.isArray(app.metricsHistory?.points)
+    ? app.metricsHistory.points
+    : [];
+  drawHistoryChart(
+    $("#resource-history-chart"),
+    points,
+    [
+      { key: "cpu_percent", color: chartCSSColor("--red-bright", "#e94f51") },
+      { key: "memory_percent", color: chartCSSColor("--violet", "#9b78ff") },
+      { key: "swap_percent", color: chartCSSColor("--amber", "#f3b95f") },
+      { key: "disk_percent", color: chartCSSColor("--cyan", "#58c8e8") },
+    ],
+    100,
+    240,
+  );
+  const maximumPlayers = Math.max(
+    1,
+    ...points.map((point) => Number(point.player_count) || 0),
+  );
+  drawHistoryChart(
+    $("#player-history-chart"),
+    points,
+    [{
+      key: "player_count",
+      color: chartCSSColor("--green", "#55d998"),
+    }],
+    maximumPlayers,
+    140,
+  );
+  $("#metrics-history-status").textContent = points.length
+    ? `${points.length} server samples · ${app.metricsHistory.range}`
+    : `No server samples are retained for ${$("#metrics-range").value}.`;
+}
+
+async function loadMetricsHistory() {
+  const button = $("#metrics-refresh");
+  button.disabled = true;
+  try {
+    app.metricsHistory = await api(
+      `/api/monitoring/metrics?range=${encodeURIComponent($("#metrics-range").value)}`,
+    );
+    renderMetricsHistory();
+  } catch (error) {
+    toast(error.message, true);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function renderMonitoring() {
+  const view = app.monitoring;
+  if (!view) return;
+  const settings = view.settings || {};
+  $("#monitor-log-size").value = settings.log_size_mib ?? 10;
+  $("#monitor-log-backups").value = settings.log_backups ?? 5;
+  $("#monitor-game-retention").value = settings.game_log_retention_days ?? 30;
+  $("#monitor-disk-threshold").value = settings.disk_threshold_percent ?? 90;
+  $("#alert-crash").checked = settings.alert_crash === true;
+  $("#alert-exhausted").checked = settings.alert_recovery_exhausted === true;
+  $("#alert-disk").checked = settings.alert_disk === true;
+  $("#alert-mod-refresh").checked = settings.alert_mod_refresh === true;
+  $("#monitor-webhook-test").disabled = !settings.webhook_configured;
+  $("#monitor-webhook-clear").disabled = !settings.webhook_configured;
+  const status = view.status || {};
+  const parts = [
+    settings.webhook_configured
+      ? "HTTPS webhook configured; its URL is not returned to this browser."
+      : "No webhook configured.",
+  ];
+  if (status.last_webhook_success) {
+    parts.push(`Last success ${formatPlayerDate(status.last_webhook_success)}`);
+  }
+  if (status.last_webhook_error) {
+    parts.push(`Last error: ${status.last_webhook_error}`);
+  }
+  $("#monitoring-webhook-status").textContent = parts.join(" · ");
+}
+
+async function loadMonitoring({ silent = false } = {}) {
+  if (app.monitoringLoading) return;
+  app.monitoringLoading = true;
+  try {
+    const [monitoring] = await Promise.all([
+      api("/api/monitoring"),
+      loadMetricsHistory(),
+    ]);
+    app.monitoring = monitoring;
+    renderMonitoring();
+  } catch (error) {
+    if (!silent) toast(error.message, true);
+  } finally {
+    app.monitoringLoading = false;
+  }
+}
+
+async function saveMonitoringSettings(event) {
+  event.preventDefault();
+  try {
+    app.monitoring = await api("/api/monitoring/settings", {
+      method: "POST",
+      body: {
+        log_size_mib: Number($("#monitor-log-size").value),
+        log_backups: Number($("#monitor-log-backups").value),
+        game_log_retention_days: Number($("#monitor-game-retention").value),
+        disk_threshold_percent: Number($("#monitor-disk-threshold").value),
+        webhook_url: $("#monitor-webhook-url").value.trim(),
+        alert_crash: $("#alert-crash").checked,
+        alert_recovery_exhausted: $("#alert-exhausted").checked,
+        alert_disk: $("#alert-disk").checked,
+        alert_mod_refresh: $("#alert-mod-refresh").checked,
+      },
+    });
+    $("#monitor-webhook-url").value = "";
+    renderMonitoring();
+    toast("Monitoring policy saved.");
+  } catch (error) {
+    $("#monitor-webhook-url").value = "";
+    toast(error.message, true);
+  }
+}
+
+async function saveRecoverySettings(event) {
+  event.preventDefault();
+  try {
+    const recovery = await api("/api/recovery/settings", {
+      method: "POST",
+      body: {
+        enabled: $("#recovery-enabled").checked,
+        max_attempts: Number($("#recovery-attempts").value),
+        window_minutes: Number($("#recovery-window").value),
+      },
+    });
+    renderRecovery(recovery);
+    toast("Crash recovery policy saved.");
+  } catch (error) {
+    toast(error.message, true);
+  }
+}
+
+async function retryRecoveryNow() {
+  if (!confirm("Reset the current crash-recovery retry window and retry now?")) return;
+  try {
+    const recovery = await api("/api/recovery/retry", { method: "POST" });
+    renderRecovery(recovery);
+    toast("Crash recovery retry scheduled.");
+  } catch (error) {
+    toast(error.message, true);
+  }
+}
+
+async function testMonitoringWebhook() {
+  const button = $("#monitor-webhook-test");
+  button.disabled = true;
+  try {
+    app.monitoring = await api("/api/monitoring/webhook/test", {
+      method: "POST",
+    });
+    renderMonitoring();
+    toast("Webhook test delivered.");
+  } catch (error) {
+    await loadMonitoring({ silent: true });
+    toast(error.message, true);
+  } finally {
+    button.disabled = !app.monitoring?.settings?.webhook_configured;
+  }
+}
+
+async function clearMonitoringWebhook() {
+  if (!confirm("Remove the stored webhook URL and disable delivery?")) return;
+  try {
+    app.monitoring = await api("/api/monitoring/settings", {
+      method: "POST",
+      body: { clear_webhook: true },
+    });
+    renderMonitoring();
+    toast("Webhook removed.");
+  } catch (error) {
+    toast(error.message, true);
+  }
+}
+
+function logSearchParameters(limit = 200) {
+  const parameters = new URLSearchParams({
+    source: $("#logs-source").value,
+    q: $("#logs-query").value.trim(),
+    account: $("#logs-account").value.trim(),
+    kind: $("#logs-kind").value.trim(),
+    limit: String(limit),
+  });
+  return parameters;
+}
+
+function renderLogSearch() {
+  const container = $("#monitoring-log-results");
+  container.replaceChildren();
+  const records = Array.isArray(app.logSearch?.records)
+    ? app.logSearch.records
+    : [];
+  if (!records.length) {
+    const empty = document.createElement("p");
+    empty.className = "hint";
+    empty.textContent = "No retained record matches these filters.";
+    container.append(empty);
+    return;
+  }
+  for (const record of records) {
+    const row = document.createElement("article");
+    row.className = "monitoring-log-row";
+    const heading = document.createElement("div");
+    const source = document.createElement("span");
+    source.className = "stage-pill";
+    source.textContent = record.source;
+    const event = document.createElement("strong");
+    event.textContent = record.event || record.kind || "record";
+    const time = document.createElement("time");
+    time.textContent = formatPlayerDate(record.time);
+    heading.append(source, event, time);
+    const text = document.createElement("p");
+    const details = record.details && typeof record.details === "object"
+      ? Object.entries(record.details)
+        .map(([key, value]) => `${key}=${value}`).join(" · ")
+      : "";
+    text.textContent = [
+      record.text,
+      record.account ? `account=${record.account}` : "",
+      record.client_ip ? `client=${record.client_ip}` : "",
+      details,
+    ].filter(Boolean).join(" · ");
+    row.append(heading, text);
+    container.append(row);
+  }
+  if (app.logSearch.truncated) {
+    const note = document.createElement("p");
+    note.className = "hint";
+    note.textContent = "More matching records exist; refine the filters or export JSONL.";
+    container.append(note);
+  }
+}
+
+async function searchMonitoringLogs(event) {
+  if (event) event.preventDefault();
+  try {
+    app.logSearch = await api(
+      `/api/monitoring/logs?${logSearchParameters(200).toString()}`,
+    );
+    renderLogSearch();
+  } catch (error) {
+    toast(error.message, true);
+  }
+}
+
+async function exportMonitoringLogs() {
+  const button = $("#logs-export");
+  button.disabled = true;
+  try {
+    const response = await fetch(
+      `/api/monitoring/logs/export?${logSearchParameters(10000).toString()}`,
+    );
+    if (!response.ok) {
+      let message = `${response.status} ${response.statusText}`;
+      try {
+        const body = await response.json();
+        if (body.error) message = body.error;
+      } catch (_) {}
+      throw new Error(message);
+    }
+    const blob = await response.blob();
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = "mordhau-control-logs.jsonl";
+    document.body.append(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(link.href);
+  } catch (error) {
+    toast(error.message, true);
+  } finally {
+    button.disabled = false;
+  }
 }
 
 async function serverAction(action) {
@@ -1187,6 +1619,113 @@ function playerRestrictionAvailable() {
   return status.server_running === true && status.available === true;
 }
 
+function platformLabel(platform) {
+  return platform === "Steam" || platform === "Epic" ? platform : "Unknown";
+}
+
+function restrictionLeaseLabel(active, lease) {
+  if (!active) return "Not active";
+  const expiry = playerDate(lease?.expires_at);
+  return expiry
+    ? `Expires ${expiry.toLocaleString()} · set by ${lease.set_by || "unknown"}`
+    : "Permanent until explicitly removed";
+}
+
+function renderPlayerSessions(sessions) {
+  const container = $("#player-sessions");
+  container.replaceChildren();
+  const values = Array.isArray(sessions) ? sessions : [];
+  $("#player-session-count").textContent =
+    `${values.length} session${values.length === 1 ? "" : "s"}`;
+  if (!values.length) {
+    const empty = document.createElement("p");
+    empty.className = "hint";
+    empty.textContent = "No connection session has been recorded.";
+    container.append(empty);
+    return;
+  }
+  for (const session of values) {
+    const row = document.createElement("article");
+    row.className = `player-session${session.active ? " active" : ""}`;
+    const times = document.createElement("div");
+    const joined = document.createElement("strong");
+    joined.textContent = `Joined ${formatPlayerDate(session.joined_at)}`;
+    const left = document.createElement("small");
+    left.textContent = session.active
+      ? "Currently online"
+      : `Left ${formatPlayerDate(session.left_at)}`;
+    times.append(joined, left);
+    const network = document.createElement("div");
+    const address = document.createElement("code");
+    address.textContent = session.ip || "IP unavailable";
+    const place = document.createElement("small");
+    place.textContent = `${countryFlagEmoji(session.location?.country_code)} ${playerLocationLabel(session.location)}`;
+    network.append(address, place);
+    const duration = document.createElement("strong");
+    duration.textContent = formatPlayerDuration(session.duration_seconds);
+    row.append(times, network, duration);
+    container.append(row);
+  }
+}
+
+function openConnectedPlayers() {
+  if (!app.snapshot?.runtime_bridge?.ready ||
+      Number(app.snapshot.runtime_bridge.player_controller_count) < 1) return;
+  const dialog = $("#connected-players-dialog");
+  if (typeof dialog.showModal === "function") dialog.showModal();
+  else dialog.setAttribute("open", "");
+}
+
+function closeConnectedPlayers() {
+  const dialog = $("#connected-players-dialog");
+  if (typeof dialog.close === "function" && dialog.open) dialog.close();
+  else dialog.removeAttribute("open");
+}
+
+function openKnownPlayer(playFabID) {
+  if (!playFabID) return;
+  closeConnectedPlayers();
+  app.playerSelectedID = playFabID;
+  app.playerDetail = null;
+  const tab = $('.tab[data-panel="players"]');
+  if (tab) tab.click();
+}
+
+function renderConnectedPlayers(players) {
+  const list = $("#connected-players-list");
+  if (!list) return;
+  list.replaceChildren();
+  if (!players.length) {
+    const empty = document.createElement("p");
+    empty.className = "hint";
+    empty.textContent = "No live PlayerController identity is available.";
+    list.append(empty);
+    return;
+  }
+  for (const player of players) {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "connected-player-row";
+    row.disabled = !player.playfab_id;
+    const identity = document.createElement("span");
+    const name = document.createElement("strong");
+    name.textContent = `${countryFlagEmoji(player.location?.country_code)} ${player.nickname || "Unknown nickname"}`;
+    const id = document.createElement("code");
+    id.textContent = player.playfab_id || "PlayFabID unavailable";
+    identity.append(name, id);
+    const facts = document.createElement("span");
+    const level = observedPlayerLevel(player.level);
+    facts.textContent = [
+      platformLabel(player.platform),
+      level === null ? "Lv. —" : `Lv. ${level}`,
+      Number.isInteger(player.ping_ms) ? `${player.ping_ms} ms` : "Ping —",
+    ].join(" · ");
+    row.append(identity, facts);
+    row.addEventListener("click", () => openKnownPlayer(player.playfab_id));
+    list.append(row);
+  }
+}
+
 function renderPlayerRestrictionStatus() {
   const status = app.players?.restrictions || {};
   const element = $("#player-restriction-status");
@@ -1507,6 +2046,10 @@ function renderPlayerProfile() {
     steamProfile.removeAttribute("href");
     steamProfile.removeAttribute("aria-label");
   }
+  const platform = platformLabel(detail.platform);
+  const platformBadge = $("#player-profile-platform");
+  platformBadge.textContent = platform;
+  platformBadge.className = `player-state-badge platform-${platform.toLowerCase()}`;
   renderPlayerLiveDuration();
 
   const onlineBadge = $("#player-profile-online");
@@ -1527,6 +2070,17 @@ function renderPlayerProfile() {
   ban.checked = Boolean(detail.banned);
   mute.disabled = !moderationAvailable;
   ban.disabled = !moderationAvailable;
+  $("#player-restriction-duration").disabled = !moderationAvailable;
+  $("#player-restriction-reason").disabled = !moderationAvailable;
+  $("#player-mute-expiry").textContent =
+    restrictionLeaseLabel(Boolean(detail.muted), detail.mute_lease);
+  $("#player-ban-expiry").textContent =
+    restrictionLeaseLabel(Boolean(detail.banned), detail.ban_lease);
+  const actionAvailable = app.snapshot?.server_running === true &&
+    !app.playerMutationRunning;
+  $("#player-action-kind").disabled = !actionAvailable;
+  $("#player-action-value").disabled = !actionAvailable;
+  $("#player-action-submit").disabled = !actionAvailable;
   $("#player-moderation-hint").textContent = moderationAvailable
     ? "Changes are executed and verified against the running server."
     : (app.players?.restrictions?.error || "Server restriction state is unavailable.");
@@ -1537,6 +2091,7 @@ function renderPlayerProfile() {
     "No nickname has been recorded.",
   );
   renderPlayerAddresses(detail.addresses);
+  renderPlayerSessions(detail.sessions);
   renderPlayerComments(detail.comments);
   $("#player-comment-body").disabled = app.playerMutationRunning;
   $("#player-comment-submit").disabled = app.playerMutationRunning;
@@ -1614,8 +2169,15 @@ async function loadPlayers({ silent = false } = {}) {
 async function setPlayerRestriction(restriction, enabled) {
   const detail = app.playerDetail;
   if (!detail || app.playerMutationRunning) return;
+  const duration = Number($("#player-restriction-duration").value);
+  const reason = $("#player-restriction-reason").value.trim();
+  if (enabled && (!Number.isInteger(duration) || duration < 0 || duration > 525600)) {
+    toast("Restriction duration must be a whole number from 0 to 525600 minutes.", true);
+    renderPlayerProfile();
+    return;
+  }
   if (restriction === "ban" && enabled &&
-      !confirm(`Ban ${detail.last_nickname || detail.playfab_id} permanently until unbanned?`)) {
+      !confirm(`Ban ${detail.last_nickname || detail.playfab_id}${duration ? ` for ${duration} minutes` : " until unbanned"}?`)) {
     renderPlayerProfile();
     return;
   }
@@ -1628,9 +2190,57 @@ async function setPlayerRestriction(restriction, enabled) {
         playfab_id: detail.playfab_id,
         restriction,
         enabled,
+        duration_minutes: enabled ? duration : 0,
+        reason,
       },
     });
     toast(`${restriction === "ban" ? "Ban" : "Mute"} ${enabled ? "enabled" : "removed"} for ${detail.playfab_id}.`);
+    await loadPlayers({ silent: true });
+  } catch (error) {
+    toast(error.message, true);
+  } finally {
+    app.playerMutationRunning = false;
+    renderPlayerProfile();
+  }
+}
+
+function updatePlayerActionForm() {
+  const warning = $("#player-action-kind").value === "warn";
+  $("#player-action-value-title").textContent = warning
+    ? "Warning message"
+    : "Kick reason";
+  $("#player-action-value").placeholder = warning
+    ? "Message shown to players"
+    : "Printable ASCII reason";
+  $("#player-action-value").maxLength = warning ? 512 : 160;
+  $("#player-action-submit").textContent = warning ? "Send warning" : "Kick player";
+}
+
+async function submitPlayerAction(event) {
+  event.preventDefault();
+  const detail = app.playerDetail;
+  if (!detail || app.playerMutationRunning) return;
+  const action = $("#player-action-kind").value;
+  const value = $("#player-action-value").value.trim();
+  if (!value) return;
+  if (action === "kick" &&
+      !confirm(`Kick ${detail.last_nickname || detail.playfab_id} from the server?`)) {
+    return;
+  }
+  app.playerMutationRunning = true;
+  renderPlayerProfile();
+  try {
+    app.playerDetail = await api("/api/players/action", {
+      method: "POST",
+      body: {
+        playfab_id: detail.playfab_id,
+        action,
+        reason: action === "kick" ? value : "",
+        message: action === "warn" ? value : "",
+      },
+    });
+    $("#player-action-value").value = "";
+    toast(action === "warn" ? "Administrator warning sent." : "Player kicked.");
     await loadPlayers({ silent: true });
   } catch (error) {
     toast(error.message, true);
@@ -1663,6 +2273,229 @@ async function submitPlayerComment(event) {
   } finally {
     app.playerMutationRunning = false;
     renderPlayerProfile();
+  }
+}
+
+function selectedMapRotationMode() {
+  const modes = Array.isArray(app.mapRotation?.game_modes)
+    ? app.mapRotation.game_modes
+    : [];
+  return modes.find((mode) => mode.id === $("#maprotation-mode").value) || null;
+}
+
+function updateMapRotationMapOptions() {
+  const mode = selectedMapRotationMode();
+  const select = $("#maprotation-map");
+  const previous = select.value;
+  select.replaceChildren();
+  for (const map of Array.isArray(mode?.maps) ? mode.maps : []) {
+    const option = document.createElement("option");
+    option.value = map.name;
+    option.textContent = `${map.name} · ${map.source}`;
+    select.append(option);
+  }
+  if ([...select.options].some((option) => option.value === previous)) {
+    select.value = previous;
+  }
+  $("#maprotation-add").disabled = !mode || !select.value ||
+    app.mapRotationSaving || app.mapRotationLoading;
+}
+
+function moveMapRotationEntry(from, to) {
+  const entries = app.mapRotation?.entries;
+  if (!Array.isArray(entries) || from < 0 || from >= entries.length ||
+      to < 0 || to >= entries.length || from === to) return;
+  const [entry] = entries.splice(from, 1);
+  entries.splice(to, 0, entry);
+  app.mapRotationDirty = true;
+  renderMapRotation();
+}
+
+function renderMapRotation() {
+  const view = app.mapRotation;
+  const list = $("#maprotation-list");
+  list.replaceChildren();
+  const entries = Array.isArray(view?.entries) ? view.entries : [];
+  const modes = Array.isArray(view?.game_modes) ? view.game_modes : [];
+  const modeSelect = $("#maprotation-mode");
+  const previousMode = modeSelect.value;
+  modeSelect.replaceChildren();
+  for (const mode of modes) {
+    const option = document.createElement("option");
+    option.value = mode.id;
+    option.textContent = `${mode.name} · ${mode.maps?.length || 0} maps`;
+    modeSelect.append(option);
+  }
+  if ([...modeSelect.options].some((option) => option.value === previousMode)) {
+    modeSelect.value = previousMode;
+  }
+  updateMapRotationMapOptions();
+
+  const stage = $("#maprotation-stage");
+  stage.textContent = app.mapRotationLoading
+    ? "Loading"
+    : app.mapRotationDirty
+      ? "Unsaved"
+      : view?.staged ? "Staged" : "Active";
+  stage.classList.toggle("staged", Boolean(view?.staged || app.mapRotationDirty));
+  $("#maprotation-save").disabled = !view || app.mapRotationSaving ||
+    app.mapRotationLoading || !app.mapRotationDirty;
+  $("#maprotation-refresh").disabled = app.mapRotationSaving ||
+    app.mapRotationLoading;
+
+  const unavailable = entries.filter((entry) => !entry.available).length;
+  const warnings = [];
+  if (view && view.section_enabled === false) {
+    warnings.push(
+      "The whole MordhauGameMode section is disabled. Every rotation entry remains inactive until that section is enabled in the raw INI editor.",
+    );
+  }
+  if (view?.catalog_error) warnings.push(`Installed-content catalog: ${view.catalog_error}`);
+  if (unavailable) {
+    warnings.push(
+      `${unavailable} rotation entr${unavailable === 1 ? "y is" : "ies are"} not present in the current installed-content catalog. They are preserved for review.`,
+    );
+  }
+  const warning = $("#maprotation-warning");
+  warning.classList.toggle("hidden", warnings.length === 0);
+  warning.textContent = warnings.join(" ");
+
+  if (!view || !entries.length) {
+    const empty = document.createElement("p");
+    empty.className = "hint";
+    empty.textContent = view
+      ? "The map rotation is empty. Add an installed map above."
+      : "Load the visual map rotation to begin.";
+    list.append(empty);
+    return;
+  }
+  entries.forEach((entry, index) => {
+    const row = document.createElement("div");
+    row.className = `maprotation-row${entry.enabled ? "" : " disabled"}${entry.available ? "" : " unavailable"}`;
+    row.draggable = true;
+    row.dataset.index = String(index);
+    const grip = document.createElement("span");
+    grip.className = "maprotation-grip";
+    grip.textContent = "⋮⋮";
+    grip.title = "Drag to reorder";
+    const enabled = document.createElement("input");
+    enabled.type = "checkbox";
+    enabled.checked = Boolean(entry.enabled);
+    enabled.disabled = view.section_enabled === false;
+    enabled.setAttribute("aria-label", `Enable ${entry.map}`);
+    enabled.addEventListener("change", () => {
+      entry.enabled = enabled.checked;
+      app.mapRotationDirty = true;
+      renderMapRotation();
+    });
+    const details = document.createElement("span");
+    details.className = "maprotation-details";
+    const name = document.createElement("strong");
+    name.textContent = entry.map;
+    const meta = document.createElement("small");
+    meta.textContent = entry.available
+      ? `${entry.mode_name || "Installed mode"} · ${entry.source || "Installed content"}`
+      : "Unavailable in installed-content catalog";
+    details.append(name, meta);
+    const controls = document.createElement("span");
+    controls.className = "maprotation-controls";
+    controls.append(
+      makeButton("↑", "ghost compact", () => moveMapRotationEntry(index, index - 1)),
+      makeButton("↓", "ghost compact", () => moveMapRotationEntry(index, index + 1)),
+      makeButton("Remove", "danger compact", () => {
+        entries.splice(index, 1);
+        app.mapRotationDirty = true;
+        renderMapRotation();
+      }),
+    );
+    controls.children[0].disabled = index === 0;
+    controls.children[1].disabled = index === entries.length - 1;
+    row.append(grip, enabled, details, controls);
+    row.addEventListener("dragstart", (event) => {
+      app.mapRotationDragIndex = index;
+      row.classList.add("dragging");
+      event.dataTransfer.effectAllowed = "move";
+      event.dataTransfer.setData("text/plain", String(index));
+    });
+    row.addEventListener("dragover", (event) => {
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "move";
+    });
+    row.addEventListener("drop", (event) => {
+      event.preventDefault();
+      moveMapRotationEntry(app.mapRotationDragIndex, index);
+    });
+    row.addEventListener("dragend", () => {
+      app.mapRotationDragIndex = -1;
+      row.classList.remove("dragging");
+    });
+    list.append(row);
+  });
+}
+
+async function loadMapRotation({ silent = false } = {}) {
+  if (app.mapRotationLoading || app.mapRotationSaving) return;
+  if (app.mapRotationDirty && !silent &&
+      !confirm("Discard unsaved map rotation changes and reload?")) return;
+  app.mapRotationLoading = true;
+  renderMapRotation();
+  try {
+    app.mapRotation = await api("/api/maprotation");
+    app.mapRotationDirty = false;
+  } catch (error) {
+    if (!silent) toast(error.message, true);
+  } finally {
+    app.mapRotationLoading = false;
+    renderMapRotation();
+  }
+}
+
+function addMapRotationEntry() {
+  const mode = selectedMapRotationMode();
+  const map = Array.isArray(mode?.maps)
+    ? mode.maps.find((entry) => entry.name === $("#maprotation-map").value)
+    : null;
+  if (!mode || !map || !app.mapRotation) return;
+  app.mapRotation.entries.push({
+    id: `new:${Date.now()}:${Math.random().toString(16).slice(2)}`,
+    map: map.name,
+    enabled: app.mapRotation.section_enabled !== false,
+    available: true,
+    mode_id: mode.id,
+    mode_name: mode.name,
+    source: map.source,
+  });
+  app.mapRotationDirty = true;
+  renderMapRotation();
+}
+
+async function saveMapRotation() {
+  if (!app.mapRotation || app.mapRotationSaving || !app.mapRotationDirty) return;
+  app.mapRotationSaving = true;
+  renderMapRotation();
+  try {
+    app.mapRotation = await api("/api/maprotation/save", {
+      method: "POST",
+      body: {
+        revision: app.mapRotation.revision,
+        entries: app.mapRotation.entries.map((entry) => ({
+          id: entry.id,
+          map: entry.map,
+          enabled: Boolean(entry.enabled),
+        })),
+      },
+    });
+    app.mapRotationDirty = false;
+    renderMapRotation();
+    await loadConfig();
+    toast(app.mapRotation.staged
+      ? "Map rotation saved for the next server start."
+      : "Map rotation saved.");
+  } catch (error) {
+    toast(error.message, true);
+  } finally {
+    app.mapRotationSaving = false;
+    renderMapRotation();
   }
 }
 
@@ -1702,6 +2535,10 @@ async function mutateConfig(mutation) {
       },
     });
     renderConfig();
+    if (app.config.file === "Game.ini" && app.mapRotation) {
+      app.mapRotationDirty = false;
+      await loadMapRotation({ silent: true });
+    }
     toast("Configuration saved.");
   } catch (error) {
     toast(error.message, true);
@@ -1882,8 +2719,17 @@ function formatBrowserDate(value) {
 
 function renderModRefresh(refresh) {
   const minutes = validModRefreshMinutes(refresh && refresh.interval_minutes) || 5;
+  const policy = ["countdown", "when_empty", "scheduled"].includes(
+    refresh && refresh.restart_policy,
+  ) ? refresh.restart_policy : "countdown";
+  const scheduledTime = /^\d{2}:\d{2}$/.test(refresh && refresh.scheduled_time)
+    ? refresh.scheduled_time
+    : "04:00";
   $("#mods-refresh-minutes").value = String(minutes);
   $("#mods-restart-on-update").checked = Boolean(refresh && refresh.restart_on_update);
+  $("#mods-restart-policy").value = policy;
+  $("#mods-restart-time").value = scheduledTime;
+  $("#mods-restart-time-field").classList.toggle("hidden", policy !== "scheduled");
 
   const status = $("#mods-refresh-status");
   const lastSuccess = formatBrowserDate(refresh && refresh.last_success_at);
@@ -1899,14 +2745,18 @@ function renderModRefresh(refresh) {
     parts.push(`${failed ? "Next retry" : "Next refresh"}: ${nextRefresh}`);
   }
   if (failed) parts.push(`Last attempt failed: ${refresh.last_error}`);
-  if (refresh && refresh.restart_scheduled && refresh.restart_at) {
-    const restartAt = formatBrowserDate(refresh.restart_at);
+  if (refresh && refresh.restart_scheduled) {
     const modIDs = Array.isArray(refresh.restart_mod_ids)
       ? refresh.restart_mod_ids.join(", ")
       : "";
-    parts.push(
-      `Update restart scheduled: ${restartAt || refresh.restart_at}${modIDs ? ` · mods ${modIDs}` : ""}`,
-    );
+    if (refresh.waiting_for_empty) {
+      parts.push(`Update restart waiting for an empty server${modIDs ? ` · mods ${modIDs}` : ""}`);
+    } else if (refresh.restart_at) {
+      const restartAt = formatBrowserDate(refresh.restart_at);
+      parts.push(
+        `Update restart scheduled: ${restartAt || refresh.restart_at}${modIDs ? ` · mods ${modIDs}` : ""}`,
+      );
+    }
   }
   status.textContent = parts.join(" · ");
   status.classList.toggle("error", failed);
@@ -1929,9 +2779,51 @@ function renderModIOSettings(settings) {
   const restart = $("#mods-restart-on-update");
   restart.disabled = !configured;
   if (!configured) restart.checked = false;
+  $("#mods-restart-policy").disabled = !configured;
+  $("#mods-restart-time").disabled = !configured;
+  const policy = $("#mods-restart-policy").value;
+  const descriptions = {
+    countdown: "Players receive a 10-minute countdown before a managed restart.",
+    when_empty: "The update waits until the runtime bridge confirms that no players remain.",
+    scheduled: "The restart occurs at the selected server-local time with a 10-minute countdown.",
+  };
   $("#mods-restart-on-update-hint").textContent = configured
-    ? "When an active mod publishes a new modfile, players receive a 10-minute countdown before a managed restart."
+    ? descriptions[policy] || descriptions.countdown
     : "Save a valid API key to enable this option. It is off by default.";
+}
+
+function renderModDependencyGraph(graph) {
+  const details = $("#mods-dependency-graph");
+  const list = $("#mods-dependency-graph-list");
+  list.replaceChildren();
+  const nodes = Array.isArray(graph) ? graph : [];
+  details.classList.toggle("hidden", nodes.length === 0);
+  if (!nodes.length) return;
+  for (const node of nodes) {
+    const row = document.createElement("div");
+    row.className = `dependency-graph-row${node.configured ? "" : " external"}`;
+    const identity = document.createElement("div");
+    const name = document.createElement("strong");
+    name.textContent = node.name || `Resource ID ${node.id}`;
+    const id = document.createElement("code");
+    id.textContent = `Mods=${node.id}`;
+    identity.append(name, id);
+    const relationships = document.createElement("small");
+    const requires = Array.isArray(node.requires) && node.requires.length
+      ? `requires ${node.requires.join(", ")}`
+      : "requires none";
+    const requiredBy = Array.isArray(node.required_by) && node.required_by.length
+      ? `required by ${node.required_by.join(", ")}`
+      : "not required by another configured mod";
+    relationships.textContent = `${requires} · ${requiredBy}`;
+    const state = document.createElement("span");
+    state.className = "dependency-status";
+    state.textContent = node.configured
+      ? node.enabled ? "enabled" : "disabled"
+      : "not configured";
+    row.append(identity, relationships, state);
+    list.append(row);
+  }
 }
 
 function appendConfiguredModDependencies(details, configured, configuredByID) {
@@ -2030,10 +2922,122 @@ function appendConfiguredModDependencies(details, configured, configuredByID) {
   details.append(section);
 }
 
+function closeModRemoval() {
+  app.modRemovalPlan = null;
+  const dialog = $("#mod-remove-dialog");
+  if (typeof dialog.close === "function" && dialog.open) dialog.close();
+  else dialog.removeAttribute("open");
+}
+
+async function openModRemoval(configured) {
+  try {
+    const plan = await api("/api/mods/remove/plan", {
+      method: "POST",
+      body: { id: configured.id },
+    });
+    app.modRemovalPlan = plan;
+    $("#mod-remove-title").textContent =
+      `Remove ${configured.metadata ? modDisplayName(configured.metadata) : `Mods=${configured.id}`}`;
+    const warning = $("#mod-remove-warning");
+    warning.textContent = plan.warning || "";
+    warning.classList.toggle("hidden", !plan.warning);
+
+    const candidates = $("#mod-remove-candidates");
+    candidates.replaceChildren();
+    const heading = document.createElement("p");
+    heading.className = "hint";
+    heading.textContent = "Selected Game.ini entries will be removed together:";
+    candidates.append(heading);
+    for (const candidate of Array.isArray(plan.candidates) ? plan.candidates : []) {
+      const label = document.createElement("label");
+      label.className = "mod-remove-candidate";
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.checked = true;
+      checkbox.disabled = Boolean(candidate.target);
+      checkbox.dataset.modId = String(candidate.id);
+      const copy = document.createElement("span");
+      const name = document.createElement("strong");
+      name.textContent = candidate.name || `Resource ID ${candidate.id}`;
+      const note = document.createElement("small");
+      note.textContent = candidate.target
+        ? `Mods=${candidate.id} · selected mod (required)`
+        : `Mods=${candidate.id} · no other configured mod currently requires it`;
+      copy.append(name, note);
+      label.append(checkbox, copy);
+      candidates.append(label);
+    }
+
+    const retained = $("#mod-remove-retained");
+    retained.replaceChildren();
+    const retainedItems = Array.isArray(plan.retained_dependencies)
+      ? plan.retained_dependencies
+      : [];
+    retained.classList.toggle("hidden", retainedItems.length === 0);
+    if (retainedItems.length) {
+      const title = document.createElement("strong");
+      title.textContent = "Shared dependencies retained";
+      retained.append(title);
+      for (const item of retainedItems) {
+        const line = document.createElement("small");
+        const requiredBy = Array.isArray(item.required_by)
+          ? item.required_by.map((id) => `Mods=${id}`).join(", ")
+          : "";
+        line.textContent =
+          `${item.name || `Resource ID ${item.id}`} (Mods=${item.id}) · required by ${requiredBy}`;
+        retained.append(line);
+      }
+    }
+    const dialog = $("#mod-remove-dialog");
+    if (typeof dialog.showModal === "function") dialog.showModal();
+    else dialog.setAttribute("open", "");
+  } catch (error) {
+    toast(error.message, true);
+  }
+}
+
+async function submitModRemoval(event) {
+  event.preventDefault();
+  const plan = app.modRemovalPlan;
+  if (!plan) return;
+  const removeIDs = $$("#mod-remove-candidates input[data-mod-id]")
+    .filter((input) => input.checked)
+    .map((input) => Number(input.dataset.modId))
+    .filter((id) => Number.isSafeInteger(id) && id > 0);
+  if (!confirm(`Remove ${removeIDs.length} selected Mods= entr${removeIDs.length === 1 ? "y" : "ies"}?`)) {
+    return;
+  }
+  const button = $("#mod-remove-confirm");
+  button.disabled = true;
+  try {
+    const result = await api("/api/mods/remove", {
+      method: "POST",
+      body: {
+        id: plan.target_id,
+        remove_ids: removeIDs,
+        revision: plan.revision,
+      },
+    });
+    closeModRemoval();
+    const count = Array.isArray(result.removed) ? result.removed.length : removeIDs.length;
+    toast(`${count} mod entr${count === 1 ? "y" : "ies"} removed${result.staged ? " from staged Game.ini" : ""}.`);
+    await Promise.all([loadMods(), loadConfig()]);
+  } catch (error) {
+    if (error.status === 409) {
+      closeModRemoval();
+      await loadMods();
+    }
+    toast(error.message, true);
+  } finally {
+    button.disabled = false;
+  }
+}
+
 function renderConfiguredMods(data) {
   if (Number.isSafeInteger(data.revision)) app.modRevision = data.revision;
   renderModRefresh(data.refresh || {});
   renderModIOSettings(data.settings || {});
+  renderModDependencyGraph(data.dependency_graph);
   const stage = $("#mods-config-stage");
   stage.textContent = data.config_staged ? "Staged" : "Active";
   stage.classList.toggle("staged", Boolean(data.config_staged));
@@ -2090,11 +3094,21 @@ function renderConfiguredMods(data) {
     const meta = document.createElement("div");
     meta.className = "mod-meta";
     const fields = [];
-    if (metadata && metadata.modfile && metadata.modfile.version) {
-      fields.push(`version ${metadata.modfile.version}`);
+    if (metadata && metadata.modfile) {
+      fields.push(`modfile ${metadata.modfile.id}`);
+      if (metadata.modfile.version) fields.push(`version ${metadata.modfile.version}`);
+      if (Number.isFinite(metadata.modfile.filesize) && metadata.modfile.filesize >= 0) {
+        fields.push(bytes(metadata.modfile.filesize));
+      }
+      const fileDate = metadata.modfile.date_added || metadata.modfile.date_updated;
+      if (fileDate) {
+        fields.push(`file published ${formatModDate(fileDate)}`);
+      }
     }
-    if (metadata && metadata.date_updated) {
-      fields.push(`updated ${formatModDate(metadata.date_updated)}`);
+    if (metadata && metadata.date_updated &&
+        (!metadata.modfile ||
+          metadata.date_updated !== (metadata.modfile.date_added || metadata.modfile.date_updated))) {
+      fields.push(`page updated ${formatModDate(metadata.date_updated)}`);
     }
     if (configured.occurrences > 1) fields.push(`${configured.occurrences} entries`);
     fields.push(configured.enabled ? "enabled" : "disabled");
@@ -2129,19 +3143,7 @@ function renderConfiguredMods(data) {
         }
       },
     );
-    const remove = makeButton("Remove", "danger compact", async () => {
-      if (!confirm(`Remove every Mods=${configured.id} entry? Shared dependencies are not removed automatically.`)) return;
-      try {
-        const result = await api("/api/mods/remove", {
-          method: "POST",
-          body: { id: configured.id },
-        });
-        toast(`Mods=${configured.id} removed${result.staged ? " from staged Game.ini" : ""}.`);
-        await Promise.all([loadMods(), loadConfig()]);
-      } catch (error) {
-        toast(error.message, true);
-      }
-    });
+    const remove = makeButton("Remove", "danger compact", () => openModRemoval(configured));
     row.append(details, link, toggle, remove);
     list.append(row);
   }
@@ -2703,6 +3705,7 @@ function renderAccessRules(rules) {
 function bindEvents() {
   $("#theme-toggle").addEventListener("click", () => {
     setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
+    if (app.metricsHistory) requestAnimationFrame(renderMetricsHistory);
   });
   $$(".tab").forEach((tab) => tab.addEventListener("click", () => {
     $$(".tab").forEach((item) => item.classList.toggle("active", item === tab));
@@ -2712,13 +3715,37 @@ function bindEvents() {
         if (app.runtimeSelectedID) loadRuntimeTarget({ silent: true });
       });
     }
+    if (tab.dataset.panel === "monitoring") {
+      loadMonitoring({ silent: true });
+      searchMonitoringLogs();
+    }
     if (tab.dataset.panel === "players") {
       loadPlayers({ silent: true });
+    }
+    if (tab.dataset.panel === "configuration") {
+      loadMapRotation({ silent: true });
     }
     if (tab.dataset.panel === "custompaks") {
       loadCustomPaks({ silent: true });
     }
   }));
+  $("#players-metric").addEventListener("click", openConnectedPlayers);
+  $("#players-metric").addEventListener("keydown", (event) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      openConnectedPlayers();
+    }
+  });
+  $("#connected-players-close").addEventListener("click", closeConnectedPlayers);
+  $("#metrics-range").addEventListener("change", loadMetricsHistory);
+  $("#metrics-refresh").addEventListener("click", loadMetricsHistory);
+  $("#recovery-settings-form").addEventListener("submit", saveRecoverySettings);
+  $("#recovery-retry").addEventListener("click", retryRecoveryNow);
+  $("#monitoring-settings-form").addEventListener("submit", saveMonitoringSettings);
+  $("#monitor-webhook-test").addEventListener("click", testMonitoringWebhook);
+  $("#monitor-webhook-clear").addEventListener("click", clearMonitoringWebhook);
+  $("#logs-search-form").addEventListener("submit", searchMonitoringLogs);
+  $("#logs-export").addEventListener("click", exportMonitoringLogs);
   $$("[data-server-action]").forEach((button) =>
     button.addEventListener("click", () => serverAction(button.dataset.serverAction)));
   $("#change-map-open").addEventListener("click", openMapChangeDialog);
@@ -2767,7 +3794,13 @@ function bindEvents() {
     setPlayerRestriction("mute", event.target.checked));
   $("#player-ban-toggle").addEventListener("change", (event) =>
     setPlayerRestriction("ban", event.target.checked));
+  $("#player-action-kind").addEventListener("change", updatePlayerActionForm);
+  $("#player-action-form").addEventListener("submit", submitPlayerAction);
   $("#player-comment-form").addEventListener("submit", submitPlayerComment);
+  $("#maprotation-mode").addEventListener("change", updateMapRotationMapOptions);
+  $("#maprotation-add").addEventListener("click", addMapRotationEntry);
+  $("#maprotation-refresh").addEventListener("click", () => loadMapRotation());
+  $("#maprotation-save").addEventListener("click", saveMapRotation);
 
   $("#language-select").addEventListener("change", async (event) => {
     try {
@@ -3018,6 +4051,44 @@ function bindEvents() {
       toast(error.message, true);
     }
   });
+  $("#mods-restart-policy").addEventListener("change", async (event) => {
+    const policy = event.target.value;
+    event.target.disabled = true;
+    try {
+      const body = { restart_policy: policy };
+      if (policy === "scheduled") body.scheduled_time = $("#mods-restart-time").value;
+      const data = await api("/api/mods/refresh/settings", {
+        method: "POST",
+        body,
+      });
+      renderConfiguredMods(data);
+      toast("Mod update restart policy saved.");
+    } catch (error) {
+      await loadMods();
+      toast(error.message, true);
+    }
+  });
+  $("#mods-restart-time").addEventListener("change", async (event) => {
+    const scheduledTime = event.target.value;
+    event.target.disabled = true;
+    try {
+      const data = await api("/api/mods/refresh/settings", {
+        method: "POST",
+        body: {
+          restart_policy: "scheduled",
+          scheduled_time: scheduledTime,
+        },
+      });
+      renderConfiguredMods(data);
+      toast(`Scheduled mod restart time set to ${scheduledTime} server time.`);
+    } catch (error) {
+      await loadMods();
+      toast(error.message, true);
+    }
+  });
+  $("#mod-remove-form").addEventListener("submit", submitModRemoval);
+  $("#mod-remove-close").addEventListener("click", closeModRemoval);
+  $("#mod-remove-cancel").addEventListener("click", closeModRemoval);
   $("#custompak-refresh").addEventListener("click", () => loadCustomPaks());
   $("#custompak-browse").addEventListener("click", () => {
     $("#custompak-file").click();
@@ -3064,6 +4135,12 @@ async function initialize() {
   initializeTheme();
   clearLegacyModRefreshPreference();
   bindEvents();
+  updatePlayerActionForm();
+  window.addEventListener("resize", () => {
+    if (app.metricsHistory && $("#panel-monitoring").classList.contains("active")) {
+      requestAnimationFrame(renderMetricsHistory);
+    }
+  });
   updateServerPromptMode();
   try {
     const me = await api("/api/me");

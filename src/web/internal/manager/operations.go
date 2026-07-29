@@ -19,14 +19,14 @@ func (m *Manager) requestOperation(action, username, clientIP, peerIP string) er
 
 func (m *Manager) startOperation(action, username, clientIP, peerIP string) error {
 	switch action {
-	case "start", "stop", "restart", "update":
+	case "start", "stop", "restart", "update", "recover":
 	default:
 		return errors.New("unsupported server action")
 	}
 	if action == "update" && serverRunning() {
 		return errors.New("the server must be stopped before an update")
 	}
-	if action == "start" && serverRunning() {
+	if (action == "start" || action == "recover") && serverRunning() {
 		return errors.New("the server is already running")
 	}
 

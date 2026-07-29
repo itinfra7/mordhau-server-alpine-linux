@@ -73,6 +73,12 @@ grep -Fq \
     '"PlatformAccountID"' \
     "$PROJECT_ROOT/src/runtime-bridge/runtime_bridge.c"
 grep -Fq \
+    'find_property(player_state, "ExactPing")' \
+    "$PROJECT_ROOT/src/runtime-bridge/runtime_bridge.c"
+grep -Fq \
+    'strcmp(platform, "EpicGames") == 0' \
+    "$PROJECT_ROOT/src/runtime-bridge/runtime_bridge.c"
+grep -Fq \
     'steam_id64_is_valid(platform_account_id)' \
     "$PROJECT_ROOT/src/runtime-bridge/runtime_bridge.c"
 grep -Fq \

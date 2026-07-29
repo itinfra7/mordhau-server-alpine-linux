@@ -5,9 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="light dark">
   <title>MORDHAU Control</title>
-  <script src="/static/theme.js?v=2.2.2"></script>
-  <link rel="stylesheet" href="/static/app.css?v=2.2.2">
-  <script src="/static/app.js?v=2.2.2" defer></script>
+  <script src="/static/theme.js?v=2.3.0"></script>
+  <link rel="stylesheet" href="/static/app.css?v=2.3.0">
+  <script src="/static/app.js?v=2.3.0" defer></script>
 </head>
 <body id="page-top">
   <div class="ambient ambient-one"></div>
@@ -43,6 +43,7 @@
   <main class="app-shell">
     <nav class="tabbar" aria-label="Manager sections">
       <button class="tab active" data-panel="dashboard">Dashboard</button>
+      <button class="tab" data-panel="monitoring">Monitoring</button>
       <button class="tab" data-panel="runtime">Runtime</button>
       <button class="tab" data-panel="players">Players</button>
       <button class="tab" data-panel="configuration">Configuration</button>
@@ -74,7 +75,9 @@
           <div class="meter cyan"><span id="disk-meter"></span></div>
           <p id="disk-detail">—</p>
         </article>
-        <article class="metric-card player-metric-card">
+        <article id="players-metric" class="metric-card player-metric-card"
+                 role="button" tabindex="-1" aria-disabled="true"
+                 aria-label="Show connected players">
           <div class="metric-head"><span>Players</span><strong id="players-value">—</strong></div>
           <div class="player-count-visual" aria-hidden="true">
             <span class="player-count-dot"></span>
@@ -237,6 +240,165 @@
       </div>
     </section>
 
+    <section id="panel-monitoring" class="panel">
+      <div class="monitoring-grid">
+        <article class="card monitoring-metrics-card">
+          <div class="card-heading wrap">
+            <div>
+              <p class="eyebrow">SERVER-SAMPLED · ONE MINUTE</p>
+              <h2>Resource history</h2>
+            </div>
+            <div class="control-row tight">
+              <select id="metrics-range" aria-label="Metrics time range">
+                <option value="24h">Last 24 hours</option>
+                <option value="7d">Last 7 days</option>
+              </select>
+              <button id="metrics-refresh" class="ghost compact" type="button">
+                Refresh
+              </button>
+            </div>
+          </div>
+          <p class="hint">
+            The server samples once per minute; opening more browser sessions does not
+            create additional operating-system requests.
+          </p>
+          <div class="chart-block">
+            <div class="chart-legend">
+              <span class="cpu">CPU</span><span class="memory">Memory</span>
+              <span class="swap">Swap</span><span class="disk">Disk</span>
+            </div>
+            <canvas id="resource-history-chart" height="240"
+                    aria-label="CPU, memory, swap, and disk usage history"></canvas>
+          </div>
+          <div class="chart-block">
+            <div class="chart-legend"><span class="players">Connected players</span></div>
+            <canvas id="player-history-chart" height="140"
+                    aria-label="Connected player count history"></canvas>
+          </div>
+          <p id="metrics-history-status" class="hint">History not loaded.</p>
+        </article>
+
+        <article class="card recovery-card">
+          <div class="card-heading wrap">
+            <div>
+              <p class="eyebrow">PROCESS WATCHDOG</p>
+              <h2>Crash recovery</h2>
+            </div>
+            <span id="recovery-state" class="connection-pill">Loading</span>
+          </div>
+          <form id="recovery-settings-form" class="monitoring-settings-form">
+            <label class="checkbox-row">
+              <input id="recovery-enabled" type="checkbox">
+              <span>Automatically recover an unexpected server exit</span>
+            </label>
+            <label>
+              <span>Maximum attempts</span>
+              <input id="recovery-attempts" type="number" min="1" max="10"
+                     step="1" required>
+            </label>
+            <label>
+              <span>Retry window · minutes</span>
+              <input id="recovery-window" type="number" min="5" max="1440"
+                     step="1" required>
+            </label>
+            <div class="control-row">
+              <button class="primary" type="submit">Save recovery policy</button>
+              <button id="recovery-retry" class="secondary" type="button">
+                Reset limit and retry now
+              </button>
+            </div>
+          </form>
+          <div id="recovery-diagnostic" class="recovery-diagnostic">
+            No crash diagnostic has been recorded.
+          </div>
+        </article>
+
+        <article class="card monitoring-log-card">
+          <div class="card-heading wrap">
+            <div>
+              <p class="eyebrow">AUDIT · SERVER EVENTS</p>
+              <h2>Search retained logs</h2>
+            </div>
+            <button id="logs-export" class="ghost compact" type="button">
+              Export JSONL
+            </button>
+          </div>
+          <form id="logs-search-form" class="log-search-form">
+            <select id="logs-source" aria-label="Log source">
+              <option value="all">All logs</option>
+              <option value="audit">Audit log</option>
+              <option value="events">Server events</option>
+            </select>
+            <input id="logs-query" type="search" placeholder="Search text or details"
+                   autocomplete="off">
+            <input id="logs-account" type="search" placeholder="Account"
+                   autocomplete="off">
+            <input id="logs-kind" type="search" placeholder="Event or kind"
+                   autocomplete="off">
+            <button class="secondary" type="submit">Search</button>
+          </form>
+          <div id="monitoring-log-results" class="monitoring-log-results"></div>
+        </article>
+
+        <article class="card monitoring-policy-card">
+          <div class="card-heading">
+            <div>
+              <p class="eyebrow">RETENTION · OPTIONAL ALERTS</p>
+              <h2>Monitoring policy</h2>
+            </div>
+          </div>
+          <form id="monitoring-settings-form" class="monitoring-settings-form">
+            <div class="monitoring-field-grid">
+              <label>
+                <span>Managed log size · MiB</span>
+                <input id="monitor-log-size" type="number" min="1" max="1024"
+                       step="1" required>
+              </label>
+              <label>
+                <span>Rotated copies</span>
+                <input id="monitor-log-backups" type="number" min="0" max="30"
+                       step="1" required>
+              </label>
+              <label>
+                <span>Game log archive retention · days</span>
+                <input id="monitor-game-retention" type="number" min="0" max="3650"
+                       step="1" required>
+              </label>
+              <label>
+                <span>Disk alert threshold · percent</span>
+                <input id="monitor-disk-threshold" type="number" min="50" max="100"
+                       step="1" required>
+              </label>
+            </div>
+            <label>
+              <span>HTTPS webhook URL</span>
+              <input id="monitor-webhook-url" type="password" maxlength="2048"
+                     placeholder="Leave blank to retain the stored URL"
+                     autocomplete="new-password">
+            </label>
+            <div class="monitoring-alert-grid">
+              <label><input id="alert-crash" type="checkbox"> Unexpected server exit</label>
+              <label><input id="alert-exhausted" type="checkbox"> Recovery retry limit</label>
+              <label><input id="alert-disk" type="checkbox"> Disk threshold</label>
+              <label><input id="alert-mod-refresh" type="checkbox"> mod.io refresh failure</label>
+            </div>
+            <div class="control-row">
+              <button class="primary" type="submit">Save monitoring policy</button>
+              <button id="monitor-webhook-test" class="secondary" type="button">
+                Send test
+              </button>
+              <button id="monitor-webhook-clear" class="danger" type="button">
+                Clear webhook
+              </button>
+            </div>
+          </form>
+          <p id="monitoring-webhook-status" class="hint">
+            Webhook state not loaded.
+          </p>
+        </article>
+      </div>
+    </section>
+
     <section id="panel-runtime" class="panel">
       <div class="runtime-layout">
         <aside class="card runtime-target-card">
@@ -359,6 +521,7 @@
                 <code id="player-profile-id">—</code>
               </div>
               <div class="player-profile-badges">
+                <span id="player-profile-platform" class="player-state-badge">Unknown platform</span>
                 <span id="player-profile-online" class="player-state-badge">Offline</span>
                 <span id="player-profile-muted" class="player-state-badge">Not muted</span>
                 <span id="player-profile-banned" class="player-state-badge">Not banned</span>
@@ -415,17 +578,54 @@
                   <input id="player-mute-toggle" type="checkbox">
                   <span>
                     <strong>Muted</strong>
-                    <small>Permanent until explicitly unmuted</small>
+                    <small id="player-mute-expiry">Permanent until explicitly unmuted</small>
                   </span>
                 </label>
                 <label class="player-moderation-toggle danger-toggle">
                   <input id="player-ban-toggle" type="checkbox">
                   <span>
                     <strong>Banned</strong>
-                    <small>Permanent until explicitly unbanned</small>
+                    <small id="player-ban-expiry">Permanent until explicitly unbanned</small>
                   </span>
                 </label>
               </div>
+              <div class="player-moderation-options">
+                <label>
+                  <span>Duration in minutes</span>
+                  <input id="player-restriction-duration" type="number"
+                         min="0" max="525600" step="1" value="0"
+                         inputmode="numeric">
+                  <small>0 keeps the restriction until an administrator removes it.</small>
+                </label>
+                <label>
+                  <span>Reason</span>
+                  <input id="player-restriction-reason" type="text"
+                         maxlength="160" value="WebControl"
+                         autocomplete="off" spellcheck="false">
+                  <small>Printable ASCII; stored in audit history and used by bans.</small>
+                </label>
+              </div>
+              <form id="player-action-form" class="player-action-form">
+                <label>
+                  <span>Immediate action</span>
+                  <select id="player-action-kind">
+                    <option value="warn">Send administrator warning</option>
+                    <option value="kick">Kick from server</option>
+                  </select>
+                </label>
+                <label class="player-action-value-label">
+                  <span id="player-action-value-title">Warning message</span>
+                  <input id="player-action-value" type="text" maxlength="512"
+                         placeholder="Message shown to players" required>
+                </label>
+                <button id="player-action-submit" class="secondary" type="submit">
+                  Send warning
+                </button>
+              </form>
+              <p class="hint">
+                Administrator warnings are clearly addressed broadcasts so Unicode remains intact.
+                Kick reasons use the game server's ASCII command channel.
+              </p>
             </section>
 
             <div class="player-identity-grid">
@@ -448,6 +648,17 @@
                 <div id="player-addresses" class="player-known-values"></div>
               </section>
             </div>
+
+            <section class="player-profile-section">
+              <div class="player-section-heading">
+                <div>
+                  <p class="eyebrow">SESSION TIMELINE</p>
+                  <h3>Recent connections</h3>
+                </div>
+                <span id="player-session-count" class="stage-pill">0 sessions</span>
+              </div>
+              <div id="player-sessions" class="player-sessions"></div>
+            </section>
 
             <section class="player-profile-section player-comments-section">
               <div class="player-section-heading">
@@ -477,6 +688,44 @@
     </section>
 
     <section id="panel-configuration" class="panel">
+      <article class="card maprotation-card">
+        <div class="card-heading wrap">
+          <div>
+            <p class="eyebrow">GAME.INI · MAPROTATION</p>
+            <h2>Visual map rotation</h2>
+          </div>
+          <div class="control-row tight">
+            <span id="maprotation-stage" class="stage-pill">Loading</span>
+            <button id="maprotation-refresh" class="ghost compact" type="button">
+              Refresh
+            </button>
+            <button id="maprotation-save" class="primary compact" type="button">
+              Save rotation
+            </button>
+          </div>
+        </div>
+        <p class="hint">
+          Maps are discovered from installed MORDHAU, enabled mod.io, and active
+          CustomPak content. Drag entries or use the arrow controls to reorder them.
+          Unavailable entries remain visible and are never removed automatically.
+        </p>
+        <div id="maprotation-warning" class="policy-note hidden"></div>
+        <div class="maprotation-add">
+          <label>
+            <span>Game mode</span>
+            <select id="maprotation-mode"></select>
+          </label>
+          <label>
+            <span>Installed map</span>
+            <select id="maprotation-map"></select>
+          </label>
+          <button id="maprotation-add" class="secondary" type="button">
+            Add map
+          </button>
+        </div>
+        <div id="maprotation-list" class="maprotation-list"></div>
+      </article>
+
       <article class="card">
         <div class="card-heading wrap">
           <div>
@@ -539,6 +788,20 @@
             <input id="mods-restart-on-update" type="checkbox" disabled>
             <span>Server auto-restart on mod update</span>
           </label>
+          <div id="mods-restart-policy-fields" class="mod-restart-policy-fields">
+            <label>
+              <span>Restart policy</span>
+              <select id="mods-restart-policy" disabled>
+                <option value="countdown">10-minute countdown</option>
+                <option value="when_empty">When the server is empty</option>
+                <option value="scheduled">Scheduled server time</option>
+              </select>
+            </label>
+            <label id="mods-restart-time-field" class="hidden">
+              <span>Daily time</span>
+              <input id="mods-restart-time" type="time" value="04:00" step="60" disabled>
+            </label>
+          </div>
           <p id="mods-restart-on-update-hint" class="hint">
             Save a valid API key to enable this option. It is off by default.
           </p>
@@ -593,11 +856,15 @@
           </div>
           <div id="mods-api-error" class="policy-note hidden"></div>
           <p id="mods-invalid-warning" class="hint hidden"></p>
+          <details id="mods-dependency-graph" class="mod-dependency-graph">
+            <summary>Dependency graph</summary>
+            <div id="mods-dependency-graph-list" class="dependency-graph-list"></div>
+          </details>
           <div id="configured-mods" class="mod-list"></div>
           <p class="hint">
             Disable keeps an entry visible but prevents it from being applied at the next start.
-            Remove deletes only that Resource ID; dependencies are not removed automatically because
-            another configured mod may share them.
+            Remove opens a dependency-aware preview. Shared or unverified dependencies are retained,
+            and every selected entry is removed from Game.ini atomically.
           </p>
         </article>
       </div>
@@ -776,6 +1043,22 @@
     </form>
   </dialog>
 
+  <dialog id="connected-players-dialog" class="connected-players-dialog">
+    <div class="card-heading">
+      <div>
+        <p class="eyebrow">LIVE RUNTIME</p>
+        <h2>Connected players</h2>
+      </div>
+      <button id="connected-players-close" class="ghost compact" type="button">
+        Close
+      </button>
+    </div>
+    <p class="hint">
+      Live PlayerController identities sampled once by the server and shared with every dashboard.
+    </p>
+    <div id="connected-players-list" class="connected-players-list"></div>
+  </dialog>
+
   <dialog id="runtime-edit-dialog" class="runtime-edit-dialog">
     <form id="runtime-edit-form">
       <div class="card-heading">
@@ -801,6 +1084,27 @@
       <div class="control-row runtime-edit-actions">
         <button id="runtime-edit-save" class="primary" type="submit">Apply now</button>
         <button id="runtime-edit-cancel" class="ghost" type="button">Cancel</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="mod-remove-dialog" class="mod-remove-dialog">
+    <form id="mod-remove-form">
+      <div class="card-heading">
+        <div>
+          <p class="eyebrow">DEPENDENCY-AWARE REMOVAL</p>
+          <h2 id="mod-remove-title">Remove configured mod</h2>
+        </div>
+        <button id="mod-remove-close" class="ghost compact" type="button">Close</button>
+      </div>
+      <p id="mod-remove-warning" class="policy-note hidden"></p>
+      <div id="mod-remove-candidates" class="mod-remove-candidates"></div>
+      <div id="mod-remove-retained" class="mod-remove-retained hidden"></div>
+      <div class="control-row mod-remove-actions">
+        <button id="mod-remove-confirm" class="danger" type="submit">
+          Remove selected entries
+        </button>
+        <button id="mod-remove-cancel" class="ghost" type="button">Cancel</button>
       </div>
     </form>
   </dialog>

@@ -355,12 +355,22 @@ func TestServerLauncherAppliesCustomPaksImmediatelyBeforeLaunch(t *testing.T) {
 		t.Fatal(err)
 	}
 	script := string(data)
-	sequence := "        update_server\n" +
+	prepareSequence := "        update_server\n" +
 		"        apply_pending_config\n" +
-		"        apply_pending_custompaks\n" +
-		"        launch_server"
-	if count := strings.Count(script, sequence); count != 2 {
-		t.Fatalf("next-launch CustomPaks sequence count = %d, want start and restart", count)
+		"        apply_pending_custompaks"
+	if count := strings.Count(script, prepareSequence); count != 2 {
+		t.Fatalf("next-launch CustomPaks preparation count = %d, want start and restart", count)
+	}
+	if count := strings.Count(script, "        launch_server\n"); count != 2 {
+		t.Fatalf("direct launch count = %d, want restart and recovery", count)
+	}
+	if !strings.Contains(
+		script,
+		"        apply_pending_custompaks\n"+
+			"        write_desired_state running\n"+
+			"        if ! launch_server; then",
+	) {
+		t.Fatal("start does not arm recovery immediately before launch")
 	}
 	for _, expected := range []string{
 		`"$WEB_MANAGER" --apply-custompaks`,

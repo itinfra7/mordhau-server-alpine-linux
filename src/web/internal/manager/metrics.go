@@ -123,7 +123,6 @@ func (m *Manager) sampleMetrics() {
 	disk, diskErr := readDiskUsage(rootDir)
 
 	m.metricsMu.Lock()
-	defer m.metricsMu.Unlock()
 	if cpuErr == nil && m.cpu.valid && currentCPU.total > m.cpu.total {
 		totalDelta := currentCPU.total - m.cpu.total
 		idleDelta := currentCPU.idle - m.cpu.idle
@@ -144,6 +143,9 @@ func (m *Manager) sampleMetrics() {
 		m.metrics.Disk = disk
 	}
 	m.metrics.SampledAt = time.Now()
+	metrics := m.metrics
+	m.metricsMu.Unlock()
+	m.appendMetricHistory(metrics)
 }
 
 func (m *Manager) metricsLoop(ctx context.Context) {
@@ -241,6 +243,8 @@ func (m *Manager) snapshot() Snapshot {
 		ModRevision:          m.currentModRevision(),
 		PlayerRevision:       m.currentPlayerRevision(),
 		RuntimeBridge:        runtime,
+		ConnectedPlayers:     m.connectedPlayersView(),
+		Recovery:             m.recoveryView(),
 		GeneratedAt:          time.Now(),
 	}
 }

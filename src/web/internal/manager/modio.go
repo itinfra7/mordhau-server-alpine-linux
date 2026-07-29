@@ -60,6 +60,7 @@ type modIOGame struct {
 type ModIOFile struct {
 	ID          int    `json:"id"`
 	Version     string `json:"version"`
+	DateAdded   int64  `json:"date_added"`
 	DateUpdated int64  `json:"date_updated"`
 	Filesize    int64  `json:"filesize"`
 }
@@ -105,15 +106,25 @@ type ConfiguredMod struct {
 	UnresolvedDependencies []int       `json:"unresolved_dependencies"`
 }
 
+type ModDependencyGraphNode struct {
+	ID         int    `json:"id"`
+	Name       string `json:"name"`
+	Configured bool   `json:"configured"`
+	Enabled    bool   `json:"enabled"`
+	Requires   []int  `json:"requires"`
+	RequiredBy []int  `json:"required_by"`
+}
+
 type ModManagementView struct {
-	Settings       ModIOSettingsView `json:"settings"`
-	Mods           []ConfiguredMod   `json:"mods"`
-	InvalidEntries int               `json:"invalid_entries"`
-	ConfigStaged   bool              `json:"config_staged"`
-	ServerRunning  bool              `json:"server_running"`
-	APIError       string            `json:"api_error,omitempty"`
-	Refresh        ModRefreshView    `json:"refresh"`
-	Revision       uint64            `json:"revision"`
+	Settings        ModIOSettingsView        `json:"settings"`
+	Mods            []ConfiguredMod          `json:"mods"`
+	DependencyGraph []ModDependencyGraphNode `json:"dependency_graph"`
+	InvalidEntries  int                      `json:"invalid_entries"`
+	ConfigStaged    bool                     `json:"config_staged"`
+	ServerRunning   bool                     `json:"server_running"`
+	APIError        string                   `json:"api_error,omitempty"`
+	Refresh         ModRefreshView           `json:"refresh"`
+	Revision        uint64                   `json:"revision"`
 }
 
 type ModConfigChange struct {
@@ -121,6 +132,23 @@ type ModConfigChange struct {
 	Staged    bool  `json:"staged"`
 	Added     []int `json:"added"`
 	Reenabled []int `json:"reenabled"`
+	Removed   []int `json:"removed"`
+}
+
+type ModRemovalCandidate struct {
+	ID         int    `json:"id"`
+	Name       string `json:"name"`
+	Target     bool   `json:"target"`
+	RequiredBy []int  `json:"required_by"`
+}
+
+type ModRemovalPlan struct {
+	Revision             uint64                `json:"revision"`
+	TargetID             int                   `json:"target_id"`
+	Candidates           []ModRemovalCandidate `json:"candidates"`
+	RetainedDependencies []ModRemovalCandidate `json:"retained_dependencies"`
+	DependenciesChecked  bool                  `json:"dependencies_checked"`
+	Warning              string                `json:"warning,omitempty"`
 }
 
 func normalizeModIOAPIBase(value string) (string, error) {
@@ -724,6 +752,156 @@ func markUnresolvedModDependencies(configured []ConfiguredMod) {
 	}
 }
 
+func modItemName(id int, configuredByID map[int]ConfiguredMod) string {
+	if configured, found := configuredByID[id]; found &&
+		configured.Metadata != nil &&
+		strings.TrimSpace(configured.Metadata.Name) != "" {
+		return configured.Metadata.Name
+	}
+	return fmt.Sprintf("Resource ID %d", id)
+}
+
+func buildModDependencyGraph(configured []ConfiguredMod) []ModDependencyGraphNode {
+	configuredByID := make(map[int]ConfiguredMod, len(configured))
+	nodes := make(map[int]*ModDependencyGraphNode, len(configured))
+	for _, item := range configured {
+		configuredByID[item.ID] = item
+		nodes[item.ID] = &ModDependencyGraphNode{
+			ID:         item.ID,
+			Name:       modItemName(item.ID, map[int]ConfiguredMod{item.ID: item}),
+			Configured: true,
+			Enabled:    item.Enabled,
+			Requires:   []int{},
+			RequiredBy: []int{},
+		}
+	}
+	for _, item := range configured {
+		source := nodes[item.ID]
+		if !item.DependenciesChecked {
+			continue
+		}
+		seen := make(map[int]bool)
+		for _, dependency := range item.Dependencies {
+			if dependency.ID < 1 || dependency.ID == item.ID || seen[dependency.ID] {
+				continue
+			}
+			seen[dependency.ID] = true
+			source.Requires = append(source.Requires, dependency.ID)
+			node := nodes[dependency.ID]
+			if node == nil {
+				name := strings.TrimSpace(dependency.Name)
+				if name == "" {
+					name = fmt.Sprintf("Resource ID %d", dependency.ID)
+				}
+				node = &ModDependencyGraphNode{
+					ID:         dependency.ID,
+					Name:       name,
+					Requires:   []int{},
+					RequiredBy: []int{},
+				}
+				nodes[dependency.ID] = node
+			}
+			node.RequiredBy = append(node.RequiredBy, item.ID)
+		}
+	}
+	result := make([]ModDependencyGraphNode, 0, len(nodes))
+	for _, node := range nodes {
+		sort.Ints(node.Requires)
+		sort.Ints(node.RequiredBy)
+		result = append(result, *node)
+	}
+	sort.Slice(result, func(left, right int) bool {
+		if result[left].Configured != result[right].Configured {
+			return result[left].Configured
+		}
+		return result[left].ID < result[right].ID
+	})
+	return result
+}
+
+func dependencyIDs(item ConfiguredMod) map[int]bool {
+	result := make(map[int]bool, len(item.Dependencies))
+	if !item.DependenciesChecked {
+		return result
+	}
+	for _, dependency := range item.Dependencies {
+		if dependency.ID > 0 && dependency.ID != item.ID {
+			result[dependency.ID] = true
+		}
+	}
+	return result
+}
+
+func buildModRemovalPlan(view ModManagementView, targetID int) (ModRemovalPlan, error) {
+	configuredByID := make(map[int]ConfiguredMod, len(view.Mods))
+	for _, item := range view.Mods {
+		configuredByID[item.ID] = item
+	}
+	target, found := configuredByID[targetID]
+	if !found {
+		return ModRemovalPlan{}, errors.New("mod Resource ID is not configured")
+	}
+	plan := ModRemovalPlan{
+		Revision:             view.Revision,
+		TargetID:             targetID,
+		Candidates:           []ModRemovalCandidate{},
+		RetainedDependencies: []ModRemovalCandidate{},
+		DependenciesChecked:  target.DependenciesChecked,
+	}
+	plan.Candidates = append(plan.Candidates, ModRemovalCandidate{
+		ID:     targetID,
+		Name:   modItemName(targetID, configuredByID),
+		Target: true,
+	})
+	if !target.DependenciesChecked {
+		plan.Warning = "Dependencies could not be verified; only the selected mod can be removed safely."
+		return plan, nil
+	}
+
+	closure := dependencyIDs(target)
+	closure[targetID] = true
+	for _, other := range view.Mods {
+		if !closure[other.ID] && !other.DependenciesChecked {
+			plan.Warning = "Another configured mod has an unverified dependency graph; only the selected mod can be removed safely."
+			return plan, nil
+		}
+	}
+	candidateIDs := make([]int, 0, len(closure))
+	for id := range closure {
+		if id != targetID {
+			if _, configured := configuredByID[id]; configured {
+				candidateIDs = append(candidateIDs, id)
+			}
+		}
+	}
+	sort.Ints(candidateIDs)
+	for _, id := range candidateIDs {
+		requiredBy := make([]int, 0)
+		for _, other := range view.Mods {
+			if closure[other.ID] || !other.DependenciesChecked {
+				continue
+			}
+			if dependencyIDs(other)[id] {
+				requiredBy = append(requiredBy, other.ID)
+			}
+		}
+		candidate := ModRemovalCandidate{
+			ID:         id,
+			Name:       modItemName(id, configuredByID),
+			RequiredBy: requiredBy,
+		}
+		if len(requiredBy) == 0 {
+			plan.Candidates = append(plan.Candidates, candidate)
+		} else {
+			plan.RetainedDependencies = append(plan.RetainedDependencies, candidate)
+		}
+	}
+	if len(plan.Candidates) > 1 {
+		plan.Warning = "Dependency candidates are inferred from the current mod.io graph. Review the selection before removing entries."
+	}
+	return plan, nil
+}
+
 func (m *Manager) modManagementView() (ModManagementView, error) {
 	m.configMu.Lock()
 	data, staged, err := readConfig("Game.ini")
@@ -747,11 +925,12 @@ func (m *Manager) modManagementView() (ModManagementView, error) {
 		return ModManagementView{}, err
 	}
 	view := ModManagementView{
-		Settings:       publicModIOSettings(settings),
-		Mods:           configured,
-		InvalidEntries: invalid,
-		ConfigStaged:   staged,
-		ServerRunning:  serverRunning(),
+		Settings:        publicModIOSettings(settings),
+		Mods:            configured,
+		DependencyGraph: buildModDependencyGraph(configured),
+		InvalidEntries:  invalid,
+		ConfigStaged:    staged,
+		ServerRunning:   serverRunning(),
 	}
 	if settings == nil || len(configured) == 0 {
 		return view, nil
@@ -772,6 +951,7 @@ func (m *Manager) modManagementView() (ModManagementView, error) {
 		}
 	}
 	loadConfiguredModDependencies(*settings, view.Mods)
+	view.DependencyGraph = buildModDependencyGraph(view.Mods)
 	return view, nil
 }
 
@@ -1039,13 +1219,35 @@ func (m *Manager) setConfiguredModEnabled(id int, enabled bool) (ModConfigChange
 }
 
 func (m *Manager) removeConfiguredMod(id int) (ModConfigChange, error) {
-	if id < 1 {
-		return ModConfigChange{}, errors.New("invalid mod Resource ID")
+	return m.removeConfiguredMods([]int{id})
+}
+
+func (m *Manager) removeConfiguredMods(ids []int) (ModConfigChange, error) {
+	unique := make([]int, 0, len(ids))
+	seen := make(map[int]bool, len(ids))
+	for _, id := range ids {
+		if id < 1 || seen[id] {
+			continue
+		}
+		seen[id] = true
+		unique = append(unique, id)
+	}
+	if len(unique) == 0 {
+		return ModConfigChange{}, errors.New("no valid mod Resource IDs were supplied")
 	}
 	return m.mutateModConfig(func(
 		document *iniDocument,
 		store *disabledINIFile,
 	) (ModConfigChange, error) {
-		return removeModFromConfigState(document, store, id)
+		change := ModConfigChange{Removed: []int{}}
+		for _, id := range unique {
+			removed, err := removeModFromConfigState(document, store, id)
+			if err != nil {
+				return ModConfigChange{}, err
+			}
+			change.Changed = change.Changed || removed.Changed
+			change.Removed = append(change.Removed, id)
+		}
+		return change, nil
 	})
 }

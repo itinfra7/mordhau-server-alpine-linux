@@ -25,10 +25,13 @@ The repository provides:
   PlayFab ID
 - A shared live PlayerController count collected once by the server and
   distributed to every authenticated administrator
+- A dashboard connected-player directory with PlayFab ID, nickname, country,
+  account level, platform, and live ping
 - Persistent player connection history with PlayFab ID and nickname search,
   known nickname and IP history, last observed general account level,
-  verified Steam profile links, accumulated play time, moderation controls,
-  and attributed administrator comments
+  verified Steam profile links, platform identity, accumulated play time,
+  session timelines, timed moderation, kick and warning controls, and
+  attributed administrator comments
 - Bidirectional player ordering by last connection or accumulated server time,
   plus local country, region, and city enrichment from DB-IP City Lite
 - Structured Game.ini and Engine.ini editing with persistent item and section
@@ -37,11 +40,18 @@ The repository provides:
   management for Game.ini
 - Manual CustomPaks inventory, streamed PAK upload, and next-launch
   activation, deactivation, and deletion
-- Optional active-mod update detection with an in-game restart countdown and
-  managed automatic restart
+- Optional active-mod update detection with countdown, empty-server, or
+  scheduled managed restart policies
+- Dependency-aware mod removal with shared-dependency protection
 - Persistent initial-map and dedicated-server port selection
 - Current map and game-mode display plus catalog-validated live map travel
   across shipped, enabled mod.io, and active CustomPak content
+- A catalog-backed visual MapRotation editor with reversible entry state and
+  staged configuration support
+- Desired-state-aware game-process crash detection, bounded automatic recovery,
+  retained diagnostics, and manual retry
+- Server-side one-minute metric history, managed log search/export/rotation,
+  archived game-log retention, and optional HTTPS webhook alerts
 - UTF-8 server-event following from `Mordhau.log`, including player lifecycle,
   chat, match-state, killfeed, scorefeed, and punishment records, with repeated
   idle empty-server map states suppressed
@@ -120,12 +130,12 @@ history remains in the versioned changelog asset instead of being repeated in
 every Release body.
 
 ```sh
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.2.2/mordhau-server-alpine-linux-v2.2.2.tar.gz
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.2.2/CHANGELOG-v2.2.2.md
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.2.2/SHA256SUMS
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.3.0/mordhau-server-alpine-linux-v2.3.0.tar.gz
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.3.0/CHANGELOG-v2.3.0.md
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.3.0/SHA256SUMS
 sha256sum -c SHA256SUMS
-tar -xzf mordhau-server-alpine-linux-v2.2.2.tar.gz
-cd mordhau-server-alpine-linux-v2.2.2
+tar -xzf mordhau-server-alpine-linux-v2.3.0.tar.gz
+cd mordhau-server-alpine-linux-v2.3.0
 chmod +x src/mordhau-server-alpine-linux.sh
 ./src/mordhau-server-alpine-linux.sh
 ```
@@ -243,8 +253,13 @@ The web manager provides:
 - A 30-minute exact-address emergency allow when switching to `all deny`
 - CPU, memory, swap, and MORDHAU-filesystem utilization sampled once per
   minute by one server-side collector and shared across administrator sessions
+- Server-retained 24-hour and seven-day metric history, including connected
+  PlayerController counts
 - Current PlayerController count sampled once per second in the game process
   and shared through the authenticated event stream
+- A clickable dashboard Players card when at least one PlayerController is
+  present, showing PlayFab ID, nickname, country flag, account level, platform,
+  and ping with direct Player Profile navigation
 - Runtime GameMode and GameState inspection followed by single-open
   connected-player groups labeled with nickname and PlayFab ID; each player
   group contains its PlayerController, PlayerState, and possessed Pawn
@@ -262,8 +277,9 @@ The web manager provides:
   nicknames, and known IP addresses
 - Country flags and approximate country, region, and city labels resolved
   locally from the latest available DB-IP City Lite database
-- Verified server mute/unmute and ban/unban controls plus attributed
-  administrator comments
+- Permanent or timed server mute/unmute and ban/unban controls, reasoned
+  kicks, Unicode administrator warnings, retained session timelines, and
+  attributed administrator comments
 - A default light theme with a persistent light/dark toggle
 - Responsive phone, tablet, and desktop layouts with notched-display safe
   areas and touch-sized controls
@@ -275,6 +291,8 @@ The web manager provides:
 - Persistent initial-map selection
 - Current map and game-mode display plus validated live map selection grouped
   by compatible installed game mode
+- A visual MapRotation editor using the same dynamic installed-content
+  catalog, with ordering and reversible active/inactive entries
 - Game, RCON, beacon, and query port selection with range and collision checks
 - Launch-language selection
 - Optional mod.io API-key validation, mod lookup, per-mod recursive dependency
@@ -283,7 +301,10 @@ The web manager provides:
 - Server-wide cached mod metadata auto-refresh from 1 to 10,080 minutes,
   defaulting to 5 minutes for new state
 - Optional automatic restart when an enabled mod publishes a new modfile,
-  with persistent 10-, 5-, 4-, 3-, 2-, and 1-minute player notices
+  using a ten-minute countdown, a continuously empty server, or a selected
+  server-local schedule
+- Dependency-aware mod removal with an explicit preview and protection for
+  dependencies shared by other configured mods
 - Manual CustomPaks listing with drag-and-drop or file-picker PAK upload,
   progress reporting, and staged Active/Inactive/Delete controls
 - Game.ini and Engine.ini section/item creation, editing, and removal
@@ -301,6 +322,10 @@ The web manager provides:
 - Root-only server-event persistence with recent-history loading for later
   administrator sessions
 - Root-only web access and administrative change audit logging
+- Desired-state-aware crash recovery with retained diagnostics, bounded
+  retries, and manual retry
+- Audit and Server Events search/export, configurable log rotation and game-log
+  retention, plus optional HTTPS webhook alerts
 
 The CustomPaks panel lists regular `.pak` files from active, inactive, and
 upload-staging storage. An uploaded file is staged as active by default.
@@ -364,9 +389,17 @@ nickname. Administrators can order results in either direction by last
 connection or accumulated server time. A selected record shows its last
 connection, accumulated completed and current-session time, nickname history,
 last observed general MORDHAU account level, and canonical IPv4 or IPv6
-addresses. The same level appears as a visually distinct badge between the
-country flag and nickname in the player list. Browser-local date and time
-formatting is used for displayed timestamps.
+addresses. It also shows up to 200 recent connection sessions with join, leave,
+duration, address, and locally resolved location. The same level appears as a
+visually distinct badge between the country flag and nickname in the player
+list. Browser-local date and time formatting is used for displayed timestamps.
+
+When at least one PlayerController is present, the dashboard Players card
+opens a live directory containing each player's PlayFab ID, nickname, country
+flag, last observed account level, normalized Steam/Epic/Unknown platform, and
+current ping. Selecting a row opens that player's persistent profile. The
+directory is disabled when the Runtime bridge is unavailable or no
+PlayerController is present.
 
 The native Runtime bridge reads XP through the supported server build's
 `UMordhauInventory::GetPlayerXP` implementation and converts it with
@@ -382,7 +415,9 @@ validated 17-digit SteamID64 is retained with the player record. Player
 Profile shows an inline Steam account link that opens the corresponding
 `steamcommunity.com/profiles/<SteamID64>` page in a new tab. This identity
 comes from the running server and does not require a Steam Web API key or an
-external profile lookup.
+external profile lookup. Epic identity is normalized and retained as an Epic
+badge without constructing a public profile URL. Missing or unsupported
+identity providers are shown as Unknown.
 
 Country flags and approximate country, administrative region, and city names
 come from the free monthly DB-IP City Lite MMDB database. The web manager
@@ -415,10 +450,18 @@ physical location.
 
 Every authenticated web account can add a player comment. Each comment stores
 the responsible account and creation time. Comment text is displayed as text,
-not HTML. Mute and ban toggles issue permanent-until-reversed MORDHAU RCON
-changes, then query the server's mute and ban lists before reporting success.
-These controls require a running game server and working local RCON
-configuration.
+not HTML. Mute and ban controls accept a whole-minute duration from `0` to
+`525600`; zero means permanent until manually reversed. A timed restriction is
+applied as a regular server restriction, then retained with its reason,
+responsible administrator, and expiry time so the manager can automatically
+reverse it. The requested state is queried from the server before success is
+reported, and persisted lease state is restored if RCON application or
+confirmation fails.
+
+The action panel can kick a currently connected player with an optional ASCII
+reason or broadcast a clearly addressed Unicode administrator warning through
+the Unicode Bridge. These controls require a running game server, working
+local RCON configuration, and, for warnings, a working Unicode Bridge.
 
 Player IP history is sensitive administrative data and is available only
 after the same network-policy and account authentication checks as the rest
@@ -577,16 +620,18 @@ peer IP address, method, path, response status, response size, and request
 duration.
 
 Dedicated events identify login success, login failure, logout, server
-actions and their completion, language changes, initial-map and port changes,
-mod configuration, mod.io connection changes, manual metadata refreshes,
-server-wide refresh-setting changes, active-mod update detection, restart
-countdown notices, automatic restart requests, Game.ini and Engine.ini
-mutations, pending-configuration removal, CustomPak upload and staged-state
-changes, Unicode server-message sends,
-player mute and ban changes, attributed player comments,
-administrative RCON command success or failure, account changes,
-network-policy changes, runtime property changes and failures, OpenRC boot-mode
-changes, and saved web-port changes.
+actions and their completion, crash detection and recovery, recovery and
+monitoring policy changes, webhook tests, language changes, initial-map and
+port changes, mod configuration and dependency removal, mod.io connection
+changes, manual metadata refreshes, server-wide refresh-setting changes,
+active-mod update detection, restart-policy notices, automatic restart
+requests, Game.ini and Engine.ini mutations, MapRotation changes,
+pending-configuration removal, CustomPak upload and staged-state changes,
+Unicode server-message sends, timed or permanent player mute and ban changes,
+player kicks and warnings, attributed player comments, administrative RCON
+command success or failure, account changes, network-policy changes, runtime
+property changes and failures, OpenRC boot-mode changes, and saved web-port
+changes.
 Requests without a valid session use the account name `unauthenticated`.
 
 Passwords, request bodies, session cookies, CSRF tokens, RCON credentials,
@@ -601,7 +646,9 @@ recording command arguments or response text. Runtime-property audit events
 identify the target kind and class, declaring class, property, static-array
 index, replication scope, and outcome without recording the old or new value.
 Player-comment audit events record the PlayFab ID and outcome without
-recording comment text.
+recording comment text. Moderation events identify the PlayFab ID, action,
+duration, and outcome without recording the reason or warning text. Webhook
+events never record the configured destination.
 
 ## Persistent Dashboard History
 
@@ -633,6 +680,55 @@ repeatedly transferring the entire on-disk history. The browser retains the
 same 400-event Server Events window. Administrative commands, requesting
 account names, returned response lines, no-output results, failures,
 output-truncation notices, and SAY messages use this same history.
+
+## Recovery and Monitoring
+
+Managed server actions record the intended game-process state as `running` or
+`stopped`. When the process exits while the desired state remains `running`,
+the web manager records the last launch PID, start time, observed uptime, and
+a bounded tail of the server console, then schedules recovery. Intentional
+stops, stopped-only updates, and disabled recovery are never restarted.
+
+Recovery is enabled by default with three attempts in a rolling 30-minute
+window. Attempts use exponential delays beginning at 15 seconds and capped at
+five minutes. Recovery launches the last Steam-validated installation directly
+and does not run SteamCMD or apply staged INI/CustomPaks changes. Exhausted
+recovery remains visible until an administrator uses the authenticated manual
+retry control or starts the server normally. The retry budget and window are
+configurable from the Monitoring panel.
+
+Recovery state uses mode `0600` at:
+
+```text
+/root/mordhau/.manager/server-desired-state
+/root/mordhau/.manager/recovery.json
+/root/mordhau/.manager/recovery-state.json
+/root/mordhau/.manager/runtime/server-launch.json
+```
+
+The same panel displays 24-hour and seven-day charts for CPU, memory, swap,
+the filesystem containing `/root/mordhau`, and connected PlayerControllers.
+One server-side collector samples each minute and appends a seven-day,
+mode-`0600` history to:
+
+```text
+/root/mordhau/.manager/metrics-history.jsonl
+```
+
+Audit and Server Events records can be filtered by source, text, account,
+event kind, and time range, then exported as bounded UTF-8 JSON Lines. The
+manager can rotate both managed logs at a configured size, retain a configured
+number of backups, and remove archived `Mordhau_<timestamp>.log` files older
+than the configured retention period. Rotation and retention do not alter the
+active MORDHAU `Mordhau.log`.
+
+An optional HTTPS webhook can receive crash, exhausted-recovery,
+disk-threshold, and mod-refresh-failure alerts. Each alert type has a six-hour
+cooldown. The destination must resolve entirely to public addresses; requests
+use TLS 1.2 or newer, no proxy, no redirects, pinned resolution for that
+delivery, bounded body handling, and bounded timeouts. The saved destination
+is never returned to the browser. Monitoring policy is stored with mode `0600`
+at `/root/mordhau/.manager/monitoring.json`.
 
 ## Languages
 
@@ -784,6 +880,29 @@ The generated files remain the source of truth for the installed MORDHAU
 version. The repository does not install a static gameplay-configuration
 template.
 
+## Map Rotation
+
+The Configuration panel includes a visual editor for every `MapRotation=`
+entry under:
+
+```text
+[/Script/Mordhau.MordhauGameMode]
+```
+
+The add controls use the same server-generated installed-content catalog as
+live map travel, including shipped maps, enabled mod.io content, and active
+CustomPaks. Existing entries can be reordered by drag-and-drop or buttons,
+enabled, disabled, or removed. A map that is no longer available remains
+visible and editable instead of being discarded. Maps that validly appear
+under more than one game mode are retained as installed multi-mode entries.
+
+Saving uses the current Game.ini revision and fails on a concurrent edit.
+Unrelated sections, entries, comments, ordering, duplicate MapRotation values,
+and persistent disabled-item identities are preserved. When the whole
+MordhauGameMode section is disabled, every MapRotation entry is treated as
+disabled until the section is enabled again. Changes made while the game is
+running remain staged and apply on the next managed start or restart.
+
 ## Mod Management
 
 The Mods panel manages `Mods=<Resource ID>` entries only within:
@@ -802,7 +921,8 @@ Each configured mod displays its recursive mod.io dependency list and whether
 each dependency is enabled, disabled, or absent from Game.ini. An enabled mod
 shows a warning when a required dependency is disabled or absent. Disabled
 mods retain dependency information without producing unresolved-dependency
-warnings.
+warnings. Available metadata includes the current modfile ID, version,
+publication and update dates, and file size.
 
 The server refreshes the configured-mod cache every 5 minutes by default for
 newly created state. A previously selected interval is preserved during
@@ -829,14 +949,20 @@ the preceding successful baseline. The first successful lookup establishes
 the baseline without scheduling a restart. Newly enabled and disabled mods do
 not create a false update event.
 
-When a new modfile is detected while the dedicated server is running, the
-manager keeps the current game-process identity and schedules one restart ten
-minutes later. It immediately sends an English 10-minute notice through the
-Unicode Bridge, then sends 5-, 4-, 3-, 2-, and 1-minute notices at the
-corresponding points. At the deadline it announces the restart and invokes the
-managed `restart` action, which validates the Steam installation and lets
-MORDHAU obtain active mod updates during startup. Additional active-mod
-updates join the existing countdown without postponing it.
+Three restart policies are available:
+
+- **10-minute countdown** immediately schedules a restart and sends English
+  10-, 5-, 4-, 3-, 2-, and 1-minute notices through the Unicode Bridge.
+- **When the server is empty** waits until the Runtime bridge reports zero
+  PlayerControllers continuously for 30 seconds, then announces and restarts.
+  Runtime unavailability never counts as an empty server.
+- **Scheduled server time** selects the next occurrence of a server-local
+  `HH:MM` time that allows the complete ten-minute countdown.
+
+At the deadline the manager announces the restart and invokes the managed
+`restart` action, which validates the Steam installation and lets MORDHAU
+obtain active mod updates during startup. Additional active-mod updates join
+the existing schedule without postponing it.
 
 The baseline and pending countdown are stored with mode `0600` in:
 
@@ -857,9 +983,14 @@ mod.io API hosts, redirects are disabled, and response size and request time
 are bounded.
 
 Disabling a configured mod retains its Resource ID as an inactive INI entry.
-Removing a mod deletes only that ID from Game.ini; dependencies are retained
-because another configured mod may use them. The game server downloads active
-mods during its normal startup process.
+Removing a mod first opens a revision-bound plan. The target is always removed;
+recursively required dependencies can also be selected only when they are
+configured and no configured mod outside the removal set requires them.
+Shared dependencies are retained and identified by their remaining parents.
+If dependency metadata is incomplete, the conservative plan removes only the
+target. The selected IDs are revalidated against the current graph and Game.ini
+revision before one atomic configuration mutation. The game server downloads
+active mods during its normal startup process.
 
 ## Live Map and Game Mode
 
@@ -948,6 +1079,8 @@ Changing a boot mode does not change the current process state.
   credentials, the last working on-demand RCON credential, pending
   configuration, lifecycle results, player connection history, the
   server-event history, and the web audit log use root-only permissions.
+- Recovery desired state, launch diagnostics, retry history, moderation
+  leases, monitoring policy, and metrics history use root-only permissions.
 - DB-IP City Lite data, update state, and ignored-network configuration are
   root-only. Updates use a fixed HTTPS origin, reject redirects, enforce
   compressed and expanded size limits, preserve a filesystem reserve, verify
@@ -979,7 +1112,8 @@ Changing a boot mode does not change the current process state.
 - RCON connects to `127.0.0.1` from the web manager.
 - Player mute and ban changes require authentication and CSRF validation and
   are accepted only after the running server's restriction lists confirm the
-  requested state.
+  requested state. Timed restrictions persist before the RCON mutation and
+  restore their preceding state if application or confirmation fails.
 - Every authenticated web account can issue commands with full RCON
   administrator authority. Command arguments and responses are retained in
   the root-only server-event history but excluded from the separate web audit
@@ -994,6 +1128,10 @@ Changing a boot mode does not change the current process state.
 - The mod.io API key is never returned through a management endpoint.
 - mod.io requests accept only validated HTTPS API hosts and do not follow
   redirects.
+- Monitoring webhook destinations are never returned through a management
+  endpoint. Delivery requires HTTPS, TLS 1.2 or newer, direct DNS-pinned
+  connections, no redirects, bounded responses and timeouts, and exclusively
+  public destination addresses.
 - Runtime bridge IPC remains inside a mode-`0700` manager directory and is not
   exposed as a network listener.
 - Runtime target identifiers include Unreal object index and serial number,
@@ -1005,6 +1143,9 @@ Changing a boot mode does not change the current process state.
   address without recording property values.
 - Lifecycle operations accept fixed actions and do not execute user-provided
   shell arguments.
+- Automatic recovery proceeds only when the root-only desired state is
+  `running`, no lifecycle action is active, the process identity is absent,
+  recovery is enabled, and the configured rolling retry budget permits it.
 
 The built-in listener serves HTTP. Use a trusted network or a TLS reverse
 proxy, and configure network access rules before exposing the web port.
@@ -1018,6 +1159,7 @@ Repository tests:
 cd src/web
 go test ./...
 go vet ./...
+go test -race ./...
 ```
 
 Shell validation:
@@ -1071,8 +1213,14 @@ validation, server-port parsing and collision checks, mod.io URL and API-path
 validation, dependency ordering, scoped mod-entry mutation, shared-cache
 deduplication under concurrent clients, successful-refresh interval resets,
 failure retry behavior, lifecycle-result persistence, interrupted-operation
-recovery, multilingual server-event history persistence, and truncated-history
-recovery. CustomPaks tests cover visible project-managed package protection,
+recovery, multilingual server-event history persistence, truncated-history
+recovery, desired-state crash detection, intentional-stop exclusion,
+retry-window pruning, exponential recovery delays, retry exhaustion,
+one-minute metric history and retention, log rotation and search, webhook
+destination policy and cooldown, timed moderation expiry, rollback after
+failed RCON confirmation, connection-session timelines, dependency-aware mod
+removal, and countdown, empty-server, and scheduled mod restart policies.
+CustomPaks tests cover visible project-managed package protection,
 staged state, activation and deactivation moves, deletion and cancellation,
 upload limits, case-insensitive duplicate rejection, lifecycle locking, and
 idempotent next-launch application. Runtime tests cover server-wide status
@@ -1083,13 +1231,16 @@ type-derived editor selection, exact enum choices, integer boundary handling,
 finite floating-point parsing, and structured-text delimiter validation.
 Map-catalog tests cover packaged default-mode ambiguity, unprefixed official
 maps, internal-destination rejection, declared mod-map scope, exact mode/map
-pair validation, fixed RCON command construction, requester auditing, and an
-opt-in check against installed shipped and mod content. Player-level tests
+pair validation, fixed RCON command construction, MapRotation ordering and
+disabled-state preservation, duplicate identity rejection, multi-mode map
+retention, requester auditing, and an opt-in check against installed shipped
+and mod content. Player-level tests
 accept only native inventory XP conversion,
 validate the known `90435` XP to level `38` pair, reject replicated and
 competitive-rank substitutes, normalize the earlier zero-value sentinel, and
 retain the latest valid observation. Platform-identity tests enforce strict
-SteamID64 validation and safe profile-link construction.
+SteamID64 validation, safe profile-link construction, Epic identity
+normalization, and exact live-ping transport.
 The shell integration test covers PAK installation, active and staged Game.ini
 registration, existing server-actor preservation, backup creation, and
 idempotent reinstallation. Static asset tests verify the default-light theme
@@ -1099,8 +1250,11 @@ unified RCON/SAY prompt, mobile viewport metadata, touch targets, input sizing,
 safe-area handling, player-grouped Runtime navigation, type-specific Runtime
 edit controls, current-value search, manually indicated value refresh,
 narrow-screen control reflow, Players search/profile/moderation/comment
-controls, CustomPaks upload and staging controls, and mobile visibility of
-server and account status. The native build test
+controls, connected-player dashboard navigation, timed restrictions, session
+timelines, visual MapRotation controls, dependency-removal planning,
+restart-policy selection, Monitoring charts and log tools, recovery controls,
+CustomPaks upload and staging controls, and mobile visibility of server and
+account status. The native build test
 compiles the Windows DLL twice, verifies deterministic output and its DXGI
 proxy export, and pins the PDB-derived property-export signature,
 enum-property layout, player identity fields, and net-dormancy entry point.
@@ -1110,7 +1264,8 @@ from zero to one, discovery of the associated PlayerController, PlayerState,
 and possessed Pawn under the controller nickname and PlayFab ID, reflected
 type-editor metadata and enum sentinel filtering, authoritative readback after
 a property write, client delivery of a `Net`/`OnRep` PlayerState string
-property, and restoration of the original value.
+property, normalized platform identity, live ping, dashboard-to-profile
+navigation, and restoration of the original value.
 
 ## Update and Rollback
 
@@ -1123,10 +1278,11 @@ existing entries. A native runtime bridge is replaced only after the current
 shipping executable passes its supported-build digest check. Existing
 accounts, access rules, generated credentials, INI files, backups, logs,
 language selection, initial map, server ports, trusted proxy settings, mod.io
-settings, mod refresh interval, CustomPaks state and inactive/uploaded
-packages, player connection history and comments, GeoIP database and ignored
-networks, latest lifecycle result, server-event history, and boot modes are
-preserved.
+settings, mod refresh interval and restart policy, CustomPaks state and
+inactive/uploaded packages, player connection history, moderation leases and
+comments, GeoIP database and ignored networks, recovery policy and history,
+desired server state, monitoring policy, metrics history, latest lifecycle
+result, server-event history, and boot modes are preserved.
 
 To roll back management code:
 

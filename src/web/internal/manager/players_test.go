@@ -394,7 +394,7 @@ func TestPlayerRestrictionCommandsAreVerifiedAgainstServerLists(t *testing.T) {
 		switch fields[0] {
 		case "ban":
 			if len(fields) != 4 || fields[1] != testPlayerID ||
-				fields[2] != "0" || fields[3] != "WebControl" {
+				fields[2] != "0" {
 				t.Fatalf("ban command = %q", command)
 			}
 			banned[fields[1]] = true
@@ -472,6 +472,102 @@ func TestPlayerRestrictionCommandsAreVerifiedAgainstServerLists(t *testing.T) {
 		}
 		if !found {
 			t.Fatalf("missing command %q in %#v", expected, commands)
+		}
+	}
+
+	timed, err := manager.setPlayerRestrictionWithOptions(
+		testPlayerID,
+		"ban",
+		true,
+		5,
+		"Rule1",
+		"operator",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !timed.Banned || timed.BanLease == nil ||
+		timed.BanLease.SetBy != "operator" ||
+		timed.BanLease.Reason != "Rule1" {
+		t.Fatalf("timed ban lease = %+v", timed)
+	}
+	manager.playersMu.Lock()
+	manager.playerHistory.Players[0].BanLease.ExpiresAt = time.Now().Add(-time.Minute)
+	manager.playersMu.Unlock()
+	manager.expirePlayerRestrictions()
+	expired, err := manager.playerDetail(testPlayerID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if expired.Banned || expired.BanLease != nil {
+		t.Fatalf("expired timed ban remained active: %+v", expired)
+	}
+}
+
+func TestPlayerModerationAuditExcludesReasonAndMessageText(t *testing.T) {
+	directory := t.TempDir()
+	manager := &Manager{
+		playerHistoryFile: filepath.Join(directory, "players.json"),
+		auditPath:         filepath.Join(directory, "audit.log"),
+		playerHistory: playerHistoryFile{
+			Version: playerHistoryVersion,
+			Players: []playerRecord{{PlayFabID: testPlayerID}},
+		},
+		playerServerProcess: func() (int, bool) { return 0, false },
+	}
+	if err := manager.initializeAuditLog(); err != nil {
+		t.Fatal(err)
+	}
+	session := Session{Username: "operator", CSRF: "csrf-token"}
+	for _, test := range []struct {
+		path string
+		body string
+		run  func(http.ResponseWriter, *http.Request, Session)
+	}{
+		{
+			path: "/api/players/restriction",
+			body: `{"playfab_id":"` + testPlayerID +
+				`","restriction":"ban","enabled":true,` +
+				`"duration_minutes":30,"reason":"PrivateReason"}`,
+			run: manager.playerRestrictionHandler,
+		},
+		{
+			path: "/api/players/action",
+			body: `{"playfab_id":"` + testPlayerID +
+				`","action":"warn","message":"Secret warning text"}`,
+			run: manager.playerActionHandler,
+		},
+	} {
+		request := httptest.NewRequest(
+			http.MethodPost,
+			"http://manager.example"+test.path,
+			strings.NewReader(test.body),
+		)
+		request.Header.Set("X-CSRF-Token", session.CSRF)
+		response := httptest.NewRecorder()
+		test.run(response, request, session)
+		if response.Code != http.StatusConflict {
+			t.Fatalf("%s status = %d", test.path, response.Code)
+		}
+	}
+
+	data, err := os.ReadFile(manager.auditPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	audit := string(data)
+	for _, secret := range []string{"PrivateReason", "Secret warning text"} {
+		if strings.Contains(audit, secret) {
+			t.Fatalf("moderation text %q leaked into audit log", secret)
+		}
+	}
+	for _, expected := range []string{
+		`"reason_present":"true"`,
+		`"reason_characters":"13"`,
+		`"message_characters":"19"`,
+	} {
+		if !strings.Contains(audit, expected) {
+			t.Fatalf("audit is missing %q: %s", expected, audit)
 		}
 	}
 }

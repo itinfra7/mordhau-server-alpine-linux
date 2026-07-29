@@ -165,6 +165,8 @@ typedef struct {
     char playfab_id[128];
     char platform[32];
     char platform_account_id[128];
+    int ping_ms;
+    int has_ping;
 } RuntimeTarget;
 
 static INIT_ONCE g_proxy_once = INIT_ONCE_STATIC_INIT;
@@ -988,6 +990,66 @@ static int steam_id64_is_valid(const char *value)
     return 1;
 }
 
+static int platform_account_id_is_valid(const char *value)
+{
+    size_t index;
+    size_t length;
+
+    if (value == NULL) {
+        return 0;
+    }
+    length = strlen(value);
+    if (length < 3 || length > 127) {
+        return 0;
+    }
+    for (index = 0; index < length; ++index) {
+        unsigned char character = (unsigned char)value[index];
+
+        if (!((character >= 'a' && character <= 'z') ||
+              (character >= 'A' && character <= 'Z') ||
+              (character >= '0' && character <= '9') ||
+              character == '-' || character == '_' ||
+              character == '.' || character == ':')) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static int exported_number(
+    uint8_t *property,
+    void *object,
+    double *value
+)
+{
+    char text[128];
+    char *end;
+    double parsed;
+
+    if (property == NULL || object == NULL || value == NULL ||
+        !export_property_utf8(
+            property,
+            object,
+            0,
+            text,
+            sizeof(text))) {
+        return 0;
+    }
+    parsed = strtod(text, &end);
+    if (end == text) {
+        return 0;
+    }
+    while (*end == ' ' || *end == '\t' ||
+           *end == '\r' || *end == '\n') {
+        ++end;
+    }
+    if (*end != '\0' || parsed < 0.0 || parsed > 60000.0) {
+        return 0;
+    }
+    *value = parsed;
+    return 1;
+}
+
 static void populate_runtime_player_identity(
     RuntimeTarget *controller_target,
     void *player_state
@@ -997,6 +1059,7 @@ static void populate_runtime_player_identity(
     char playfab_player[4096];
     char platform[32] = "";
     char platform_account_id[128] = "";
+    double ping = 0.0;
 
     if (controller_target == NULL || player_state == NULL ||
         strcmp(controller_target->kind, "player_controller") != 0) {
@@ -1011,6 +1074,18 @@ static void populate_runtime_player_identity(
             controller_target->player_name,
             sizeof(controller_target->player_name)
         );
+    }
+    property = find_property(player_state, "ExactPing");
+    if (exported_number(property, player_state, &ping)) {
+        controller_target->ping_ms = (int)(ping + 0.5);
+        controller_target->has_ping = 1;
+    } else {
+        property = find_property(player_state, "Ping");
+        if (exported_number(property, player_state, &ping) &&
+            ping <= 15000.0) {
+            controller_target->ping_ms = (int)(ping * 4.0 + 0.5);
+            controller_target->has_ping = 1;
+        }
     }
     property = find_property(player_state, "PlayFabPlayer");
     if (property != NULL &&
@@ -1036,13 +1111,17 @@ static void populate_runtime_player_identity(
                 "PlatformAccountID",
                 platform_account_id,
                 sizeof(platform_account_id)) &&
-            strcmp(platform, "Steam") == 0 &&
-            steam_id64_is_valid(platform_account_id)) {
+            ((strcmp(platform, "Steam") == 0 &&
+              steam_id64_is_valid(platform_account_id)) ||
+             ((strcmp(platform, "Epic") == 0 ||
+               strcmp(platform, "EpicGames") == 0 ||
+               strcmp(platform, "EOS") == 0) &&
+              platform_account_id_is_valid(platform_account_id)))) {
             snprintf(
                 controller_target->platform,
                 sizeof(controller_target->platform),
                 "%s",
-                platform
+                strcmp(platform, "Steam") == 0 ? "Steam" : "Epic"
             );
             snprintf(
                 controller_target->platform_account_id,
@@ -1582,6 +1661,9 @@ static void append_target_json(
     if (target->platform_account_id[0] != '\0') {
         json_append(builder, ",\"platform_account_id\":");
         json_append_string(builder, target->platform_account_id);
+    }
+    if (target->has_ping) {
+        json_append_format(builder, ",\"ping_ms\":%d", target->ping_ms);
     }
     json_append(builder, "}");
 }

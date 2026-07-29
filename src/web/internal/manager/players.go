@@ -2,6 +2,7 @@ package manager
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"log"
@@ -28,7 +29,11 @@ const (
 	playerMaximumLevel            = 2147483647
 	playerLogScannerMaximumBytes  = 16 << 20
 	playerRestrictionCacheLife    = 15 * time.Second
+	playerRestrictionExpiryPoll   = 15 * time.Second
+	playerRestrictionMaximumMins  = 525600
 	playerPendingConnectionMaxAge = 2 * time.Minute
+	playerMaximumSessionTimeline  = 200
+	playerMaximumModerationReason = 160
 )
 
 var (
@@ -58,19 +63,27 @@ type PlayerComment struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+type PlayerRestrictionLease struct {
+	ExpiresAt time.Time `json:"expires_at"`
+	SetBy     string    `json:"set_by"`
+	Reason    string    `json:"reason,omitempty"`
+}
+
 type playerRecord struct {
-	PlayFabID         string             `json:"playfab_id"`
-	LastNickname      string             `json:"last_nickname,omitempty"`
-	LastLevel         *int               `json:"last_level,omitempty"`
-	Platform          string             `json:"platform,omitempty"`
-	PlatformAccountID string             `json:"platform_account_id,omitempty"`
-	LastConnected     time.Time          `json:"last_connected_at,omitempty"`
-	Nicknames         []playerKnownValue `json:"nicknames,omitempty"`
-	Addresses         []playerKnownValue `json:"addresses,omitempty"`
-	Connections       []playerConnection `json:"connections,omitempty"`
-	Muted             bool               `json:"muted"`
-	Banned            bool               `json:"banned"`
-	Comments          []PlayerComment    `json:"comments,omitempty"`
+	PlayFabID         string                  `json:"playfab_id"`
+	LastNickname      string                  `json:"last_nickname,omitempty"`
+	LastLevel         *int                    `json:"last_level,omitempty"`
+	Platform          string                  `json:"platform,omitempty"`
+	PlatformAccountID string                  `json:"platform_account_id,omitempty"`
+	LastConnected     time.Time               `json:"last_connected_at,omitempty"`
+	Nicknames         []playerKnownValue      `json:"nicknames,omitempty"`
+	Addresses         []playerKnownValue      `json:"addresses,omitempty"`
+	Connections       []playerConnection      `json:"connections,omitempty"`
+	Muted             bool                    `json:"muted"`
+	Banned            bool                    `json:"banned"`
+	MuteLease         *PlayerRestrictionLease `json:"mute_lease,omitempty"`
+	BanLease          *PlayerRestrictionLease `json:"ban_lease,omitempty"`
+	Comments          []PlayerComment         `json:"comments,omitempty"`
 }
 
 type playerImportedLog struct {
@@ -108,21 +121,44 @@ type PlayerKnownValue struct {
 }
 
 type PlayerDetail struct {
-	PlayFabID         string             `json:"playfab_id"`
-	LastNickname      string             `json:"last_nickname,omitempty"`
-	LastLevel         *int               `json:"last_level,omitempty"`
-	Platform          string             `json:"platform,omitempty"`
-	PlatformAccountID string             `json:"platform_account_id,omitempty"`
-	LastConnected     time.Time          `json:"last_connected_at,omitempty"`
-	Connected         bool               `json:"connected"`
-	ActiveSince       *time.Time         `json:"active_since,omitempty"`
-	TotalSeconds      int64              `json:"total_seconds"`
-	Nicknames         []PlayerKnownValue `json:"nicknames"`
-	Addresses         []PlayerKnownValue `json:"addresses"`
-	Muted             bool               `json:"muted"`
-	Banned            bool               `json:"banned"`
-	Comments          []PlayerComment    `json:"comments"`
-	GeneratedAt       time.Time          `json:"generated_at"`
+	PlayFabID         string                  `json:"playfab_id"`
+	LastNickname      string                  `json:"last_nickname,omitempty"`
+	LastLevel         *int                    `json:"last_level,omitempty"`
+	Platform          string                  `json:"platform,omitempty"`
+	PlatformAccountID string                  `json:"platform_account_id,omitempty"`
+	LastConnected     time.Time               `json:"last_connected_at,omitempty"`
+	Connected         bool                    `json:"connected"`
+	ActiveSince       *time.Time              `json:"active_since,omitempty"`
+	TotalSeconds      int64                   `json:"total_seconds"`
+	Nicknames         []PlayerKnownValue      `json:"nicknames"`
+	Addresses         []PlayerKnownValue      `json:"addresses"`
+	Muted             bool                    `json:"muted"`
+	Banned            bool                    `json:"banned"`
+	MuteLease         *PlayerRestrictionLease `json:"mute_lease,omitempty"`
+	BanLease          *PlayerRestrictionLease `json:"ban_lease,omitempty"`
+	Sessions          []PlayerSession         `json:"sessions"`
+	Comments          []PlayerComment         `json:"comments"`
+	GeneratedAt       time.Time               `json:"generated_at"`
+}
+
+type PlayerSession struct {
+	JoinedAt    time.Time       `json:"joined_at"`
+	LeftAt      *time.Time      `json:"left_at,omitempty"`
+	IP          string          `json:"ip,omitempty"`
+	Location    *PlayerLocation `json:"location,omitempty"`
+	DurationSec int64           `json:"duration_seconds"`
+	Active      bool            `json:"active"`
+}
+
+type ConnectedPlayer struct {
+	PlayerSlot        int             `json:"player_slot"`
+	PlayFabID         string          `json:"playfab_id,omitempty"`
+	Nickname          string          `json:"nickname,omitempty"`
+	Level             *int            `json:"level,omitempty"`
+	PingMS            *int            `json:"ping_ms,omitempty"`
+	Platform          string          `json:"platform"`
+	PlatformAccountID string          `json:"platform_account_id,omitempty"`
+	Location          *PlayerLocation `json:"location,omitempty"`
 }
 
 type PlayerRestrictionStatus struct {
@@ -141,9 +177,18 @@ type PlayersView struct {
 }
 
 type playerRestrictionRequest struct {
-	PlayFabID   string `json:"playfab_id"`
-	Restriction string `json:"restriction"`
-	Enabled     bool   `json:"enabled"`
+	PlayFabID       string `json:"playfab_id"`
+	Restriction     string `json:"restriction"`
+	Enabled         bool   `json:"enabled"`
+	DurationMinutes int    `json:"duration_minutes,omitempty"`
+	Reason          string `json:"reason,omitempty"`
+}
+
+type playerActionRequest struct {
+	PlayFabID string `json:"playfab_id"`
+	Action    string `json:"action"`
+	Reason    string `json:"reason,omitempty"`
+	Message   string `json:"message,omitempty"`
 }
 
 type playerCommentRequest struct {
@@ -224,11 +269,54 @@ func validSteamID64(value string) bool {
 	return true
 }
 
+func validEpicAccountID(value string) bool {
+	if len(value) < 3 || len(value) > 128 {
+		return false
+	}
+	for _, character := range value {
+		if !((character >= 'a' && character <= 'z') ||
+			(character >= 'A' && character <= 'Z') ||
+			(character >= '0' && character <= '9') ||
+			character == '-' || character == '_' ||
+			character == '.' || character == ':') {
+			return false
+		}
+	}
+	return true
+}
+
 func validPlayerPlatformIdentity(platform, accountID string) bool {
 	if platform == "" && accountID == "" {
 		return true
 	}
-	return platform == "Steam" && validSteamID64(accountID)
+	switch platform {
+	case "Steam":
+		return validSteamID64(accountID)
+	case "Epic":
+		return validEpicAccountID(accountID)
+	default:
+		return false
+	}
+}
+
+func validPlayerRestrictionLease(lease *PlayerRestrictionLease) bool {
+	if lease == nil {
+		return true
+	}
+	return !lease.ExpiresAt.IsZero() &&
+		safeAuditAccount(lease.SetBy) == lease.SetBy &&
+		utf8.ValidString(lease.Reason) &&
+		len(lease.Reason) <= playerMaximumModerationReason
+}
+
+func clonePlayerRestrictionLease(
+	lease *PlayerRestrictionLease,
+) *PlayerRestrictionLease {
+	if lease == nil {
+		return nil
+	}
+	copy := *lease
+	return &copy
 }
 
 func normalizePlayerComment(value string) (string, error) {
@@ -314,6 +402,13 @@ func validatePlayerHistory(history *playerHistoryFile) error {
 		) {
 			return fmt.Errorf(
 				"player history record %q contains an invalid platform identity",
+				player.PlayFabID,
+			)
+		}
+		if !validPlayerRestrictionLease(player.MuteLease) ||
+			!validPlayerRestrictionLease(player.BanLease) {
+			return fmt.Errorf(
+				"player history record %q contains an invalid restriction lease",
 				player.PlayFabID,
 			)
 		}
@@ -933,6 +1028,37 @@ func sortedPlayerComments(comments []PlayerComment) []PlayerComment {
 	return out
 }
 
+func playerSessions(player playerRecord, now time.Time) []PlayerSession {
+	start := 0
+	if len(player.Connections) > playerMaximumSessionTimeline {
+		start = len(player.Connections) - playerMaximumSessionTimeline
+	}
+	out := make([]PlayerSession, 0, len(player.Connections)-start)
+	for index := start; index < len(player.Connections); index++ {
+		connection := player.Connections[index]
+		end := now
+		active := connection.LeftAt == nil
+		if connection.LeftAt != nil {
+			end = *connection.LeftAt
+		}
+		duration := int64(0)
+		if end.After(connection.JoinedAt) {
+			duration = int64(end.Sub(connection.JoinedAt) / time.Second)
+		}
+		out = append(out, PlayerSession{
+			JoinedAt:    connection.JoinedAt,
+			LeftAt:      connection.LeftAt,
+			IP:          connection.IP,
+			DurationSec: duration,
+			Active:      active,
+		})
+	}
+	sort.SliceStable(out, func(left, right int) bool {
+		return out[left].JoinedAt.After(out[right].JoinedAt)
+	})
+	return out
+}
+
 func playerSummary(player playerRecord, now time.Time) PlayerSummary {
 	connected, _ := playerConnectedAt(player)
 	nicknames := sortedPlayerKnownValues(player.Nicknames)
@@ -996,6 +1122,9 @@ func playerDetail(player playerRecord, now time.Time) PlayerDetail {
 		Addresses:         sortedPlayerKnownValues(player.Addresses),
 		Muted:             player.Muted,
 		Banned:            player.Banned,
+		MuteLease:         clonePlayerRestrictionLease(player.MuteLease),
+		BanLease:          clonePlayerRestrictionLease(player.BanLease),
+		Sessions:          playerSessions(player, now),
 		Comments:          sortedPlayerComments(player.Comments),
 		GeneratedAt:       now,
 	}
@@ -1067,7 +1196,69 @@ func (m *Manager) playerDetail(playFabID string) (PlayerDetail, error) {
 			detail.Addresses[index].Value,
 		)
 	}
+	for index := range detail.Sessions {
+		detail.Sessions[index].Location = m.playerLocationForAddress(
+			detail.Sessions[index].IP,
+		)
+	}
 	return detail, nil
+}
+
+func (m *Manager) connectedPlayersView() []ConnectedPlayer {
+	m.runtimeMu.RLock()
+	targets := append([]RuntimeTarget(nil), m.runtimeTargets...)
+	ready := m.runtimeSummary.Ready
+	m.runtimeMu.RUnlock()
+	if !ready {
+		return []ConnectedPlayer{}
+	}
+
+	m.playersMu.RLock()
+	records := make(map[string]playerRecord, len(m.playerHistory.Players))
+	for _, player := range m.playerHistory.Players {
+		records[player.PlayFabID] = player
+	}
+	m.playersMu.RUnlock()
+
+	players := make([]ConnectedPlayer, 0)
+	for _, target := range targets {
+		if target.Kind != "player_controller" {
+			continue
+		}
+		player := ConnectedPlayer{
+			PlayerSlot:        target.PlayerSlot,
+			PlayFabID:         strings.ToUpper(target.PlayFabID),
+			Nickname:          target.PlayerName,
+			PingMS:            target.PingMS,
+			Platform:          target.Platform,
+			PlatformAccountID: target.PlatformAccountID,
+		}
+		record, exists := records[player.PlayFabID]
+		if exists {
+			if player.Nickname == "" {
+				player.Nickname = record.LastNickname
+			}
+			if record.LastLevel != nil {
+				level := *record.LastLevel
+				player.Level = &level
+			}
+			if player.Platform == "" {
+				player.Platform = record.Platform
+				player.PlatformAccountID = record.PlatformAccountID
+			}
+			player.Location = m.playerLocationForAddress(
+				latestPlayerAddress(record),
+			)
+		}
+		if player.Platform == "" {
+			player.Platform = "Unknown"
+		}
+		players = append(players, player)
+	}
+	sort.SliceStable(players, func(left, right int) bool {
+		return players[left].PlayerSlot < players[right].PlayerSlot
+	})
+	return players
 }
 
 func parsePlayerRestrictionList(lines []string) map[string]struct{} {
@@ -1129,8 +1320,16 @@ func (m *Manager) applyPlayerRestrictions(
 			player.Banned = isBanned
 			changed = true
 		}
+		if !isBanned && player.BanLease != nil {
+			player.BanLease = nil
+			changed = true
+		}
 		if player.Muted != isMuted {
 			player.Muted = isMuted
+			changed = true
+		}
+		if !isMuted && player.MuteLease != nil {
+			player.MuteLease = nil
 			changed = true
 		}
 	}
@@ -1178,6 +1377,20 @@ func playerRestrictionCommand(
 	restriction string,
 	enabled bool,
 ) (string, error) {
+	return playerRestrictionCommandWithReason(
+		playFabID,
+		restriction,
+		enabled,
+		"WebControl",
+	)
+}
+
+func playerRestrictionCommandWithReason(
+	playFabID string,
+	restriction string,
+	enabled bool,
+	reason string,
+) (string, error) {
 	if !validMordhauPlayerID(playFabID) {
 		return "", errPlayerInvalid
 	}
@@ -1190,7 +1403,7 @@ func playerRestrictionCommand(
 		return "unmute " + playFabID, nil
 	case "ban":
 		if enabled {
-			return "ban " + playFabID + " 0 WebControl", nil
+			return "ban " + playFabID + " 0 " + reason, nil
 		}
 		return "unban " + playFabID, nil
 	default:
@@ -1203,7 +1416,70 @@ func (m *Manager) setPlayerRestriction(
 	restriction string,
 	enabled bool,
 ) (PlayerDetail, error) {
-	command, err := playerRestrictionCommand(playFabID, restriction, enabled)
+	return m.setPlayerRestrictionWithOptions(
+		playFabID,
+		restriction,
+		enabled,
+		0,
+		"WebControl",
+		"system",
+	)
+}
+
+func normalizeModerationReason(reason string) (string, error) {
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		return "WebControl", nil
+	}
+	if len(reason) > playerMaximumModerationReason {
+		return "", fmt.Errorf(
+			"%w: reason must not exceed %d characters",
+			errPlayerInvalid,
+			playerMaximumModerationReason,
+		)
+	}
+	for _, character := range reason {
+		if !((character >= 'a' && character <= 'z') ||
+			(character >= 'A' && character <= 'Z') ||
+			(character >= '0' && character <= '9') ||
+			character == ' ' || character == '-' ||
+			character == '_' || character == '.' ||
+			character == ',' || character == ':') {
+			return "", fmt.Errorf(
+				"%w: moderation reasons support printable ASCII letters, numbers, spaces, and .,_:-",
+				errPlayerInvalid,
+			)
+		}
+	}
+	return reason, nil
+}
+
+func (m *Manager) setPlayerRestrictionWithOptions(
+	playFabID string,
+	restriction string,
+	enabled bool,
+	durationMinutes int,
+	reason string,
+	actor string,
+) (PlayerDetail, error) {
+	if durationMinutes < 0 || durationMinutes > playerRestrictionMaximumMins ||
+		(!enabled && durationMinutes != 0) {
+		return PlayerDetail{}, fmt.Errorf(
+			"%w: duration must be 0-%d minutes",
+			errPlayerInvalid,
+			playerRestrictionMaximumMins,
+		)
+	}
+	normalizedReason, err := normalizeModerationReason(reason)
+	if err != nil {
+		return PlayerDetail{}, err
+	}
+	command, err := playerRestrictionCommandWithReason(
+		playFabID,
+		restriction,
+		enabled,
+		normalizedReason,
+	)
 	if err != nil {
 		return PlayerDetail{}, err
 	}
@@ -1220,6 +1496,73 @@ func (m *Manager) setPlayerRestriction(
 
 	m.playerRestrictionMu.Lock()
 	defer m.playerRestrictionMu.Unlock()
+	var lease *PlayerRestrictionLease
+	if enabled && durationMinutes > 0 {
+		lease = &PlayerRestrictionLease{
+			ExpiresAt: time.Now().Add(time.Duration(durationMinutes) * time.Minute),
+			SetBy:     safeAuditAccount(actor),
+			Reason:    normalizedReason,
+		}
+	}
+	m.playersMu.Lock()
+	index := playerRecordIndex(&m.playerHistory, playFabID)
+	if index < 0 {
+		m.playersMu.Unlock()
+		return PlayerDetail{}, errPlayerNotFound
+	}
+	player := &m.playerHistory.Players[index]
+	var previousLease *PlayerRestrictionLease
+	switch restriction {
+	case "mute":
+		previousLease = clonePlayerRestrictionLease(player.MuteLease)
+	case "ban":
+		previousLease = clonePlayerRestrictionLease(player.BanLease)
+	}
+	leaseChanged := !restrictionLeasesEqual(previousLease, lease)
+	previousRevision := m.playerHistory.Revision
+	if leaseChanged {
+		switch restriction {
+		case "mute":
+			player.MuteLease = clonePlayerRestrictionLease(lease)
+		case "ban":
+			player.BanLease = clonePlayerRestrictionLease(lease)
+		}
+		m.playerHistory.Revision++
+		if err := m.savePlayerHistoryLocked(); err != nil {
+			switch restriction {
+			case "mute":
+				player.MuteLease = previousLease
+			case "ban":
+				player.BanLease = previousLease
+			}
+			m.playerHistory.Revision = previousRevision
+			m.playersMu.Unlock()
+			m.playerRestrictionLastError = err.Error()
+			return PlayerDetail{}, err
+		}
+	}
+	m.playersMu.Unlock()
+	restoreLease := func() {
+		if !leaseChanged {
+			return
+		}
+		m.playersMu.Lock()
+		index := playerRecordIndex(&m.playerHistory, playFabID)
+		if index >= 0 {
+			switch restriction {
+			case "mute":
+				m.playerHistory.Players[index].MuteLease =
+					clonePlayerRestrictionLease(previousLease)
+			case "ban":
+				m.playerHistory.Players[index].BanLease =
+					clonePlayerRestrictionLease(previousLease)
+			}
+			m.playerHistory.Revision++
+			_ = m.savePlayerHistoryLocked()
+		}
+		m.playersMu.Unlock()
+	}
+
 	m.rconCommandMu.Lock()
 	_, commandErr := m.executePlayerRCONCommand(command)
 	var banned, muted map[string]struct{}
@@ -1228,6 +1571,7 @@ func (m *Manager) setPlayerRestriction(
 	}
 	m.rconCommandMu.Unlock()
 	if commandErr != nil {
+		restoreLease()
 		m.playerRestrictionLastError = commandErr.Error()
 		return PlayerDetail{}, fmt.Errorf("%w: %v", errPlayerRestrictionSync, commandErr)
 	}
@@ -1239,6 +1583,7 @@ func (m *Manager) setPlayerRestriction(
 		actual = isBanned
 	}
 	if actual != enabled {
+		restoreLease()
 		m.playerRestrictionLastError = "server did not confirm the requested restriction state"
 		return PlayerDetail{}, fmt.Errorf(
 			"%w: server did not confirm the requested %s state",
@@ -1252,6 +1597,153 @@ func (m *Manager) setPlayerRestriction(
 	}
 	m.playerRestrictionLastSync = time.Now()
 	m.playerRestrictionLastError = ""
+	return m.playerDetail(playFabID)
+}
+
+func restrictionLeasesEqual(
+	left *PlayerRestrictionLease,
+	right *PlayerRestrictionLease,
+) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return left.ExpiresAt.Equal(right.ExpiresAt) &&
+		left.SetBy == right.SetBy &&
+		left.Reason == right.Reason
+}
+
+type expiredPlayerRestriction struct {
+	PlayFabID   string
+	Restriction string
+}
+
+func (m *Manager) expiredPlayerRestrictions(now time.Time) []expiredPlayerRestriction {
+	m.playersMu.RLock()
+	defer m.playersMu.RUnlock()
+	expired := make([]expiredPlayerRestriction, 0)
+	for _, player := range m.playerHistory.Players {
+		if player.Muted && player.MuteLease != nil &&
+			!now.Before(player.MuteLease.ExpiresAt) {
+			expired = append(expired, expiredPlayerRestriction{
+				PlayFabID: player.PlayFabID, Restriction: "mute",
+			})
+		}
+		if player.Banned && player.BanLease != nil &&
+			!now.Before(player.BanLease.ExpiresAt) {
+			expired = append(expired, expiredPlayerRestriction{
+				PlayFabID: player.PlayFabID, Restriction: "ban",
+			})
+		}
+	}
+	return expired
+}
+
+func (m *Manager) expirePlayerRestrictions() {
+	if !m.playerGameServerRunning() {
+		return
+	}
+	for _, restriction := range m.expiredPlayerRestrictions(time.Now()) {
+		if _, err := m.setPlayerRestrictionWithOptions(
+			restriction.PlayFabID,
+			restriction.Restriction,
+			false,
+			0,
+			"WebControl",
+			"system",
+		); err != nil {
+			m.auditActorEvent(
+				"system",
+				"local",
+				"player_restriction_expiry_failed",
+				map[string]string{
+					"playfab_id":  restriction.PlayFabID,
+					"restriction": restriction.Restriction,
+					"error":       safeAuditText(err.Error(), 160),
+				},
+			)
+			continue
+		}
+		m.auditActorEvent(
+			"system",
+			"local",
+			"player_restriction_expired",
+			map[string]string{
+				"playfab_id":  restriction.PlayFabID,
+				"restriction": restriction.Restriction,
+			},
+		)
+	}
+}
+
+func (m *Manager) playerRestrictionExpiryLoop(ctx context.Context) {
+	m.expirePlayerRestrictions()
+	ticker := time.NewTicker(playerRestrictionExpiryPoll)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			m.expirePlayerRestrictions()
+		}
+	}
+}
+
+func (m *Manager) playerAction(
+	playFabID string,
+	action string,
+	reason string,
+	message string,
+) (PlayerDetail, error) {
+	if !validMordhauPlayerID(playFabID) {
+		return PlayerDetail{}, errPlayerInvalid
+	}
+	playFabID = strings.ToUpper(playFabID)
+	m.playersMu.RLock()
+	index := playerRecordIndex(&m.playerHistory, playFabID)
+	var nickname string
+	if index >= 0 {
+		nickname = m.playerHistory.Players[index].LastNickname
+	}
+	m.playersMu.RUnlock()
+	if index < 0 {
+		return PlayerDetail{}, errPlayerNotFound
+	}
+	if !m.playerGameServerRunning() {
+		return PlayerDetail{}, errPlayerServerStopped
+	}
+
+	switch action {
+	case "kick":
+		normalized, err := normalizeModerationReason(reason)
+		if err != nil {
+			return PlayerDetail{}, err
+		}
+		m.rconCommandMu.Lock()
+		_, err = m.executePlayerRCONCommand(
+			"kick " + playFabID + " " + normalized,
+		)
+		m.rconCommandMu.Unlock()
+		if err != nil {
+			return PlayerDetail{}, fmt.Errorf("%w: kick failed: %v", errPlayerRestrictionSync, err)
+		}
+	case "warn":
+		message = strings.TrimSpace(message)
+		if err := validateUnicodeMessage(message); err != nil {
+			return PlayerDetail{}, errPlayerInvalid
+		}
+		label := nickname
+		if label == "" {
+			label = playFabID
+		}
+		if err := m.sendUnicodeRCONMessage(
+			"[Admin warning for " + label + "] " + message,
+		); err != nil {
+			return PlayerDetail{}, fmt.Errorf("%w: warning failed: %v", errPlayerRestrictionSync, err)
+		}
+	default:
+		return PlayerDetail{}, fmt.Errorf("%w: unsupported player action", errPlayerInvalid)
+	}
 	return m.playerDetail(playFabID)
 }
 

@@ -16,6 +16,7 @@ func TestRuntimeBridgeStatusIsCollectedOnceForSnapshots(t *testing.T) {
 	statusPath := filepath.Join(directory, "status.json")
 	requestPath := filepath.Join(directory, "request.txt")
 	responsePath := filepath.Join(directory, "response.json")
+	ping := 42
 	status := runtimeBridgeStatusFile{
 		Version:               1,
 		Ready:                 true,
@@ -30,12 +31,15 @@ func TestRuntimeBridgeStatusIsCollectedOnceForSnapshots(t *testing.T) {
 				PlayerSlot: -1,
 			},
 			{
-				ID:         "player_controller:11:21",
-				Kind:       "player_controller",
-				Class:      "BP_TestController_C",
-				PlayerSlot: 0,
-				PlayerName: "테스트 사용자",
-				PlayFabID:  "ABCDEF0123456789",
+				ID:                "player_controller:11:21",
+				Kind:              "player_controller",
+				Class:             "BP_TestController_C",
+				PlayerSlot:        0,
+				PlayerName:        "테스트 사용자",
+				PlayFabID:         "ABCDEF0123456789",
+				Platform:          "Epic",
+				PlatformAccountID: "test-account",
+				PingMS:            &ping,
 			},
 			{
 				ID:         "player_controller:12:22",
@@ -67,7 +71,10 @@ func TestRuntimeBridgeStatusIsCollectedOnceForSnapshots(t *testing.T) {
 	if !view.Ready || len(view.Targets) != 3 ||
 		view.Targets[1].Kind != "player_controller" ||
 		view.Targets[1].PlayerName != "테스트 사용자" ||
-		view.Targets[1].PlayFabID != "ABCDEF0123456789" {
+		view.Targets[1].PlayFabID != "ABCDEF0123456789" ||
+		view.Targets[1].Platform != "Epic" ||
+		view.Targets[1].PingMS == nil ||
+		*view.Targets[1].PingMS != ping {
 		t.Fatalf("unexpected runtime target view: %+v", view)
 	}
 }

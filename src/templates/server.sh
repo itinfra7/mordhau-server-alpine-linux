@@ -15,6 +15,8 @@ CONFIG_DIR="$ROOT/Mordhau/Saved/Config/WindowsServer"
 GAME_LOG="$ROOT/Mordhau/Saved/Logs/Mordhau.log"
 ARCHIVE_DIR="$ROOT/log"
 PID_FILE="$RUNTIME_DIR/mordhau.pid"
+DESIRED_STATE_FILE="$STATE_DIR/server-desired-state"
+LAUNCH_STATE_FILE="$RUNTIME_DIR/server-launch.json"
 LOCK_FILE="$STATE_DIR/lifecycle.lock"
 LANGUAGE_FILE="$STATE_DIR/language"
 START_MAP_FILE="$STATE_DIR/start-map"
@@ -41,6 +43,7 @@ Commands:
   stop       Stop MORDHAU Dedicated Server
   restart    Stop, update, apply staged INI/CustomPaks changes, and start it
   update     Update only; the server must be stopped
+  recover    Restart the last validated installation after an unexpected exit
   status     Show whether the server is running
   help       Show this help
 EOF
@@ -108,6 +111,43 @@ remove_pid_file() {
     if [ -f "$PID_FILE" ]; then
         unlink "$PID_FILE"
     fi
+}
+
+write_desired_state() {
+    desired_state=$1
+    case "$desired_state" in
+        running|stopped) ;;
+        *) return 1 ;;
+    esac
+    desired_temp="$STATE_DIR/.server-desired-state.$$"
+    printf '%s\n' "$desired_state" > "$desired_temp"
+    chmod 600 "$desired_temp"
+    mv "$desired_temp" "$DESIRED_STATE_FILE"
+}
+
+desired_state() {
+    [ -r "$DESIRED_STATE_FILE" ] || return 1
+    stored_state=$(sed -n '1p' "$DESIRED_STATE_FILE" | tr -d '\r\n')
+    case "$stored_state" in
+        running|stopped)
+            printf '%s\n' "$stored_state"
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+write_launch_state() {
+    launch_pid=$1
+    case "$launch_pid" in
+        ''|*[!0-9]*) return 1 ;;
+    esac
+    launch_temp="$RUNTIME_DIR/.server-launch.json.$$"
+    printf '{"version":1,"pid":%s,"started_at_unix":%s}\n' \
+        "$launch_pid" "$(date '+%s')" > "$launch_temp"
+    chmod 600 "$launch_temp"
+    mv "$launch_temp" "$LAUNCH_STATE_FILE"
 }
 
 validate_language() {
@@ -374,6 +414,7 @@ launch_server() {
             if [ "$actual_pid" != "$launched_pid" ]; then
                 printf '%s\n' "$actual_pid" > "$PID_FILE"
             fi
+            write_launch_state "$actual_pid"
             printf 'MORDHAU Dedicated Server is running (PID %s).\n' "$actual_pid"
             return 0
         fi
@@ -447,7 +488,7 @@ case "$command" in
         printf '%s\n' 'stopped'
         exit 3
         ;;
-    start|stop|restart|update)
+    start|stop|restart|update|recover)
         ;;
     *)
         usage
@@ -470,12 +511,18 @@ case "$command" in
         update_server
         apply_pending_config
         apply_pending_custompaks
-        launch_server
+        write_desired_state running
+        if ! launch_server; then
+            write_desired_state stopped
+            exit 1
+        fi
         ;;
     stop)
+        write_desired_state stopped
         stop_server
         ;;
     restart)
+        write_desired_state running
         stop_server
         update_server
         apply_pending_config
@@ -483,6 +530,15 @@ case "$command" in
         launch_server
         ;;
     update)
+        write_desired_state stopped
         update_server
+        ;;
+    recover)
+        [ "$(desired_state 2>/dev/null || true)" = "running" ] || {
+            printf '%s\n' \
+                'Automatic recovery is not armed because the desired state is stopped.' >&2
+            exit 1
+        }
+        launch_server
         ;;
 esac

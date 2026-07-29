@@ -15,6 +15,7 @@ const (
 	modUpdateStateVersion = 1
 	modRestartDelay       = 10 * time.Minute
 	modRestartRetryDelay  = 15 * time.Second
+	modRestartEmptyGrace  = 30 * time.Second
 )
 
 var modRestartNotices = []struct {
@@ -43,12 +44,15 @@ type modfileUpdate struct {
 }
 
 type modRestartSchedule struct {
-	DetectedAt     time.Time       `json:"detected_at"`
-	RestartAt      time.Time       `json:"restart_at"`
-	ServerPID      int             `json:"server_pid"`
-	Updates        []modfileUpdate `json:"updates"`
-	NextNotice     int             `json:"next_notice"`
-	FinalAnnounced bool            `json:"final_announced"`
+	DetectedAt       time.Time       `json:"detected_at"`
+	RestartAt        time.Time       `json:"restart_at,omitempty"`
+	ServerPID        int             `json:"server_pid"`
+	Updates          []modfileUpdate `json:"updates"`
+	Policy           string          `json:"policy"`
+	NextNotice       int             `json:"next_notice"`
+	WaitingAnnounced bool            `json:"waiting_announced"`
+	EmptySince       time.Time       `json:"empty_since,omitempty"`
+	FinalAnnounced   bool            `json:"final_announced"`
 }
 
 type modUpdateStateFile struct {
@@ -61,6 +65,7 @@ type modUpdateDetection struct {
 	Updates          []modfileUpdate
 	RestartScheduled bool
 	RestartAt        time.Time
+	RestartPolicy    string
 	ServerRunning    bool
 }
 
@@ -126,13 +131,23 @@ func validModUpdateState(state modUpdateStateFile) bool {
 		return true
 	}
 	schedule := state.Schedule
-	return !schedule.DetectedAt.IsZero() &&
-		!schedule.RestartAt.IsZero() &&
-		schedule.RestartAt.After(schedule.DetectedAt) &&
+	if !schedule.DetectedAt.IsZero() &&
 		schedule.ServerPID > 1 &&
 		validModfileUpdates(schedule.Updates) &&
 		schedule.NextNotice >= 0 &&
-		schedule.NextNotice <= len(modRestartNotices)
+		schedule.NextNotice <= len(modRestartNotices) {
+		switch schedule.Policy {
+		case modRestartPolicyWhenEmpty:
+			return schedule.RestartAt.IsZero() &&
+				(schedule.EmptySince.IsZero() ||
+					!schedule.EmptySince.Before(schedule.DetectedAt))
+		case modRestartPolicyCountdown, modRestartPolicyScheduled:
+			return !schedule.RestartAt.IsZero() &&
+				schedule.EmptySince.IsZero() &&
+				schedule.RestartAt.After(schedule.DetectedAt)
+		}
+	}
+	return false
 }
 
 func (m *Manager) saveModUpdateStateValue(state modUpdateStateFile) error {
@@ -153,13 +168,29 @@ func (m *Manager) loadOrCreateModUpdateState() error {
 			return fmt.Errorf("create mod update state: %w", err)
 		}
 	} else {
+		changed := false
+		if state.Schedule != nil && state.Schedule.Policy == "" {
+			state.Schedule.Policy = modRestartPolicyCountdown
+			changed = true
+		}
 		if !validModUpdateState(state) {
 			return errors.New("stored mod update state is invalid")
 		}
 		if !m.modRefreshSettings.RestartOnUpdate && state.Schedule != nil {
 			state.Schedule = nil
+			changed = true
+		} else if state.Schedule != nil &&
+			state.Schedule.Policy != m.modRefreshSettings.RestartPolicy {
+			configureModRestartSchedule(
+				state.Schedule,
+				m.modRefreshSettings,
+				time.Now(),
+			)
+			changed = true
+		}
+		if changed {
 			if err := m.saveModUpdateStateValue(state); err != nil {
-				return fmt.Errorf("clear disabled mod restart schedule: %w", err)
+				return fmt.Errorf("migrate mod update state: %w", err)
 			}
 		} else if err := os.Chmod(path, 0600); err != nil {
 			return err
@@ -251,6 +282,53 @@ func (m *Manager) serverProcessForMods() (int, bool) {
 	return serverProcess()
 }
 
+func nextScheduledModRestart(now time.Time, value string) time.Time {
+	parsed, err := time.Parse("15:04", value)
+	if err != nil {
+		parsed, _ = time.Parse("15:04", defaultModRestartTime)
+	}
+	candidate := time.Date(
+		now.Year(),
+		now.Month(),
+		now.Day(),
+		parsed.Hour(),
+		parsed.Minute(),
+		0,
+		0,
+		now.Location(),
+	)
+	if candidate.Before(now.Add(modRestartDelay)) {
+		candidate = candidate.AddDate(0, 0, 1)
+	}
+	return candidate
+}
+
+func configureModRestartSchedule(
+	schedule *modRestartSchedule,
+	settings modRefreshSettingsFile,
+	now time.Time,
+) {
+	if schedule == nil {
+		return
+	}
+	schedule.Policy = settings.RestartPolicy
+	if !validModRestartPolicy(schedule.Policy) {
+		schedule.Policy = modRestartPolicyCountdown
+	}
+	switch schedule.Policy {
+	case modRestartPolicyWhenEmpty:
+		schedule.RestartAt = time.Time{}
+	case modRestartPolicyScheduled:
+		schedule.RestartAt = nextScheduledModRestart(now, settings.ScheduledTime)
+	default:
+		schedule.RestartAt = now.Add(modRestartDelay)
+	}
+	schedule.NextNotice = 0
+	schedule.WaitingAnnounced = false
+	schedule.EmptySince = time.Time{}
+	schedule.FinalAnnounced = false
+}
+
 func (m *Manager) recordSuccessfulModRefreshLocked(
 	view ModManagementView,
 	finished time.Time,
@@ -278,10 +356,14 @@ func (m *Manager) recordSuccessfulModRefreshLocked(
 			case state.Schedule == nil:
 				state.Schedule = &modRestartSchedule{
 					DetectedAt: finished,
-					RestartAt:  finished.Add(modRestartDelay),
 					ServerPID:  pid,
 					Updates:    append([]modfileUpdate(nil), updates...),
 				}
+				configureModRestartSchedule(
+					state.Schedule,
+					m.modRefreshSettings,
+					finished,
+				)
 				detection.RestartScheduled = true
 			case state.Schedule.ServerPID == pid:
 				state.Schedule.Updates = mergeModfileUpdates(
@@ -296,6 +378,7 @@ func (m *Manager) recordSuccessfulModRefreshLocked(
 			}
 			if detection.RestartScheduled {
 				detection.RestartAt = state.Schedule.RestartAt
+				detection.RestartPolicy = state.Schedule.Policy
 			}
 		}
 	}
@@ -327,7 +410,10 @@ func (m *Manager) handleModUpdateDetection(detection modUpdateDetection) {
 		"server_running":    strconv.FormatBool(detection.ServerRunning),
 	}
 	if detection.RestartScheduled {
-		details["restart_at"] = detection.RestartAt.Format(time.RFC3339)
+		details["restart_policy"] = detection.RestartPolicy
+		if !detection.RestartAt.IsZero() {
+			details["restart_at"] = detection.RestartAt.Format(time.RFC3339)
+		}
 	}
 	m.auditActorEvent("system", "local", "active_mod_update_detected", details)
 	if detection.RestartScheduled {
@@ -349,6 +435,8 @@ func sameModRestartSchedule(left, right *modRestartSchedule) bool {
 	return left != nil &&
 		right != nil &&
 		left.ServerPID == right.ServerPID &&
+		left.Policy == right.Policy &&
+		left.DetectedAt.Equal(right.DetectedAt) &&
 		left.RestartAt.Equal(right.RestartAt)
 }
 
@@ -412,6 +500,10 @@ func modRestartNoticeMessage(minutes int) string {
 
 func finalModRestartMessage() string {
 	return "[MOD UPDATE] The server is restarting now to apply mod updates."
+}
+
+func emptyServerModRestartMessage() string {
+	return "[MOD UPDATE] Updates are ready. The server will restart as soon as no players remain."
 }
 
 func latestDueModRestartNotice(schedule *modRestartSchedule, now time.Time) int {
@@ -496,6 +588,105 @@ func (m *Manager) markFinalModRestartNotice(expected *modRestartSchedule) {
 	}
 	m.modUpdateState = state
 	m.modsMu.Unlock()
+}
+
+func (m *Manager) markEmptyRestartAnnounced(expected *modRestartSchedule) bool {
+	m.modsMu.Lock()
+	if !sameModRestartSchedule(m.modUpdateState.Schedule, expected) {
+		m.modsMu.Unlock()
+		return false
+	}
+	if m.modUpdateState.Schedule.WaitingAnnounced {
+		m.modsMu.Unlock()
+		return true
+	}
+	state := cloneModUpdateState(m.modUpdateState)
+	state.Schedule.WaitingAnnounced = true
+	if err := m.saveModUpdateStateValue(state); err != nil {
+		m.modsMu.Unlock()
+		m.auditActorEvent("system", "local", "mod_update_state_save_failed",
+			map[string]string{"phase": "waiting_for_empty"})
+		return false
+	}
+	m.modUpdateState = state
+	m.modsMu.Unlock()
+	return true
+}
+
+func (m *Manager) setEmptyRestartObserved(
+	expected *modRestartSchedule,
+	emptySince time.Time,
+) (*modRestartSchedule, bool) {
+	m.modsMu.Lock()
+	if !sameModRestartSchedule(m.modUpdateState.Schedule, expected) {
+		m.modsMu.Unlock()
+		return nil, false
+	}
+	state := cloneModUpdateState(m.modUpdateState)
+	if state.Schedule.EmptySince.Equal(emptySince) {
+		current := cloneModRestartSchedule(state.Schedule)
+		m.modsMu.Unlock()
+		return current, true
+	}
+	state.Schedule.EmptySince = emptySince
+	if err := m.saveModUpdateStateValue(state); err != nil {
+		m.modsMu.Unlock()
+		m.auditActorEvent("system", "local", "mod_update_state_save_failed",
+			map[string]string{"phase": "empty_server_observation"})
+		return nil, false
+	}
+	m.modUpdateState = state
+	current := cloneModRestartSchedule(state.Schedule)
+	m.modsMu.Unlock()
+	return current, true
+}
+
+func (m *Manager) processEmptyServerRestart(
+	schedule *modRestartSchedule,
+	now time.Time,
+) time.Time {
+	if !schedule.WaitingAnnounced {
+		message := emptyServerModRestartMessage()
+		if err := m.sendModRestartNotice(message); err != nil {
+			m.auditActorEvent("system", "local", "mod_update_restart_notice_failed",
+				map[string]string{
+					"policy":  modRestartPolicyWhenEmpty,
+					"mod_ids": modUpdateIDs(schedule.Updates),
+				})
+			return now.Add(modRestartRetryDelay)
+		}
+		m.addRCONEvent("outbound", "system: "+message)
+		if !m.markEmptyRestartAnnounced(schedule) {
+			return now.Add(modRestartRetryDelay)
+		}
+		m.auditActorEvent("system", "local", "mod_update_restart_notice_sent",
+			map[string]string{
+				"policy":  modRestartPolicyWhenEmpty,
+				"mod_ids": modUpdateIDs(schedule.Updates),
+			})
+		_, schedule = m.scheduledRestartSnapshot()
+		if schedule == nil {
+			return time.Time{}
+		}
+	}
+	runtime := m.runtimeSummaryView()
+	if !runtime.Ready || runtime.PlayerControllerCount > 0 {
+		if !schedule.EmptySince.IsZero() {
+			_, _ = m.setEmptyRestartObserved(schedule, time.Time{})
+		}
+		return now.Add(modRestartRetryDelay)
+	}
+	if schedule.EmptySince.IsZero() {
+		updated, saved := m.setEmptyRestartObserved(schedule, now)
+		if !saved {
+			return now.Add(modRestartRetryDelay)
+		}
+		schedule = updated
+	}
+	if now.Sub(schedule.EmptySince) < modRestartEmptyGrace {
+		return schedule.EmptySince.Add(modRestartEmptyGrace)
+	}
+	return m.processFinalModRestart(schedule, now)
 }
 
 func (m *Manager) processModRestartNotice(
@@ -603,6 +794,9 @@ func (m *Manager) processModRestartSchedule(now time.Time) time.Time {
 			return now.Add(modRestartRetryDelay)
 		}
 		return time.Time{}
+	}
+	if schedule.Policy == modRestartPolicyWhenEmpty {
+		return m.processEmptyServerRestart(schedule, now)
 	}
 	if !now.Before(schedule.RestartAt) {
 		return m.processFinalModRestart(schedule, now)

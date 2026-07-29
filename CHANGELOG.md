@@ -4,6 +4,83 @@ All notable changes to this repository are documented in this file.
 
 ## [Unreleased]
 
+## [2.3.0] - 2026-07-29
+
+### Added
+
+- Add desired-state-aware crash detection and automatic game-server recovery
+  with a configurable retry budget, bounded exponential backoff, retained
+  process diagnostics, and an authenticated manual retry control.
+- Add a Monitoring panel with server-side one-minute CPU, memory, swap, disk,
+  and connected-player history for 24-hour and seven-day charts.
+- Add bounded audit and Server Events search, JSON Lines export, configurable
+  log rotation, archived game-log retention, disk-threshold monitoring, and
+  optional HTTPS webhook alerts for crashes, exhausted recovery, disk usage,
+  and mod-refresh failures.
+- Make the dashboard Players card open a live connected-player directory with
+  PlayFab ID, nickname, country flag, account level, platform, and ping, with
+  direct navigation to the corresponding Player Profile.
+- Add Steam, Epic, and Unknown platform badges, exact live ping sampling,
+  retained per-player connection timelines, reasoned kick controls, and
+  Unicode administrator warnings.
+- Add permanent or timed mute and ban controls with retained reason,
+  responsible administrator, expiry time, and automatic server-side reversal.
+- Add a visual MapRotation editor backed by the installed-content catalog,
+  with add, reorder, enable, disable, remove, revision-check, and staged-save
+  behavior.
+- Add modfile publication metadata and a dependency-aware removal planner that
+  can remove exclusively required dependencies while retaining shared or
+  unresolved dependencies.
+- Add active-mod update restart policies for a ten-minute countdown, a
+  continuously empty server, or a selected server-local scheduled time.
+
+### Changed
+
+- Distinguish intentional stops from unexpected game-process exits through a
+  root-only desired-state file. Automatic recovery reuses the last validated
+  installation without running SteamCMD or applying staged configuration.
+- Require the Runtime bridge to report zero PlayerControllers continuously for
+  30 seconds before the empty-server mod restart policy proceeds.
+- Preserve configured MapRotation entries that are temporarily absent from the
+  installed-content catalog and retain duplicate map names that validly belong
+  to multiple game modes.
+- Sample system metrics once per minute in the web process and distribute the
+  same snapshot and retained history to every authenticated browser.
+
+### Security
+
+- Keep recovery state, metrics history, monitoring policy, moderation leases,
+  and player session history in root-only files.
+- Require authentication and CSRF validation for recovery, monitoring,
+  MapRotation, mod-removal, moderation, kick, and warning changes.
+- Restrict webhook delivery to HTTPS with TLS 1.2 or newer, no redirects,
+  bounded requests, pinned DNS results, and rejection of private, loopback,
+  link-local, multicast, unspecified, documentation, benchmark, carrier-grade
+  NAT, and reserved destinations.
+- Never return the saved webhook URL or mod.io API key to the browser, and keep
+  moderation reason text and webhook destinations out of audit details.
+
+### Validation
+
+- Verify crash detection, intentional-stop exclusion, retry-window pruning,
+  exponential backoff, retry exhaustion, manual recovery, and persisted
+  desired/launch state.
+- Verify one-minute metric retention and compaction, 24-hour and seven-day
+  views, log rotation and retention, bounded search/export, webhook address
+  policy, alert cooldowns, and secret-safe status reporting.
+- Verify timed moderation expiry, rollback on failed RCON confirmation,
+  session timelines, live player merging, Steam/Epic normalization, and exact
+  ping transport through the native Runtime bridge.
+- Verify MapRotation preservation, ordering, duplicate identity rejection,
+  disabled state, dynamic map catalog integration, and multi-mode map
+  retention.
+- Verify recursive dependency-removal plans, shared dependency retention,
+  revision conflict handling, modfile metadata, all three restart policies,
+  the empty-server grace interval, and persisted schedule migration.
+- Pass `go test ./...`, `go vet ./...`, `go test -race ./...`, JavaScript
+  syntax validation, POSIX shell syntax validation, deterministic Runtime
+  bridge builds, Unicode Bridge installation tests, and whitespace checks.
+
 ## [2.2.2] - 2026-07-28
 
 ### Added

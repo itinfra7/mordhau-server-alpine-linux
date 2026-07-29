@@ -35,10 +35,21 @@ func (m *Manager) Handler() http.Handler {
 	mux.HandleFunc("/api/players", m.withSession(m.playersHandler))
 	mux.HandleFunc("/api/players/detail", m.withSession(m.playerDetailHandler))
 	mux.HandleFunc("/api/players/restriction", m.withSession(m.playerRestrictionHandler))
+	mux.HandleFunc("/api/players/action", m.withSession(m.playerActionHandler))
 	mux.HandleFunc("/api/players/comments", m.withSession(m.playerCommentHandler))
 	mux.HandleFunc("/api/server/action", m.withSession(m.serverActionHandler))
+	mux.HandleFunc("/api/recovery/settings", m.withSession(m.recoverySettingsHandler))
+	mux.HandleFunc("/api/recovery/retry", m.withSession(m.recoveryRetryHandler))
+	mux.HandleFunc("/api/monitoring", m.withSession(m.monitoringHandler))
+	mux.HandleFunc("/api/monitoring/settings", m.withSession(m.monitoringSettingsHandler))
+	mux.HandleFunc("/api/monitoring/webhook/test", m.withSession(m.monitoringWebhookTestHandler))
+	mux.HandleFunc("/api/monitoring/metrics", m.withSession(m.monitoringMetricsHandler))
+	mux.HandleFunc("/api/monitoring/logs", m.withSession(m.monitoringLogsHandler))
+	mux.HandleFunc("/api/monitoring/logs/export", m.withSession(m.monitoringLogsExportHandler))
 	mux.HandleFunc("/api/maps", m.withSession(m.mapCatalogHandler))
 	mux.HandleFunc("/api/maps/change", m.withSession(m.mapChangeHandler))
+	mux.HandleFunc("/api/maprotation", m.withSession(m.mapRotationHandler))
+	mux.HandleFunc("/api/maprotation/save", m.withSession(m.mapRotationSaveHandler))
 	mux.HandleFunc("/api/server/events/history", m.withSession(m.rconHistoryHandler))
 	mux.HandleFunc("/api/rcon/history", m.withSession(m.rconHistoryHandler))
 	mux.HandleFunc("/api/rcon/message", m.withSession(m.rconMessageHandler))
@@ -53,6 +64,7 @@ func (m *Manager) Handler() http.Handler {
 	mux.HandleFunc("/api/mods/plan", m.withSession(m.modPlanHandler))
 	mux.HandleFunc("/api/mods/add", m.withSession(m.modAddHandler))
 	mux.HandleFunc("/api/mods/enabled", m.withSession(m.modEnabledHandler))
+	mux.HandleFunc("/api/mods/remove/plan", m.withSession(m.modRemovePlanHandler))
 	mux.HandleFunc("/api/mods/remove", m.withSession(m.modRemoveHandler))
 	mux.HandleFunc("/api/modio/settings", m.withSession(m.modIOSettingsHandler))
 	mux.HandleFunc("/api/modio/settings/clear", m.withSession(m.modIOSettingsClearHandler))
@@ -502,15 +514,24 @@ func (m *Manager) playerRestrictionHandler(
 		writeError(response, http.StatusBadRequest, err.Error())
 		return
 	}
-	detail, err := m.setPlayerRestriction(
+	detail, err := m.setPlayerRestrictionWithOptions(
 		change.PlayFabID,
 		change.Restriction,
 		change.Enabled,
+		change.DurationMinutes,
+		change.Reason,
+		session.Username,
 	)
+	reason := strings.TrimSpace(change.Reason)
 	auditDetails := map[string]string{
-		"playfab_id":  change.PlayFabID,
-		"restriction": change.Restriction,
-		"enabled":     strconv.FormatBool(change.Enabled),
+		"playfab_id":       change.PlayFabID,
+		"restriction":      change.Restriction,
+		"enabled":          strconv.FormatBool(change.Enabled),
+		"duration_minutes": strconv.Itoa(change.DurationMinutes),
+		"reason_present":   strconv.FormatBool(reason != ""),
+		"reason_characters": strconv.Itoa(
+			utf8.RuneCountInString(reason),
+		),
 	}
 	if err != nil {
 		auditDetails["error"] = err.Error()
@@ -527,6 +548,65 @@ func (m *Manager) playerRestrictionHandler(
 		request,
 		session.Username,
 		"player_restriction_changed",
+		auditDetails,
+	)
+	writeJSON(response, http.StatusOK, detail)
+}
+
+func (m *Manager) playerActionHandler(
+	response http.ResponseWriter,
+	request *http.Request,
+	session Session,
+) {
+	if request.Method != http.MethodPost {
+		response.Header().Set("Allow", http.MethodPost)
+		http.Error(response, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !validCSRF(request, session) {
+		writeError(response, http.StatusForbidden, "invalid CSRF token")
+		return
+	}
+	var change playerActionRequest
+	if err := decodeJSON(response, request, &change); err != nil {
+		writeError(response, http.StatusBadRequest, err.Error())
+		return
+	}
+	detail, err := m.playerAction(
+		change.PlayFabID,
+		change.Action,
+		change.Reason,
+		change.Message,
+	)
+	reason := strings.TrimSpace(change.Reason)
+	auditDetails := map[string]string{
+		"playfab_id":     change.PlayFabID,
+		"action":         change.Action,
+		"reason_present": strconv.FormatBool(reason != ""),
+		"reason_characters": strconv.Itoa(
+			utf8.RuneCountInString(reason),
+		),
+	}
+	if change.Action == "warn" {
+		auditDetails["message_characters"] = strconv.Itoa(
+			utf8.RuneCountInString(strings.TrimSpace(change.Message)),
+		)
+	}
+	if err != nil {
+		auditDetails["error"] = safeAuditText(err.Error(), 200)
+		m.auditRequestEvent(
+			request,
+			session.Username,
+			"player_action_failed",
+			auditDetails,
+		)
+		writeError(response, playerHTTPStatus(err), err.Error())
+		return
+	}
+	m.auditRequestEvent(
+		request,
+		session.Username,
+		"player_action_completed",
 		auditDetails,
 	)
 	writeJSON(response, http.StatusOK, detail)
@@ -639,6 +719,12 @@ func (m *Manager) serverActionHandler(response http.ResponseWriter, request *htt
 		writeError(response, http.StatusBadRequest, err.Error())
 		return
 	}
+	switch body.Action {
+	case "start", "stop", "restart", "update":
+	default:
+		writeError(response, http.StatusBadRequest, "unsupported server action")
+		return
+	}
 	if err := m.requestOperation(
 		body.Action,
 		session.Username,
@@ -652,6 +738,243 @@ func (m *Manager) serverActionHandler(response http.ResponseWriter, request *htt
 		"action": body.Action,
 	})
 	writeJSON(response, http.StatusAccepted, map[string]string{"status": "accepted"})
+}
+
+func (m *Manager) recoverySettingsHandler(
+	response http.ResponseWriter,
+	request *http.Request,
+	session Session,
+) {
+	if request.Method == http.MethodGet {
+		writeJSON(response, http.StatusOK, m.recoveryView())
+		return
+	}
+	if request.Method != http.MethodPost {
+		response.Header().Set("Allow", "GET, POST")
+		http.Error(response, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !validCSRF(request, session) {
+		writeError(response, http.StatusForbidden, "invalid CSRF token")
+		return
+	}
+	var body struct {
+		Enabled       *bool `json:"enabled"`
+		MaxAttempts   *int  `json:"max_attempts"`
+		WindowMinutes *int  `json:"window_minutes"`
+	}
+	if err := decodeJSON(response, request, &body); err != nil {
+		writeError(response, http.StatusBadRequest, err.Error())
+		return
+	}
+	view, err := m.setRecoverySettings(
+		body.Enabled,
+		body.MaxAttempts,
+		body.WindowMinutes,
+	)
+	if err != nil {
+		writeError(response, http.StatusBadRequest, err.Error())
+		return
+	}
+	m.auditRequestEvent(request, session.Username, "crash_recovery_settings_changed",
+		map[string]string{
+			"enabled":        strconv.FormatBool(view.Settings.Enabled),
+			"max_attempts":   strconv.Itoa(view.Settings.MaxAttempts),
+			"window_minutes": strconv.Itoa(view.Settings.WindowMinutes),
+		})
+	writeJSON(response, http.StatusOK, view)
+}
+
+func (m *Manager) recoveryRetryHandler(
+	response http.ResponseWriter,
+	request *http.Request,
+	session Session,
+) {
+	if request.Method != http.MethodPost {
+		response.Header().Set("Allow", http.MethodPost)
+		http.Error(response, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !validCSRF(request, session) {
+		writeError(response, http.StatusForbidden, "invalid CSRF token")
+		return
+	}
+	view, err := m.retryRecoveryNow()
+	if err != nil {
+		writeError(response, http.StatusConflict, err.Error())
+		return
+	}
+	m.auditRequestEvent(request, session.Username, "crash_recovery_retry_reset", nil)
+	writeJSON(response, http.StatusAccepted, view)
+}
+
+func (m *Manager) monitoringHandler(
+	response http.ResponseWriter,
+	request *http.Request,
+	_ Session,
+) {
+	if request.Method != http.MethodGet {
+		response.Header().Set("Allow", http.MethodGet)
+		http.Error(response, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	writeJSON(response, http.StatusOK, m.monitoringView())
+}
+
+func (m *Manager) monitoringSettingsHandler(
+	response http.ResponseWriter,
+	request *http.Request,
+	session Session,
+) {
+	if request.Method != http.MethodPost {
+		response.Header().Set("Allow", http.MethodPost)
+		http.Error(response, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !validCSRF(request, session) {
+		writeError(response, http.StatusForbidden, "invalid CSRF token")
+		return
+	}
+	var change monitoringSettingsRequest
+	if err := decodeJSON(response, request, &change); err != nil {
+		writeError(response, http.StatusBadRequest, err.Error())
+		return
+	}
+	view, err := m.setMonitoringSettings(change)
+	if err != nil {
+		writeError(response, http.StatusBadRequest, err.Error())
+		return
+	}
+	m.auditRequestEvent(
+		request,
+		session.Username,
+		"monitoring_settings_changed",
+		map[string]string{
+			"webhook_configured": strconv.FormatBool(view.Settings.WebhookConfigured),
+			"log_size_mib":       strconv.Itoa(view.Settings.LogSizeMiB),
+			"log_backups":        strconv.Itoa(view.Settings.LogBackups),
+		},
+	)
+	writeJSON(response, http.StatusOK, view)
+}
+
+func (m *Manager) monitoringWebhookTestHandler(
+	response http.ResponseWriter,
+	request *http.Request,
+	session Session,
+) {
+	if request.Method != http.MethodPost {
+		response.Header().Set("Allow", http.MethodPost)
+		http.Error(response, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !validCSRF(request, session) {
+		writeError(response, http.StatusForbidden, "invalid CSRF token")
+		return
+	}
+	if err := m.testMonitoringWebhook(); err != nil {
+		m.auditRequestEvent(
+			request,
+			session.Username,
+			"monitoring_webhook_test_failed",
+			map[string]string{"error": safeAuditText(err.Error(), 160)},
+		)
+		writeError(response, http.StatusBadGateway, err.Error())
+		return
+	}
+	m.auditRequestEvent(
+		request,
+		session.Username,
+		"monitoring_webhook_test_succeeded",
+		nil,
+	)
+	writeJSON(response, http.StatusOK, m.monitoringView())
+}
+
+func (m *Manager) monitoringMetricsHandler(
+	response http.ResponseWriter,
+	request *http.Request,
+	_ Session,
+) {
+	if request.Method != http.MethodGet {
+		response.Header().Set("Allow", http.MethodGet)
+		http.Error(response, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	writeJSON(
+		response,
+		http.StatusOK,
+		m.metricsHistoryView(request.URL.Query().Get("range")),
+	)
+}
+
+func (m *Manager) monitoringLogsHandler(
+	response http.ResponseWriter,
+	request *http.Request,
+	_ Session,
+) {
+	if request.Method != http.MethodGet {
+		response.Header().Set("Allow", http.MethodGet)
+		http.Error(response, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	query, err := parseLogSearchQuery(request, logSearchMaximumLimit)
+	if err != nil {
+		writeError(response, http.StatusBadRequest, err.Error())
+		return
+	}
+	view, err := m.searchManagedLogs(query)
+	if err != nil {
+		writeError(response, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(response, http.StatusOK, view)
+}
+
+func (m *Manager) monitoringLogsExportHandler(
+	response http.ResponseWriter,
+	request *http.Request,
+	session Session,
+) {
+	if request.Method != http.MethodGet {
+		response.Header().Set("Allow", http.MethodGet)
+		http.Error(response, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	query, err := parseLogSearchQuery(request, logExportMaximumLimit)
+	if err != nil {
+		writeError(response, http.StatusBadRequest, err.Error())
+		return
+	}
+	if request.URL.Query().Get("limit") == "" {
+		query.Limit = logExportMaximumLimit
+	}
+	view, err := m.searchManagedLogs(query)
+	if err != nil {
+		writeError(response, http.StatusInternalServerError, err.Error())
+		return
+	}
+	response.Header().Set("Content-Type", "application/x-ndjson; charset=utf-8")
+	response.Header().Set(
+		"Content-Disposition",
+		`attachment; filename="mordhau-control-logs.jsonl"`,
+	)
+	encoder := json.NewEncoder(response)
+	encoder.SetEscapeHTML(false)
+	for _, record := range view.Records {
+		if err := encoder.Encode(record); err != nil {
+			return
+		}
+	}
+	m.auditRequestEvent(
+		request,
+		session.Username,
+		"monitoring_logs_exported",
+		map[string]string{
+			"source":  query.Source,
+			"records": strconv.Itoa(len(view.Records)),
+		},
+	)
 }
 
 func (m *Manager) mapCatalogHandler(
@@ -673,6 +996,75 @@ func (m *Manager) mapCatalogHandler(
 		writeError(response, status, err.Error())
 		return
 	}
+	writeJSON(response, http.StatusOK, view)
+}
+
+func (m *Manager) mapRotationHandler(
+	response http.ResponseWriter,
+	request *http.Request,
+	_ Session,
+) {
+	if request.Method != http.MethodGet {
+		response.Header().Set("Allow", http.MethodGet)
+		http.Error(response, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	view, err := m.mapRotationView(request.Context())
+	if err != nil {
+		writeError(response, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(response, http.StatusOK, view)
+}
+
+func (m *Manager) mapRotationSaveHandler(
+	response http.ResponseWriter,
+	request *http.Request,
+	session Session,
+) {
+	if request.Method != http.MethodPost {
+		response.Header().Set("Allow", http.MethodPost)
+		http.Error(response, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !validCSRF(request, session) {
+		writeError(response, http.StatusForbidden, "invalid CSRF token")
+		return
+	}
+	var change mapRotationSaveRequest
+	if err := decodeJSON(response, request, &change); err != nil {
+		writeError(response, http.StatusBadRequest, err.Error())
+		return
+	}
+	view, err := m.saveMapRotation(request.Context(), change)
+	if err != nil {
+		status := http.StatusBadRequest
+		if errors.Is(err, errRevisionConflict) {
+			status = http.StatusConflict
+		} else if errors.Is(err, errLifecycleBusy) {
+			status = http.StatusLocked
+		}
+		m.auditRequestEvent(
+			request,
+			session.Username,
+			"map_rotation_save_failed",
+			map[string]string{
+				"entries": strconv.Itoa(len(change.Entries)),
+				"error":   safeAuditText(err.Error(), 200),
+			},
+		)
+		writeError(response, status, err.Error())
+		return
+	}
+	m.auditRequestEvent(
+		request,
+		session.Username,
+		"map_rotation_saved",
+		map[string]string{
+			"entries": strconv.Itoa(len(change.Entries)),
+			"staged":  strconv.FormatBool(view.Staged),
+		},
+	)
 	writeJSON(response, http.StatusOK, view)
 }
 
@@ -1271,14 +1663,21 @@ func (m *Manager) modRefreshSettingsHandler(
 		return
 	}
 	var body struct {
-		Minutes         *int  `json:"minutes"`
-		RestartOnUpdate *bool `json:"restart_on_update"`
+		Minutes         *int    `json:"minutes"`
+		RestartOnUpdate *bool   `json:"restart_on_update"`
+		RestartPolicy   *string `json:"restart_policy"`
+		ScheduledTime   *string `json:"scheduled_time"`
 	}
 	if err := decodeJSON(response, request, &body); err != nil {
 		writeError(response, http.StatusBadRequest, err.Error())
 		return
 	}
-	view, err := m.setModRefreshSettings(body.Minutes, body.RestartOnUpdate)
+	view, err := m.setModRefreshSettingsWithPolicy(
+		body.Minutes,
+		body.RestartOnUpdate,
+		body.RestartPolicy,
+		body.ScheduledTime,
+	)
 	if err != nil {
 		writeError(response, http.StatusBadRequest, err.Error())
 		return
@@ -1289,6 +1688,12 @@ func (m *Manager) modRefreshSettingsHandler(
 	}
 	if body.RestartOnUpdate != nil {
 		details["restart_on_update"] = strconv.FormatBool(*body.RestartOnUpdate)
+	}
+	if body.RestartPolicy != nil {
+		details["restart_policy"] = *body.RestartPolicy
+	}
+	if body.ScheduledTime != nil {
+		details["scheduled_time"] = *body.ScheduledTime
 	}
 	m.auditRequestEvent(
 		request,
@@ -1396,13 +1801,55 @@ func (m *Manager) modRemoveHandler(response http.ResponseWriter, request *http.R
 		return
 	}
 	var body struct {
-		ID int `json:"id"`
+		ID        int    `json:"id"`
+		RemoveIDs []int  `json:"remove_ids"`
+		Revision  uint64 `json:"revision"`
 	}
 	if err := decodeJSON(response, request, &body); err != nil {
 		writeError(response, http.StatusBadRequest, err.Error())
 		return
 	}
-	change, err := m.removeConfiguredMod(body.ID)
+	view, err := m.cachedModManagementView()
+	if err != nil {
+		writeError(response, http.StatusBadGateway, err.Error())
+		return
+	}
+	if body.Revision != 0 && body.Revision != view.Revision {
+		writeError(response, http.StatusConflict, "mod metadata changed; inspect the removal plan again")
+		return
+	}
+	plan, err := buildModRemovalPlan(view, body.ID)
+	if err != nil {
+		writeError(response, http.StatusBadRequest, err.Error())
+		return
+	}
+	allowed := make(map[int]bool, len(plan.Candidates))
+	for _, candidate := range plan.Candidates {
+		allowed[candidate.ID] = true
+	}
+	removeIDs := body.RemoveIDs
+	if len(removeIDs) == 0 {
+		removeIDs = []int{body.ID}
+	}
+	if len(removeIDs) > len(plan.Candidates) {
+		writeError(response, http.StatusBadRequest, "removal selection contains too many entries")
+		return
+	}
+	targetIncluded := false
+	seen := make(map[int]bool, len(removeIDs))
+	for _, id := range removeIDs {
+		if !allowed[id] || seen[id] {
+			writeError(response, http.StatusBadRequest, "removal selection is not part of the current dependency plan")
+			return
+		}
+		seen[id] = true
+		targetIncluded = targetIncluded || id == body.ID
+	}
+	if !targetIncluded {
+		writeError(response, http.StatusBadRequest, "removal selection must include the selected mod")
+		return
+	}
+	change, err := m.removeConfiguredMods(removeIDs)
 	if err != nil {
 		status := http.StatusBadRequest
 		if errors.Is(err, errLifecycleBusy) {
@@ -1413,11 +1860,41 @@ func (m *Manager) modRemoveHandler(response http.ResponseWriter, request *http.R
 	}
 	_, _ = m.refreshModCacheAfterConfigurationChange()
 	m.auditRequestEvent(request, session.Username, "mod_configuration_changed", map[string]string{
-		"action": "remove",
-		"mod_id": strconv.Itoa(body.ID),
-		"staged": strconv.FormatBool(change.Staged),
+		"action":      "remove",
+		"mod_id":      strconv.Itoa(body.ID),
+		"removed_ids": formatAuditIDs(change.Removed),
+		"staged":      strconv.FormatBool(change.Staged),
 	})
 	writeJSON(response, http.StatusOK, change)
+}
+
+func (m *Manager) modRemovePlanHandler(
+	response http.ResponseWriter,
+	request *http.Request,
+	session Session,
+) {
+	if request.Method != http.MethodPost || !validCSRF(request, session) {
+		writeError(response, http.StatusForbidden, "invalid request")
+		return
+	}
+	var body struct {
+		ID int `json:"id"`
+	}
+	if err := decodeJSON(response, request, &body); err != nil {
+		writeError(response, http.StatusBadRequest, err.Error())
+		return
+	}
+	view, err := m.cachedModManagementView()
+	if err != nil {
+		writeError(response, http.StatusBadGateway, err.Error())
+		return
+	}
+	plan, err := buildModRemovalPlan(view, body.ID)
+	if err != nil {
+		writeError(response, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(response, http.StatusOK, plan)
 }
 
 func (m *Manager) modIOSettingsHandler(response http.ResponseWriter, request *http.Request, session Session) {

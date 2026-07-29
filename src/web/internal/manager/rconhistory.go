@@ -101,6 +101,9 @@ func (m *Manager) appendRCONEventLog(event RCONEvent) error {
 	m.rconLogMu.Lock()
 	defer m.rconLogMu.Unlock()
 
+	if err := m.rotateManagedLog(m.rconEventLogFilePath()); err != nil {
+		return err
+	}
 	file, err := os.OpenFile(
 		m.rconEventLogFilePath(),
 		os.O_APPEND|os.O_CREATE|os.O_WRONLY,

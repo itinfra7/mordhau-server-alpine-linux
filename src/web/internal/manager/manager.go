@@ -36,6 +36,32 @@ type Manager struct {
 	metrics   Metrics
 	cpu       cpuSample
 
+	monitoringMu             sync.RWMutex
+	monitoringSettings       monitoringSettingsFile
+	monitoringStatus         MonitoringStatus
+	metricHistory            []MetricHistoryPoint
+	metricWritesSinceCompact int
+	monitoringSettingsFile   string
+	metricsHistoryFile       string
+	monitoringAlertQueue     chan monitoringAlert
+	monitoringAlertLast      map[string]time.Time
+	monitoringNow            func() time.Time
+
+	recoveryMu               sync.RWMutex
+	recoverySettings         recoverySettingsFile
+	recoveryState            recoveryStateFile
+	recoveryObservedRunning  bool
+	recoveryObservedPID      int
+	recoverySettingsFile     string
+	recoveryStateFile        string
+	recoveryDesiredStateFile string
+	recoveryLaunchStateFile  string
+	recoveryConsoleLogFile   string
+	recoveryServerProcess    func() (int, bool)
+	recoveryOperationStart   func(action, username, clientIP, peerIP string) error
+	recoveryLifecycleBusy    func() bool
+	recoveryNow              func() time.Time
+
 	runtimeMu            sync.RWMutex
 	runtimeSummary       RuntimeBridgeSummary
 	runtimeTargets       []RuntimeTarget
@@ -154,29 +180,42 @@ func New(trustedProxies ...netip.Prefix) (*Manager, error) {
 	}
 
 	m := &Manager{
-		loginAttempts:          make(map[string]*loginAttempt),
-		eventSourceStatus:      "Waiting for server",
-		auditPath:              webAuditLogPath,
-		operationPath:          operationStatePath,
-		rconLogPath:            rconEventLogPath,
-		modRefreshWake:         make(chan struct{}, 1),
-		modRestartWake:         make(chan struct{}, 1),
-		runtimeStatusPath:      runtimeBridgeStatusPath,
-		runtimeRequestPath:     runtimeBridgeRequestPath,
-		runtimeResponsePath:    runtimeBridgeResponsePath,
-		runtimeTargetCache:     make(map[string]runtimeTargetCacheEntry),
-		customPakPaths:         customPaks,
-		playerHistoryFile:      playerHistoryPath,
-		playerArchiveDirectory: logDir,
-		playerCurrentLogFile:   gameLogPath,
-		playerServerProcess:    serverProcess,
-		mapServerProcess:       serverProcess,
-		geoIPDatabaseFile:      geoIPDatabasePath,
-		geoIPStateFile:         geoIPStatePath,
-		geoIPIgnoreFile:        geoIPIgnorePath,
-		geoIPDownloadBaseURL:   defaultGeoIPDownloadBaseURL,
-		geoIPHTTPClient:        defaultGeoIPHTTPClient,
-		geoIPNow:               time.Now,
+		loginAttempts:            make(map[string]*loginAttempt),
+		eventSourceStatus:        "Waiting for server",
+		auditPath:                webAuditLogPath,
+		operationPath:            operationStatePath,
+		rconLogPath:              rconEventLogPath,
+		modRefreshWake:           make(chan struct{}, 1),
+		modRestartWake:           make(chan struct{}, 1),
+		runtimeStatusPath:        runtimeBridgeStatusPath,
+		runtimeRequestPath:       runtimeBridgeRequestPath,
+		runtimeResponsePath:      runtimeBridgeResponsePath,
+		runtimeTargetCache:       make(map[string]runtimeTargetCacheEntry),
+		customPakPaths:           customPaks,
+		playerHistoryFile:        playerHistoryPath,
+		playerArchiveDirectory:   logDir,
+		playerCurrentLogFile:     gameLogPath,
+		playerServerProcess:      serverProcess,
+		mapServerProcess:         serverProcess,
+		geoIPDatabaseFile:        geoIPDatabasePath,
+		geoIPStateFile:           geoIPStatePath,
+		geoIPIgnoreFile:          geoIPIgnorePath,
+		geoIPDownloadBaseURL:     defaultGeoIPDownloadBaseURL,
+		geoIPHTTPClient:          defaultGeoIPHTTPClient,
+		geoIPNow:                 time.Now,
+		recoverySettingsFile:     recoverySettingsPath,
+		recoveryStateFile:        recoveryStatePath,
+		recoveryDesiredStateFile: serverDesiredStatePath,
+		recoveryLaunchStateFile:  serverLaunchStatePath,
+		recoveryConsoleLogFile:   serverConsoleLogPath,
+		recoveryServerProcess:    serverProcess,
+		recoveryLifecycleBusy:    lifecycleOperationBusy,
+		recoveryNow:              time.Now,
+		monitoringSettingsFile:   monitoringSettingsPath,
+		metricsHistoryFile:       metricsHistoryPath,
+		monitoringAlertQueue:     make(chan monitoringAlert, 32),
+		monitoringAlertLast:      make(map[string]time.Time),
+		monitoringNow:            time.Now,
 	}
 	for _, prefix := range trustedProxies {
 		canonical, err := canonicalTrustedProxyPrefix(prefix)
@@ -185,10 +224,16 @@ func New(trustedProxies ...netip.Prefix) (*Manager, error) {
 		}
 		m.trustedProxies = append(m.trustedProxies, canonical)
 	}
+	if err := m.loadOrCreateMonitoring(); err != nil {
+		return nil, err
+	}
 	if err := m.initializeAuditLog(); err != nil {
 		return nil, fmt.Errorf("initialize web audit log: %w", err)
 	}
 	if err := m.loadOrCreateOperationState(); err != nil {
+		return nil, err
+	}
+	if err := m.loadOrCreateRecoveryState(); err != nil {
 		return nil, err
 	}
 	if err := m.loadRCONEventLog(); err != nil {
@@ -231,9 +276,12 @@ func New(trustedProxies ...netip.Prefix) (*Manager, error) {
 func (m *Manager) StartBackground(ctx context.Context) {
 	m.auditActorEvent("system", "local", "web_manager_started", nil)
 	go m.metricsLoop(ctx)
+	go m.monitoringAlertLoop(ctx)
+	go m.recoveryLoop(ctx)
 	go m.runtimeBridgeStatusLoop(ctx)
 	go m.runtimePlayerLevelLoop(ctx)
 	go m.gameLogLoop(ctx)
+	go m.playerRestrictionExpiryLoop(ctx)
 	go m.geoIPUpdateLoop(ctx)
 	go m.cleanupLoop(ctx)
 	go m.modRefreshLoop(ctx)
@@ -594,6 +642,7 @@ func (m *Manager) cleanupLoop(ctx context.Context) {
 			}
 			m.mu.Unlock()
 			m.pruneLoginAttempts(now)
+			m.pruneManagedLogs(now)
 		}
 	}
 }

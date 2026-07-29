@@ -22,6 +22,13 @@ const (
 	playerHistoryPath         = stateDir + "/players.json"
 	webAuditLogPath           = logDir + "/mordhau-web.log"
 	rconEventLogPath          = logDir + "/mordhau-rcon.log"
+	serverDesiredStatePath    = stateDir + "/server-desired-state"
+	serverLaunchStatePath     = runtimeDir + "/server-launch.json"
+	recoverySettingsPath      = stateDir + "/recovery.json"
+	recoveryStatePath         = stateDir + "/recovery-state.json"
+	serverConsoleLogPath      = runtimeDir + "/server-console.log"
+	monitoringSettingsPath    = stateDir + "/monitoring.json"
+	metricsHistoryPath        = stateDir + "/metrics-history.jsonl"
 	defaultAccount            = rootDir + "/default_web_account.txt"
 	serverScript              = rootDir + "/server.sh"
 	mordhauPIDPath            = runtimeDir + "/mordhau.pid"
@@ -124,6 +131,15 @@ type Metrics struct {
 	SampledAt  time.Time `json:"sampled_at"`
 }
 
+type MetricHistoryPoint struct {
+	Time        time.Time `json:"time"`
+	CPUPercent  float64   `json:"cpu_percent"`
+	MemoryPct   float64   `json:"memory_percent"`
+	SwapPct     float64   `json:"swap_percent"`
+	DiskPct     float64   `json:"disk_percent"`
+	PlayerCount int       `json:"player_count"`
+}
+
 type RCONEvent struct {
 	Sequence uint64    `json:"sequence"`
 	Time     time.Time `json:"time"`
@@ -147,6 +163,8 @@ type Snapshot struct {
 	ModRevision          uint64               `json:"mod_revision"`
 	PlayerRevision       uint64               `json:"player_revision"`
 	RuntimeBridge        RuntimeBridgeSummary `json:"runtime_bridge"`
+	ConnectedPlayers     []ConnectedPlayer    `json:"connected_players"`
+	Recovery             RecoveryView         `json:"recovery"`
 	GeneratedAt          time.Time            `json:"generated_at"`
 }
 
@@ -167,6 +185,7 @@ type RuntimeTarget struct {
 	PlayFabID         string `json:"playfab_id,omitempty"`
 	Platform          string `json:"platform,omitempty"`
 	PlatformAccountID string `json:"platform_account_id,omitempty"`
+	PingMS            *int   `json:"ping_ms,omitempty"`
 }
 
 type RuntimeAccountProgress struct {

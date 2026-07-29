@@ -66,6 +66,10 @@ type runtimeBridgeProtocolError struct {
 	CurrentValue string
 }
 
+func validRuntimePing(ping *int) bool {
+	return ping == nil || (*ping >= 0 && *ping <= 60000)
+}
+
 func (err *runtimeBridgeProtocolError) Error() string {
 	if err == nil || strings.TrimSpace(err.Message) == "" {
 		return "runtime bridge request failed"
@@ -204,9 +208,11 @@ func (m *Manager) sampleRuntimeBridgeStatus() {
 				target.Platform,
 				target.PlatformAccountID,
 			) ||
+			!validRuntimePing(target.PingMS) ||
 			(target.Kind != "player_controller" &&
 				(target.Platform != "" ||
-					target.PlatformAccountID != "")) ||
+					target.PlatformAccountID != "" ||
+					target.PingMS != nil)) ||
 			target.PlayerSlot < -1 ||
 			target.PlayerSlot > 1023 {
 			summary.Status = "invalid_status"
@@ -975,9 +981,11 @@ func (m *Manager) runtimeTarget(
 			view.Target.Platform,
 			view.Target.PlatformAccountID,
 		) ||
+		!validRuntimePing(view.Target.PingMS) ||
 		(view.Target.Kind != "player_controller" &&
 			(view.Target.Platform != "" ||
-				view.Target.PlatformAccountID != "")) ||
+				view.Target.PlatformAccountID != "" ||
+				view.Target.PingMS != nil)) ||
 		view.Target.PlayerSlot < -1 ||
 		view.Target.PlayerSlot > 1023 ||
 		((view.Target.Kind == "game_mode" ||
