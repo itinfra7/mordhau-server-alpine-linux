@@ -6,6 +6,12 @@ All notable changes to this repository are documented in this file.
 
 ## [2.3.3] - 2026-07-29
 
+### Added
+
+- Add semantic management-version detection for fresh installs, upgrades,
+  same-version validation, and explicitly authorized `--allow-downgrade`
+  transitions.
+
 ### Fixed
 
 - Synchronize the dashboard RCON port with `RconPort` in `Game.ini` when
@@ -20,6 +26,9 @@ All notable changes to this repository are documented in this file.
 
 ### Security
 
+- Reject implicit management-code downgrades and malformed installed-version
+  state, and atomically record a new version only after validation and
+  requested service starts succeed.
 - Preserve intentionally disabled `RconPort` entries and disabled game-session
   sections while updating their stored value, and serialize dashboard port
   changes with configuration and lifecycle operations.
@@ -33,6 +42,9 @@ All notable changes to this repository are documented in this file.
   invalid port rejection.
 - Verify OpenRC-managed and manually launched game servers use their respective
   shutdown paths during an in-place upgrade.
+- Verify semantic version validation and ordering, upgrade/reinstall/downgrade
+  classification, downgrade refusal, malformed-state refusal, and atomic
+  mode-`0600` version recording.
 
 ## [2.3.2] - 2026-07-29
 

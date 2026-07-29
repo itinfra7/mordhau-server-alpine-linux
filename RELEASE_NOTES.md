@@ -2,6 +2,12 @@ This release contains the following changes relative to v2.3.2.
 
 ## Changelog
 
+### Added
+
+- Add semantic management-version detection for fresh installs, upgrades,
+  same-version validation, and explicitly authorized `--allow-downgrade`
+  transitions.
+
 ### Fixed
 
 - Synchronize the dashboard RCON port with `RconPort` in `Game.ini` when
@@ -14,6 +20,9 @@ This release contains the following changes relative to v2.3.2.
 
 ### Security
 
+- Reject implicit management-code downgrades and malformed installed-version
+  state, and atomically record a new version only after validation and
+  requested service starts succeed.
 - Preserve intentionally disabled `RconPort` entries and disabled game-session
   sections while updating their stored value.
 - Serialize dashboard port changes with configuration and lifecycle operations,
@@ -26,6 +35,9 @@ This release contains the following changes relative to v2.3.2.
   values, CRLF input, unrelated INI content, and invalid port rejection.
 - Verify OpenRC-managed and manually launched game servers use their respective
   shutdown paths during an in-place upgrade.
+- Verify semantic version validation and ordering, transition classification,
+  downgrade refusal, malformed-state refusal, and atomic mode-`0600` version
+  recording.
 - Verify the complete Go test suite and both upgraded Alpine installations.
 
 ## Documentation

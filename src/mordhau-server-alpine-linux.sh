@@ -21,6 +21,8 @@ ENABLE_WEB=0
 ENABLE_SERVER=0
 SERVER_WAS_RUNNING=0
 WEB_WAS_RUNNING=0
+ALLOW_DOWNGRADE=0
+INSTALLED_VERSION=""
 
 export WINEPREFIX="$MORDHAU_ROOT/.wine"
 export WINEDEBUG=-all
@@ -51,6 +53,7 @@ Options:
   --start-server    Start MORDHAU Dedicated Server after installation
   --enable-web      Add mordhau-web to the default runlevel and start it
   --enable-server   Add mordhau-server to the default runlevel and start it
+  --allow-downgrade Permit an explicit management-code downgrade
   -h, --help        Show this help
 EOF
 }
@@ -75,6 +78,9 @@ while [ "$#" -gt 0 ]; do
         --enable-server)
             ENABLE_SERVER=1
             START_SERVER=1
+            ;;
+        --allow-downgrade)
+            ALLOW_DOWNGRADE=1
             ;;
         -h|--help)
             usage
@@ -140,6 +146,113 @@ validate_port() {
             ;;
     esac
     [ "$1" -ge 1 ] && [ "$1" -le 65535 ]
+}
+
+version_valid() {
+    value=$1
+    case "$value" in
+        ''|*[!0-9.]*|.*|*.|*..*)
+            return 1
+            ;;
+    esac
+    major=${value%%.*}
+    remainder=${value#*.}
+    minor=${remainder%%.*}
+    patch=${remainder#*.}
+    [ "$patch" != "$remainder" ] || return 1
+    case "$patch" in
+        *.*)
+            return 1
+            ;;
+    esac
+    for component in "$major" "$minor" "$patch"; do
+        [ -n "$component" ] &&
+            [ "${#component}" -le 9 ] ||
+            return 1
+        case "$component" in
+            0|[1-9]*)
+                ;;
+            *)
+                return 1
+                ;;
+        esac
+    done
+}
+
+compare_versions() {
+    left=$1
+    right=$2
+    version_valid "$left" && version_valid "$right" || return 1
+
+    left_major=${left%%.*}
+    left_remainder=${left#*.}
+    left_minor=${left_remainder%%.*}
+    left_patch=${left_remainder#*.}
+    right_major=${right%%.*}
+    right_remainder=${right#*.}
+    right_minor=${right_remainder%%.*}
+    right_patch=${right_remainder#*.}
+
+    for pair in \
+        "$left_major:$right_major" \
+        "$left_minor:$right_minor" \
+        "$left_patch:$right_patch"; do
+        left_component=${pair%%:*}
+        right_component=${pair#*:}
+        if [ "$left_component" -lt "$right_component" ]; then
+            printf '%s\n' -1
+            return 0
+        fi
+        if [ "$left_component" -gt "$right_component" ]; then
+            printf '%s\n' 1
+            return 0
+        fi
+    done
+    printf '%s\n' 0
+}
+
+prepare_version_transition() {
+    version_path="$STATE_DIR/manager-version"
+    version_valid "$PROJECT_VERSION" ||
+        die "installer version is invalid: $PROJECT_VERSION"
+    if [ ! -e "$version_path" ]; then
+        log "Installing mordhau-server-alpine-linux $PROJECT_VERSION."
+        return
+    fi
+    [ -f "$version_path" ] && [ -r "$version_path" ] ||
+        die "installed version state is not a readable regular file"
+
+    INSTALLED_VERSION=$(sed -n '1p' "$version_path" | tr -d '\r')
+    version_contents=$(cat "$version_path")
+    [ "$version_contents" = "$INSTALLED_VERSION" ] &&
+        version_valid "$INSTALLED_VERSION" ||
+        die "installed manager version state is invalid"
+
+    comparison=$(compare_versions "$INSTALLED_VERSION" "$PROJECT_VERSION") ||
+        die "unable to compare management-code versions"
+    case "$comparison" in
+        -1)
+            log "Upgrading mordhau-server-alpine-linux $INSTALLED_VERSION -> $PROJECT_VERSION."
+            ;;
+        0)
+            log "Reinstalling mordhau-server-alpine-linux $PROJECT_VERSION for validation."
+            ;;
+        1)
+            [ "$ALLOW_DOWNGRADE" -eq 1 ] ||
+                die "refusing downgrade $INSTALLED_VERSION -> $PROJECT_VERSION without --allow-downgrade"
+            log "Downgrading mordhau-server-alpine-linux $INSTALLED_VERSION -> $PROJECT_VERSION."
+            ;;
+        *)
+            die "unexpected version comparison result"
+            ;;
+    esac
+}
+
+record_installed_version() {
+    version_temp=$(mktemp "$STATE_DIR/.manager-version.XXXXXX")
+    printf '%s\n' "$PROJECT_VERSION" > "$version_temp"
+    chmod 0600 "$version_temp"
+    mv "$version_temp" "$STATE_DIR/manager-version"
 }
 
 ensure_packages() {
@@ -384,8 +497,6 @@ build_web_manager() {
     chmod -R u=rwX,go= "$MORDHAU_ROOT/web"
 
     "$MORDHAU_ROOT/bin/mordhau-web" --init >/dev/null
-    printf '%s\n' "$PROJECT_VERSION" > "$STATE_DIR/manager-version"
-    chmod 0600 "$STATE_DIR/manager-version"
 }
 
 configure_services() {
@@ -398,9 +509,13 @@ configure_services() {
 
     if [ "$SERVER_WAS_RUNNING" -eq 1 ] || [ "$START_SERVER" -eq 1 ]; then
         rc-service mordhau-server start
+        rc-service mordhau-server status >/dev/null 2>&1 ||
+            die "MORDHAU OpenRC service did not remain started"
     fi
     if [ "$WEB_WAS_RUNNING" -eq 1 ] || [ "$START_WEB" -eq 1 ]; then
         rc-service mordhau-web start
+        rc-service mordhau-web status >/dev/null 2>&1 ||
+            die "web OpenRC service did not remain started"
     fi
 }
 
@@ -414,6 +529,7 @@ main() {
     chmod 0700 "$TMP_DIR"
 
     ensure_layout
+    prepare_version_transition
     remember_and_stop_services
     install_runtime_files
     install_steamcmd
@@ -424,6 +540,7 @@ main() {
     install_unicode_bridge
     build_web_manager
     configure_services
+    record_installed_version
 
     log "Installed mordhau-server-alpine-linux $PROJECT_VERSION."
     log "Web account file: $MORDHAU_ROOT/default_web_account.txt"

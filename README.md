@@ -159,11 +159,16 @@ Installer options:
 --start-server    Start MORDHAU Dedicated Server after installation
 --enable-web      Enable web-manager boot startup and start it
 --enable-server   Enable game-server boot startup and start it
+--allow-downgrade Permit an explicit management-code downgrade
 ```
 
 By default, both OpenRC services are installed in manual mode and remain
 stopped. Existing boot-start settings and running states are preserved during
-management-code updates.
+management-code updates. The installer reports fresh installation, upgrade,
+same-version validation, or explicit downgrade according to the mode-`0600`
+version state in `/root/mordhau/.manager/manager-version`. Downgrades are
+rejected unless `--allow-downgrade` is supplied. The new version is recorded
+only after managed files, validation, and requested service starts complete.
 
 ## First Installation
 
@@ -1329,7 +1334,7 @@ To roll back management code:
 
 1. Download the required earlier repository release.
 2. Stop `mordhau-web` and `mordhau-server`.
-3. Run that release's installer.
+3. Run that release's installer with `--allow-downgrade`.
 4. Restore an INI backup from `/root/mordhau/.manager/backups` when a
    configuration rollback is also required.
 
