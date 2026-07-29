@@ -37,7 +37,7 @@ func TestRuntimeBridgeStatusIsCollectedOnceForSnapshots(t *testing.T) {
 				Class:             "BP_TestController_C",
 				PlayerSlot:        0,
 				PlayerName:        "테스트 사용자",
-				PlayFabID:         "ABCDEF0123456789",
+				PlayFabID:         testOtherPlayerID,
 				Platform:          "Epic",
 				PlatformAccountID: "test-account",
 				PingMS:            &ping,
@@ -76,7 +76,7 @@ func TestRuntimeBridgeStatusIsCollectedOnceForSnapshots(t *testing.T) {
 	if !view.Ready || len(view.Targets) != 3 ||
 		view.Targets[1].Kind != "player_controller" ||
 		view.Targets[1].PlayerName != "테스트 사용자" ||
-		view.Targets[1].PlayFabID != "ABCDEF0123456789" ||
+		view.Targets[1].PlayFabID != testOtherPlayerID ||
 		view.Targets[1].Platform != "Epic" ||
 		view.Targets[1].PingMS == nil ||
 		*view.Targets[1].PingMS != ping {

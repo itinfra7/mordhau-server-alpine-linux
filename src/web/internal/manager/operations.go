@@ -80,6 +80,10 @@ func (m *Manager) startOperation(action, username, clientIP, peerIP string) erro
 			log.Printf("save completed lifecycle operation state: %v", persistErr)
 		}
 		m.addRCONEvent("system", "Server operation "+result+": "+action)
+		if action == "start" || action == "restart" || action == "update" {
+			m.signalSteamUpdateCheck()
+		}
+		m.signalAutomaticUpdateLoop()
 		m.auditNetworkActorEvent(username, clientIP, peerIP, "server_action_completed", map[string]string{
 			"action": action,
 			"result": result,

@@ -50,6 +50,11 @@ func main() {
 		false,
 		"apply staged CustomPaks changes and exit",
 	)
+	managerUpdateWorker := flag.String(
+		"manager-update-worker",
+		"",
+		"run a previously authenticated manager update and exit",
+	)
 	recoverDisabledFrom := flag.String(
 		"recover-disabled-from",
 		"",
@@ -76,6 +81,16 @@ func main() {
 		"trusted reverse-proxy IP address or CIDR prefix; repeat for multiple proxies",
 	)
 	flag.Parse()
+
+	if *managerUpdateWorker != "" {
+		if err := manager.RunManagerUpdateWorker(
+			context.Background(),
+			*managerUpdateWorker,
+		); err != nil {
+			log.Fatalf("manager update: %v", err)
+		}
+		return
+	}
 
 	if *applyCustomPaks {
 		count, err := manager.ApplyPendingCustomPaks()

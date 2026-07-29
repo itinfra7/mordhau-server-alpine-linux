@@ -124,7 +124,7 @@ func TestLegacyZeroLevelBecomesUnobserved(t *testing.T) {
 		Revision: 7,
 		Players: []playerRecord{
 			{PlayFabID: testPlayerID, LastLevel: &zero},
-			{PlayFabID: "ABCDEF0123456789", LastLevel: &valid},
+			{PlayFabID: testOtherPlayerID, LastLevel: &valid},
 		},
 	}
 	if !normalizeLegacyPlayerProgress(&history) {

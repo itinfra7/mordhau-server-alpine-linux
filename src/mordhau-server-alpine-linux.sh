@@ -2,7 +2,7 @@
 
 set -eu
 
-PROJECT_VERSION="2.3.3"
+PROJECT_VERSION="2.4.0"
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 MORDHAU_ROOT="/root/mordhau"
 STEAMCMD_ROOT="/root/steamcmd"
@@ -14,6 +14,7 @@ STEAMCMD_URL="https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip"
 REPAK_URL="https://github.com/trumank/repak/releases/download/v0.2.3/repak_cli-x86_64-pc-windows-msvc.zip"
 REPAK_SHA256="6720d602144d75df477a99d5bedb6ea780997546afc335901d4937cafeaa73fa"
 TMP_DIR=""
+WEB_BINARY_TEMP=""
 WEB_PORT=""
 START_WEB=0
 START_SERVER=0
@@ -95,6 +96,15 @@ while [ "$#" -gt 0 ]; do
 done
 
 cleanup() {
+    if [ -n "$WEB_BINARY_TEMP" ]; then
+        case "$WEB_BINARY_TEMP" in
+            "$MORDHAU_ROOT"/bin/.mordhau-web.*)
+                if [ -f "$WEB_BINARY_TEMP" ]; then
+                    find "$WEB_BINARY_TEMP" -xdev -depth -delete
+                fi
+                ;;
+        esac
+    fi
     if [ -n "$TMP_DIR" ]; then
         case "$TMP_DIR" in
             /tmp/mordhau-server-alpine-linux.*)
@@ -309,6 +319,10 @@ process_is_executable() {
 find_web_pid() {
     for proc_dir in /proc/[0-9]*; do
         process_id=${proc_dir#/proc/}
+        if [ -n "${MORDHAU_MANAGER_UPDATE_WORKER_PID:-}" ] &&
+           [ "$process_id" = "$MORDHAU_MANAGER_UPDATE_WORKER_PID" ]; then
+            continue
+        fi
         if process_is_executable "$process_id" "$MORDHAU_ROOT/bin/mordhau-web"; then
             printf '%s\n' "$process_id"
             return 0
@@ -405,13 +419,31 @@ install_repak() {
         "$MORDHAU_ROOT/licenses/repak/"
 }
 
+steamcmd_installation_complete() {
+    for required in \
+        steamcmd.exe \
+        steam.dll \
+        steamclient.dll \
+        steamconsole.dll \
+        tier0_s.dll \
+        vstdlib_s.dll \
+        package/steam_cmd_win32.installed
+    do
+        [ -s "$STEAMCMD_ROOT/$required" ] || return 1
+    done
+}
+
 install_steamcmd() {
-    archive="$TMP_DIR/steamcmd.zip"
-    log "Downloading Windows SteamCMD..."
-    wget -qO "$archive" "$STEAMCMD_URL"
-    unzip -oq "$archive" -d "$STEAMCMD_ROOT"
-    [ -s "$STEAMCMD_ROOT/steamcmd.exe" ] ||
-        die "SteamCMD extraction did not create steamcmd.exe"
+    if steamcmd_installation_complete; then
+        log "Using the existing Windows SteamCMD installation..."
+    else
+        archive="$TMP_DIR/steamcmd.zip"
+        log "Downloading Windows SteamCMD..."
+        wget -qO "$archive" "$STEAMCMD_URL"
+        unzip -oq "$archive" -d "$STEAMCMD_ROOT"
+        [ -s "$STEAMCMD_ROOT/steamcmd.exe" ] ||
+            die "SteamCMD extraction did not create steamcmd.exe"
+    fi
     chmod 0700 "$STEAMCMD_ROOT/steamcmd.exe"
 
     log "Initializing the dedicated Wine prefix..."
@@ -481,6 +513,16 @@ install_unicode_bridge() {
     "$SCRIPT_DIR/unicode-bridge/install.sh" --mordhau-root "$MORDHAU_ROOT"
 }
 
+install_web_binary() {
+    source_binary=$1
+    web_binary_destination="$MORDHAU_ROOT/bin/mordhau-web"
+    [ -s "$source_binary" ] || die "web manager build output is missing"
+    WEB_BINARY_TEMP=$(mktemp "$MORDHAU_ROOT/bin/.mordhau-web.XXXXXX")
+    install -m 0700 "$source_binary" "$WEB_BINARY_TEMP"
+    mv "$WEB_BINARY_TEMP" "$web_binary_destination"
+    WEB_BINARY_TEMP=""
+}
+
 build_web_manager() {
     log "Testing and building the Go web manager..."
     (
@@ -492,7 +534,7 @@ build_web_manager() {
     [ -s "$TMP_DIR/mordhau-web" ] || die "Go build did not produce the manager binary"
 
     install -d -m 0700 "$MORDHAU_ROOT/bin" "$MORDHAU_ROOT/web"
-    install -m 0700 "$TMP_DIR/mordhau-web" "$MORDHAU_ROOT/bin/mordhau-web"
+    install_web_binary "$TMP_DIR/mordhau-web"
     cp -R "$SCRIPT_DIR/web/." "$MORDHAU_ROOT/web/"
     chmod -R u=rwX,go= "$MORDHAU_ROOT/web"
 

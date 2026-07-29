@@ -50,6 +50,14 @@ const app = {
   metricsHistory: null,
   monitoringLoading: false,
   logSearch: null,
+  managerUpdate: null,
+  managerUpdateLoading: false,
+  managerUpdateApplying: false,
+  managerUpdatePollTimer: null,
+  steamUpdate: null,
+  steamUpdateLoading: false,
+  steamUpdateApplying: false,
+  automaticUpdates: null,
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -131,6 +139,323 @@ function toast(message, error = false) {
   item.textContent = message;
   $("#toast-stack").append(item);
   setTimeout(() => item.remove(), 4200);
+}
+
+function managerUpdateSummary(notes) {
+  if (typeof notes !== "string") return "";
+  const compact = notes.replace(/\s+/g, " ").trim();
+  if (compact.length <= 360) return compact;
+  return `${compact.slice(0, 359).trim()}…`;
+}
+
+function managerUpdateRecentlyFinished(view) {
+  if (view?.status !== "succeeded" || !view.finished_at) return false;
+  const finished = new Date(view.finished_at).getTime();
+  return Number.isFinite(finished) &&
+    Date.now() >= finished &&
+    Date.now() - finished < 15 * 60 * 1000;
+}
+
+function automaticUpdateScheduleText(kind) {
+  const settings = app.automaticUpdates;
+  if (!settings?.scheduled || !settings.restart_at) return "";
+  const targetMatches = kind === "manager"
+    ? Boolean(settings.manager_version)
+    : Boolean(settings.steam_build_id);
+  if (!targetMatches) return "";
+  return ` Automatic installation is scheduled for ${new Date(settings.restart_at).toLocaleString()}.`;
+}
+
+function renderManagerUpdate(view) {
+  app.managerUpdate = view;
+  const banner = $("#manager-update-banner");
+  const running = view?.status === "running";
+  const available = view?.available === true;
+  const failed = view?.status === "failed" &&
+    (!available || view?.target_version === view?.latest_version);
+  const succeeded = managerUpdateRecentlyFinished(view) && !available;
+  const checkFailed = Boolean(view?.check_error);
+  const visible = running || failed || succeeded || available || checkFailed;
+  banner.classList.toggle("hidden", !visible);
+  banner.classList.toggle("running", running);
+  banner.classList.toggle("failed", failed || (!available && checkFailed));
+
+  let title = "Manager update";
+  let detail = "";
+  if (running) {
+    title = `Updating manager to v${view.target_version}`;
+    detail = view.progress ||
+      "The update worker is running. This page will reconnect after the web service restarts.";
+  } else if (failed) {
+    title = `Manager update to v${view.target_version || view.latest_version} failed`;
+    detail = view.error || "Review the manager update log before retrying.";
+  } else if (succeeded) {
+    title = `Manager updated to v${view.target_version}`;
+    detail = "The verified release was installed and the configured services were restored.";
+  } else if (available) {
+    title = `Manager update v${view.latest_version} is available`;
+    detail = managerUpdateSummary(view.release_notes) ||
+      `Installed version: v${view.installed_version}`;
+    detail += automaticUpdateScheduleText("manager");
+  } else if (checkFailed) {
+    title = "Manager update check failed";
+    detail = view.check_error;
+  }
+  $("#manager-update-title").textContent = title;
+  $("#manager-update-detail").textContent = detail;
+  $("#manager-update-detail").title = detail;
+  $("#manager-update-checked").textContent = view?.checked_at
+    ? `Last checked ${new Date(view.checked_at).toLocaleString()} · installed v${view.installed_version}`
+    : `Installed v${view?.installed_version || "unknown"}`;
+
+  const release = $("#manager-update-release");
+  const validReleaseURL = typeof view?.release_url === "string" &&
+    view.release_url.startsWith(
+      "https://github.com/itinfra7/mordhau-server-alpine-linux/releases/tag/",
+    );
+  release.classList.toggle("hidden", !validReleaseURL);
+  if (validReleaseURL) release.href = view.release_url;
+
+  const check = $("#manager-update-check");
+  check.disabled = running || app.managerUpdateLoading || app.managerUpdateApplying;
+  check.textContent = app.managerUpdateLoading ? "Checking…" : "Check again";
+  const apply = $("#manager-update-apply");
+  apply.classList.toggle("hidden", !available || running);
+  apply.disabled = running || app.managerUpdateApplying;
+  apply.textContent = app.managerUpdateApplying ? "Starting…" : "Update now";
+}
+
+function renderSteamUpdate(view) {
+  app.steamUpdate = view;
+  const banner = $("#steam-update-banner");
+  const available = view?.available === true;
+  const checkFailed = Boolean(view?.check_error);
+  banner.classList.toggle("hidden", !available && !checkFailed);
+  banner.classList.toggle("failed", !available && checkFailed);
+  const title = available
+    ? `MORDHAU Dedicated Server build ${view.latest_build_id} is available`
+    : "Dedicated server update check failed";
+  let detail = available
+    ? `Installed Steam build ${view.installed_build_id}; public build ${view.latest_build_id}.`
+    : view?.check_error || "SteamCMD did not return an update status.";
+  if (available) detail += automaticUpdateScheduleText("steam");
+  $("#steam-update-title").textContent = title;
+  $("#steam-update-detail").textContent = detail;
+  $("#steam-update-detail").title = detail;
+  $("#steam-update-checked").textContent = view?.checked_at
+    ? `Last checked ${new Date(view.checked_at).toLocaleString()}`
+    : "No successful server-side check yet";
+  const check = $("#steam-update-check");
+  check.disabled = app.steamUpdateLoading ||
+    app.steamUpdateApplying ||
+    app.snapshot?.operation?.running === true;
+  check.textContent = app.steamUpdateLoading ? "Checking…" : "Check again";
+  const apply = $("#steam-update-apply");
+  apply.classList.toggle("hidden", !available);
+  apply.disabled = app.steamUpdateApplying ||
+    app.snapshot?.operation?.running === true;
+  apply.textContent = app.snapshot?.server_running
+    ? "Restart & update"
+    : "Update now";
+}
+
+async function loadSteamUpdate({ silent = false } = {}) {
+  if (app.steamUpdateLoading) return;
+  app.steamUpdateLoading = true;
+  try {
+    const view = await api("/api/server/update-status");
+    renderSteamUpdate(view);
+  } catch (error) {
+    if (!silent) toast(error.message, true);
+  } finally {
+    app.steamUpdateLoading = false;
+    if (app.steamUpdate) renderSteamUpdate(app.steamUpdate);
+  }
+}
+
+async function checkSteamUpdate() {
+  if (app.steamUpdateLoading) return;
+  app.steamUpdateLoading = true;
+  if (app.steamUpdate) renderSteamUpdate(app.steamUpdate);
+  try {
+    const view = await api("/api/server/update-check", {
+      method: "POST",
+      body: {},
+    });
+    renderSteamUpdate(view);
+    await loadAutomaticUpdates({ silent: true });
+    toast(view.available
+      ? `Dedicated server build ${view.latest_build_id} is available.`
+      : `Dedicated server build ${view.installed_build_id} is current.`);
+  } catch (error) {
+    await loadSteamUpdate({ silent: true });
+    toast(error.message, true);
+  } finally {
+    app.steamUpdateLoading = false;
+    if (app.steamUpdate) renderSteamUpdate(app.steamUpdate);
+  }
+}
+
+async function applySteamUpdate() {
+  const view = app.steamUpdate;
+  if (!view?.available || app.steamUpdateApplying) return;
+  const running = app.snapshot?.server_running === true;
+  const action = running ? "restart" : "update";
+  const question = running
+    ? `Restart the server and install Steam build ${view.latest_build_id} now?\n\nConnected players will be disconnected.`
+    : `Install Steam build ${view.latest_build_id} now?`;
+  if (!confirm(question)) return;
+  app.steamUpdateApplying = true;
+  renderSteamUpdate(view);
+  try {
+    const accepted = await serverAction(action);
+    if (accepted) {
+      toast(`${running ? "Restart and update" : "Update"} operation accepted.`);
+    }
+  } finally {
+    app.steamUpdateApplying = false;
+    if (app.steamUpdate) renderSteamUpdate(app.steamUpdate);
+  }
+}
+
+function renderAutomaticUpdates(view) {
+  app.automaticUpdates = view;
+  $("#automatic-manager-update").checked = view?.manager_enabled === true;
+  $("#automatic-steam-update").checked = view?.steam_enabled === true;
+  const status = $("#automatic-update-status");
+  const detail = $("#automatic-update-detail");
+  if (view?.scheduled) {
+    const targets = [];
+    if (view.manager_version) targets.push(`Control v${view.manager_version}`);
+    if (view.steam_build_id) targets.push(`Steam build ${view.steam_build_id}`);
+    status.textContent = `Scheduled · ${new Date(view.restart_at).toLocaleString()}`;
+    detail.textContent = `10-minute in-game countdown for ${targets.join(" and ")}.`;
+  } else if (view?.manager_enabled || view?.steam_enabled) {
+    status.textContent = "Watching for updates";
+    detail.textContent = "Checks are performed once per hour by this server.";
+  } else {
+    status.textContent = "Disabled";
+    detail.textContent = "Enable either option to schedule detected updates.";
+  }
+  if (app.managerUpdate) renderManagerUpdate(app.managerUpdate);
+  if (app.steamUpdate) renderSteamUpdate(app.steamUpdate);
+}
+
+async function loadAutomaticUpdates({ silent = false } = {}) {
+  try {
+    renderAutomaticUpdates(await api("/api/updates/automatic"));
+  } catch (error) {
+    if (!silent) toast(error.message, true);
+  }
+}
+
+async function saveAutomaticUpdates(changed) {
+  const steam = $("#automatic-steam-update");
+  const manager = $("#automatic-manager-update");
+  if (changed === steam && steam.checked &&
+      !confirm(
+        "Enable automatic MORDHAU Dedicated Server updates?\n\n" +
+        "Official server file or layout changes can temporarily break runtime bridges, " +
+        "PAK integration, or management features until compatibility is updated.",
+      )) {
+    steam.checked = false;
+    return;
+  }
+  steam.disabled = true;
+  manager.disabled = true;
+  try {
+    const view = await api("/api/updates/automatic", {
+      method: "POST",
+      body: {
+        manager_enabled: manager.checked,
+        steam_enabled: steam.checked,
+      },
+    });
+    renderAutomaticUpdates(view);
+    toast("Automatic update settings saved.");
+  } catch (error) {
+    await loadAutomaticUpdates({ silent: true });
+    toast(error.message, true);
+  } finally {
+    steam.disabled = false;
+    manager.disabled = false;
+  }
+}
+
+async function loadManagerUpdate({ silent = false } = {}) {
+  if (app.managerUpdateLoading) return;
+  app.managerUpdateLoading = true;
+  try {
+    const view = await api("/api/manager/update");
+    renderManagerUpdate(view);
+  } catch (error) {
+    if (!silent) toast(error.message, true);
+  } finally {
+    app.managerUpdateLoading = false;
+    if (app.managerUpdate) renderManagerUpdate(app.managerUpdate);
+  }
+}
+
+async function checkManagerUpdate() {
+  if (app.managerUpdateLoading) return;
+  app.managerUpdateLoading = true;
+  if (app.managerUpdate) renderManagerUpdate(app.managerUpdate);
+  try {
+    const view = await api("/api/manager/update/check", {
+      method: "POST",
+      body: {},
+    });
+    renderManagerUpdate(view);
+    await loadAutomaticUpdates({ silent: true });
+    toast(view.available
+      ? `Manager update v${view.latest_version} is available.`
+      : `Manager v${view.installed_version} is current.`);
+  } catch (error) {
+    await loadManagerUpdate({ silent: true });
+    toast(error.message, true);
+  } finally {
+    app.managerUpdateLoading = false;
+    if (app.managerUpdate) renderManagerUpdate(app.managerUpdate);
+  }
+}
+
+async function applyManagerUpdate() {
+  const view = app.managerUpdate;
+  if (!view?.available || !view.latest_version || app.managerUpdateApplying) return;
+  if (!confirm(
+    `Install manager v${view.latest_version} now?\n\n` +
+    "The verified release will update the dedicated-server installation. " +
+    "The game and web services may restart, and connected players may be disconnected.",
+  )) return;
+  app.managerUpdateApplying = true;
+  renderManagerUpdate(view);
+  try {
+    const started = await api("/api/manager/update/apply", {
+      method: "POST",
+      body: { target_version: view.latest_version },
+    });
+    renderManagerUpdate(started);
+    toast(`Manager update to v${view.latest_version} started.`);
+  } catch (error) {
+    await loadManagerUpdate({ silent: true });
+    toast(error.message, true);
+  } finally {
+    app.managerUpdateApplying = false;
+    if (app.managerUpdate) renderManagerUpdate(app.managerUpdate);
+  }
+}
+
+function scheduleManagerUpdatePoll() {
+  if (app.managerUpdatePollTimer) clearTimeout(app.managerUpdatePollTimer);
+  const delay = app.managerUpdate?.status === "running" ? 3000 : 60000;
+  app.managerUpdatePollTimer = setTimeout(async () => {
+    await Promise.all([
+      loadManagerUpdate({ silent: true }),
+      loadSteamUpdate({ silent: true }),
+      loadAutomaticUpdates({ silent: true }),
+    ]);
+    scheduleManagerUpdatePoll();
+  }, delay);
 }
 
 function bytes(value) {
@@ -234,6 +559,7 @@ function renderSnapshot(snapshot) {
   app.lifecycleObserved = true;
   app.lifecycleRunning = operation.running;
   app.lifecycleFinishedAt = finishedAt;
+  if (app.steamUpdate) renderSteamUpdate(app.steamUpdate);
   $("#operation-spinner").classList.toggle("hidden", !operation.running);
   if (operation.action) {
     const state = operation.running ? "running" : operation.successful ? "completed" : "failed";
@@ -719,9 +1045,11 @@ async function exportMonitoringLogs() {
 async function serverAction(action) {
   try {
     await api("/api/server/action", { method: "POST", body: { action } });
-    toast(`${action} operation accepted.`);
+    if (!app.steamUpdateApplying) toast(`${action} operation accepted.`);
+    return true;
   } catch (error) {
     toast(error.message, true);
+    return false;
   }
 }
 
@@ -3703,6 +4031,14 @@ function renderAccessRules(rules) {
 }
 
 function bindEvents() {
+  $("#manager-update-check").addEventListener("click", checkManagerUpdate);
+  $("#manager-update-apply").addEventListener("click", applyManagerUpdate);
+  $("#steam-update-check").addEventListener("click", checkSteamUpdate);
+  $("#steam-update-apply").addEventListener("click", applySteamUpdate);
+  $("#automatic-steam-update").addEventListener("change", (event) =>
+    saveAutomaticUpdates(event.target));
+  $("#automatic-manager-update").addEventListener("change", (event) =>
+    saveAutomaticUpdates(event.target));
   $("#theme-toggle").addEventListener("click", () => {
     setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
     if (app.metricsHistory) requestAnimationFrame(renderMetricsHistory);
@@ -4161,7 +4497,11 @@ async function initialize() {
       loadAccess(),
       loadServices(),
       loadRuntimeTargets({ silent: true }),
+      loadManagerUpdate({ silent: true }),
+      loadSteamUpdate({ silent: true }),
+      loadAutomaticUpdates({ silent: true }),
     ]);
+    scheduleManagerUpdatePoll();
     const stream = new EventSource("/api/events");
     stream.addEventListener("snapshot", (event) => {
       try { renderSnapshot(JSON.parse(event.data)); } catch (_) {}

@@ -38,6 +38,12 @@ func (m *Manager) Handler() http.Handler {
 	mux.HandleFunc("/api/players/action", m.withSession(m.playerActionHandler))
 	mux.HandleFunc("/api/players/comments", m.withSession(m.playerCommentHandler))
 	mux.HandleFunc("/api/server/action", m.withSession(m.serverActionHandler))
+	mux.HandleFunc("/api/server/update-status", m.withSession(m.steamUpdateStatusHandler))
+	mux.HandleFunc("/api/server/update-check", m.withSession(m.steamUpdateCheckHandler))
+	mux.HandleFunc(
+		"/api/updates/automatic",
+		m.withSession(m.automaticUpdateSettingsHandler),
+	)
 	mux.HandleFunc("/api/recovery/settings", m.withSession(m.recoverySettingsHandler))
 	mux.HandleFunc("/api/recovery/retry", m.withSession(m.recoveryRetryHandler))
 	mux.HandleFunc("/api/monitoring", m.withSession(m.monitoringHandler))
@@ -89,6 +95,9 @@ func (m *Manager) Handler() http.Handler {
 	mux.HandleFunc("/api/services/web-port", m.withSession(m.webPortHandler))
 	mux.HandleFunc("/api/services/server-ports", m.withSession(m.serverPortsHandler))
 	mux.HandleFunc("/api/services/start-map", m.withSession(m.startMapHandler))
+	mux.HandleFunc("/api/manager/update", m.withSession(m.managerUpdateStatusHandler))
+	mux.HandleFunc("/api/manager/update/check", m.withSession(m.managerUpdateCheckHandler))
+	mux.HandleFunc("/api/manager/update/apply", m.withSession(m.managerUpdateApplyHandler))
 	return m.securityHeaders(
 		m.requestAddressMiddleware(
 			m.auditMiddleware(
@@ -96,6 +105,230 @@ func (m *Manager) Handler() http.Handler {
 			),
 		),
 	)
+}
+
+func (m *Manager) steamUpdateStatusHandler(
+	response http.ResponseWriter,
+	request *http.Request,
+	_ Session,
+) {
+	if request.Method != http.MethodGet {
+		response.Header().Set("Allow", http.MethodGet)
+		http.Error(response, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	view, err := m.currentSteamUpdateView()
+	if err != nil {
+		writeError(response, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(response, http.StatusOK, view)
+}
+
+func (m *Manager) steamUpdateCheckHandler(
+	response http.ResponseWriter,
+	request *http.Request,
+	session Session,
+) {
+	if request.Method != http.MethodPost {
+		response.Header().Set("Allow", http.MethodPost)
+		http.Error(response, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !validCSRF(request, session) {
+		writeError(response, http.StatusForbidden, "invalid CSRF token")
+		return
+	}
+	view, err := m.checkSteamUpdate(request.Context())
+	if err != nil {
+		status := http.StatusBadGateway
+		if errors.Is(err, errSteamUpdateLifecycleBusy) {
+			status = http.StatusConflict
+		}
+		m.auditRequestEvent(
+			request,
+			session.Username,
+			"steam_update_check_failed",
+			map[string]string{"error": boundedManagerUpdateText(err.Error(), 256)},
+		)
+		writeError(response, status, err.Error())
+		return
+	}
+	m.auditRequestEvent(
+		request,
+		session.Username,
+		"steam_update_checked",
+		map[string]string{
+			"installed_build_id": view.InstalledBuildID,
+			"latest_build_id":    view.LatestBuildID,
+			"available":          strconv.FormatBool(view.Available),
+		},
+	)
+	writeJSON(response, http.StatusOK, view)
+}
+
+func (m *Manager) automaticUpdateSettingsHandler(
+	response http.ResponseWriter,
+	request *http.Request,
+	session Session,
+) {
+	if request.Method == http.MethodGet {
+		writeJSON(response, http.StatusOK, m.automaticUpdateView())
+		return
+	}
+	if request.Method != http.MethodPost {
+		response.Header().Set("Allow", "GET, POST")
+		http.Error(response, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !validCSRF(request, session) {
+		writeError(response, http.StatusForbidden, "invalid CSRF token")
+		return
+	}
+	var body struct {
+		ManagerEnabled bool `json:"manager_enabled"`
+		SteamEnabled   bool `json:"steam_enabled"`
+	}
+	if err := decodeJSON(response, request, &body); err != nil {
+		writeError(response, http.StatusBadRequest, err.Error())
+		return
+	}
+	view, err := m.setAutomaticUpdateSettings(
+		body.ManagerEnabled,
+		body.SteamEnabled,
+	)
+	if err != nil {
+		writeError(response, http.StatusInternalServerError, err.Error())
+		return
+	}
+	m.auditRequestEvent(
+		request,
+		session.Username,
+		"automatic_update_settings_saved",
+		map[string]string{
+			"manager_enabled": strconv.FormatBool(body.ManagerEnabled),
+			"steam_enabled":   strconv.FormatBool(body.SteamEnabled),
+		},
+	)
+	writeJSON(response, http.StatusOK, view)
+}
+
+func (m *Manager) managerUpdateStatusHandler(
+	response http.ResponseWriter,
+	request *http.Request,
+	_ Session,
+) {
+	if request.Method != http.MethodGet {
+		response.Header().Set("Allow", http.MethodGet)
+		http.Error(response, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	view, err := m.currentManagerUpdateView()
+	if err != nil {
+		writeError(response, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(response, http.StatusOK, view)
+}
+
+func (m *Manager) managerUpdateCheckHandler(
+	response http.ResponseWriter,
+	request *http.Request,
+	session Session,
+) {
+	if request.Method != http.MethodPost {
+		response.Header().Set("Allow", http.MethodPost)
+		http.Error(response, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !validCSRF(request, session) {
+		writeError(response, http.StatusForbidden, "invalid CSRF token")
+		return
+	}
+	view, err := m.checkManagerUpdate(request.Context())
+	if err != nil {
+		m.auditRequestEvent(
+			request,
+			session.Username,
+			"manager_update_check_failed",
+			map[string]string{"error": boundedManagerUpdateText(err.Error(), 256)},
+		)
+		writeError(response, http.StatusBadGateway, err.Error())
+		return
+	}
+	m.auditRequestEvent(
+		request,
+		session.Username,
+		"manager_update_checked",
+		map[string]string{
+			"installed_version": view.InstalledVersion,
+			"latest_version":    view.LatestVersion,
+			"available":         strconv.FormatBool(view.Available),
+		},
+	)
+	writeJSON(response, http.StatusOK, view)
+}
+
+func (m *Manager) managerUpdateApplyHandler(
+	response http.ResponseWriter,
+	request *http.Request,
+	session Session,
+) {
+	if request.Method != http.MethodPost {
+		response.Header().Set("Allow", http.MethodPost)
+		http.Error(response, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !validCSRF(request, session) {
+		writeError(response, http.StatusForbidden, "invalid CSRF token")
+		return
+	}
+	var body struct {
+		TargetVersion string `json:"target_version"`
+	}
+	if err := decodeJSON(response, request, &body); err != nil {
+		writeError(response, http.StatusBadRequest, err.Error())
+		return
+	}
+	clientIP, err := requestIP(request)
+	if err != nil {
+		writeError(response, http.StatusBadRequest, "invalid client IP")
+		return
+	}
+	view, err := m.beginManagerUpdate(
+		body.TargetVersion,
+		session.Username,
+		clientIP.String(),
+	)
+	if err != nil {
+		status := http.StatusInternalServerError
+		switch {
+		case errors.Is(err, errManagerUpdateBusy),
+			errors.Is(err, errManagerUpdateUnavailable),
+			errors.Is(err, errManagerUpdateLifecycleBusy):
+			status = http.StatusConflict
+		case errors.Is(err, errManagerUpdateStale):
+			status = http.StatusBadRequest
+		}
+		m.auditRequestEvent(
+			request,
+			session.Username,
+			"manager_update_request_failed",
+			map[string]string{
+				"target_version": body.TargetVersion,
+				"error":          boundedManagerUpdateText(err.Error(), 256),
+			},
+		)
+		writeError(response, status, err.Error())
+		return
+	}
+	m.auditRequestEvent(
+		request,
+		session.Username,
+		"manager_update_requested",
+		map[string]string{"target_version": body.TargetVersion},
+	)
+	writeJSON(response, http.StatusAccepted, view)
 }
 
 func (m *Manager) securityHeaders(next http.Handler) http.Handler {
@@ -723,6 +956,14 @@ func (m *Manager) serverActionHandler(response http.ResponseWriter, request *htt
 	case "start", "stop", "restart", "update":
 	default:
 		writeError(response, http.StatusBadRequest, "unsupported server action")
+		return
+	}
+	if m.managerUpdateRunning() {
+		writeError(
+			response,
+			http.StatusConflict,
+			"a manager update is already running",
+		)
 		return
 	}
 	if err := m.requestOperation(

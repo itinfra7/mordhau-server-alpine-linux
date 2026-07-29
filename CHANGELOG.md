@@ -4,16 +4,40 @@ All notable changes to this repository are documented in this file.
 
 ## [Unreleased]
 
-## [2.3.3] - 2026-07-29
+## [2.4.0] - 2026-07-29
 
 ### Added
 
+- Add server-side hourly detection of stable project GitHub Releases and
+  public MORDHAU Dedicated Server Steam builds, with shared top-of-page
+  notifications and authenticated manual checks.
+- Add a checksum-verified detached management updater that validates the
+  selected release, safely extracts its archive, runs the bundled installer,
+  retains progress across web-service replacement, and restores previously
+  running services after installer failure.
+- Add server-wide, default-off automatic update settings for management
+  releases and dedicated-server builds. A detected update uses persistent
+  10-, 5-, 4-, 3-, 2-, and 1-minute English in-game notices before a managed
+  restart, or updates immediately when the game server is stopped.
 - Add semantic management-version detection for fresh installs, upgrades,
   same-version validation, and explicitly authorized `--allow-downgrade`
   transitions.
 
 ### Fixed
 
+- Prevent management updates, Steam build checks, automatic updates, and web
+  lifecycle actions from overlapping incompatible operations.
+- Reconcile an interrupted detached update on the next web-manager start and
+  record the worker result before releasing its process lock.
+- Base hourly external checks on the persisted server-side check time and
+  avoid repeated availability or failure audit records for an unchanged
+  result.
+- Accept a newly written, structurally valid public-build response when
+  SteamCMD returns a nonzero Wine process status, while still rejecting
+  incomplete or stale console output.
+- Preserve a complete existing SteamCMD installation during manager upgrades
+  instead of replacing it with the older bootstrap archive before every
+  self-update.
 - Synchronize the dashboard RCON port with `RconPort` in `Game.ini` when
   dedicated-server ports are saved and when an existing installation starts
   the updated web manager.
@@ -26,6 +50,17 @@ All notable changes to this repository are documented in this file.
 
 ### Security
 
+- Restrict management updates to the fixed project GitHub repository,
+  canonical stable semantic-version tags, and required release assets.
+  Enforce response, download, archive-entry, file-count, and expanded-size
+  limits; reject traversal, links, devices, duplicate paths, and unexpected
+  top-level paths; and verify the release archive against `SHA256SUMS`.
+- Require authentication and CSRF validation for manual checks, automatic
+  settings, and update requests. Audit the requesting account and canonical
+  client address without exposing credentials.
+- Exclude the detached updater from installer process shutdown, serialize
+  update workers with a root-only lock, atomically replace the running web
+  binary, and reject lifecycle changes while a management update is active.
 - Reject implicit management-code downgrades and malformed installed-version
   state, and atomically record a new version only after validation and
   requested service starts succeed.
@@ -37,11 +72,22 @@ All notable changes to this repository are documented in this file.
 
 ### Validation
 
+- Verify stable-release and required-asset validation, response limits,
+  checksum parsing, traversal and link rejection, installer-version matching,
+  detached state transitions, update-worker locking, interrupted-state
+  reconciliation, installer failure recovery, CSRF enforcement, and
+  lifecycle conflict rejection.
+- Verify Steam manifest and public-branch build parsing, persistent shared
+  status, complete metadata returned with a nonzero SteamCMD status,
+  lifecycle-busy handling, default-off automatic settings, persisted countdown
+  state, final restart requests, and detached manager-update dispatch.
 - Verify synchronization of duplicate active values, disabled entries,
   disabled sections, missing values, CRLF input, unrelated INI content, and
   invalid port rejection.
 - Verify OpenRC-managed and manually launched game servers use their respective
   shutdown paths during an in-place upgrade.
+- Verify complete and incomplete SteamCMD bootstrap installations are
+  distinguished before an installer refresh.
 - Verify semantic version validation and ordering, upgrade/reinstall/downgrade
   classification, downgrade refusal, malformed-state refusal, and atomic
   mode-`0600` version recording.

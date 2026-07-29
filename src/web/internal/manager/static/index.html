@@ -5,9 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="light dark">
   <title>MORDHAU Control</title>
-  <script src="/static/theme.js?v=2.3.3"></script>
-  <link rel="stylesheet" href="/static/app.css?v=2.3.3">
-  <script src="/static/app.js?v=2.3.3" defer></script>
+  <script src="/static/theme.js?v=2.4.0"></script>
+  <link rel="stylesheet" href="/static/app.css?v=2.4.0">
+  <script src="/static/app.js?v=2.4.0" defer></script>
 </head>
 <body id="page-top">
   <div class="ambient ambient-one"></div>
@@ -35,9 +35,37 @@
     </div>
   </header>
 
-  <div id="pending-banner" class="pending-banner hidden" role="status">
-    <strong>Configuration staged.</strong>
-    Game.ini or Engine.ini was edited while the server was running. It will be applied on the next start or restart.
+  <div class="banner-stack">
+    <div id="steam-update-banner" class="manager-update-banner hidden" role="status">
+      <div class="manager-update-copy">
+        <strong id="steam-update-title">Dedicated server update available</strong>
+        <span id="steam-update-detail"></span>
+        <span id="steam-update-checked" class="manager-update-checked"></span>
+      </div>
+      <div class="manager-update-actions">
+        <button id="steam-update-check" class="ghost compact" type="button">Check again</button>
+        <button id="steam-update-apply" class="primary compact" type="button">Update now</button>
+      </div>
+    </div>
+
+    <div id="manager-update-banner" class="manager-update-banner hidden" role="status">
+      <div class="manager-update-copy">
+        <strong id="manager-update-title">Manager update available</strong>
+        <span id="manager-update-detail"></span>
+        <span id="manager-update-checked" class="manager-update-checked"></span>
+      </div>
+      <div class="manager-update-actions">
+        <a id="manager-update-release" class="secondary-link compact hidden"
+           href="#" target="_blank" rel="noopener noreferrer">Release notes</a>
+        <button id="manager-update-check" class="ghost compact" type="button">Check again</button>
+        <button id="manager-update-apply" class="primary compact hidden" type="button">Update now</button>
+      </div>
+    </div>
+
+    <div id="pending-banner" class="pending-banner hidden" role="status">
+      <strong>Configuration staged.</strong>
+      Game.ini or Engine.ini was edited while the server was running. It will be applied on the next start or restart.
+    </div>
   </div>
 
   <main class="app-shell">
@@ -193,6 +221,41 @@
                 <option value="automatic">Automatic · start at boot</option>
               </select>
             </label>
+            <label class="service-setting automatic-update-setting"
+                   for="automatic-steam-update">
+              <span>MORDHAU Dedicated Server updates</span>
+              <span class="mod-restart-setting">
+                <input id="automatic-steam-update" type="checkbox">
+                <span>Notify players and install automatically</span>
+              </span>
+              <small>
+                Off by default. A detected public Steam build starts the same
+                10-minute in-game countdown used for mod updates, then updates and
+                restarts the server. Official server file or layout changes can
+                temporarily break runtime bridges, PAK integration, or management
+                features until this project is updated for compatibility.
+              </small>
+            </label>
+            <label class="service-setting automatic-update-setting"
+                   for="automatic-manager-update">
+              <span>MORDHAU Control updates</span>
+              <span class="mod-restart-setting">
+                <input id="automatic-manager-update" type="checkbox">
+                <span>Notify players and install automatically</span>
+              </span>
+              <small>
+                Off by default. A newer stable GitHub Release starts a 10-minute
+                in-game countdown, verifies the release checksum, and runs the
+                detached updater.
+              </small>
+            </label>
+            <div class="service-setting automatic-update-status-setting">
+              <span>Automatic update status</span>
+              <strong id="automatic-update-status">Disabled</strong>
+              <small id="automatic-update-detail">
+                Enable either option to schedule detected updates.
+              </small>
+            </div>
             <form id="web-port-form" class="service-setting port-setting">
               <span>Web service boot port</span>
               <div class="field-row">

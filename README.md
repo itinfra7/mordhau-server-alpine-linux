@@ -42,6 +42,10 @@ The repository provides:
   activation, deactivation, and deletion
 - Optional active-mod update detection with countdown, empty-server, or
   scheduled managed restart policies
+- Hourly server-side checks for stable management releases and public
+  MORDHAU Dedicated Server Steam builds, with shared update banners
+- Optional server-wide automatic management and dedicated-server updates with
+  a persistent ten-minute in-game restart countdown
 - Dependency-aware mod removal with shared-dependency protection
 - Persistent initial-map and dedicated-server port selection
 - Current map and game-mode display plus catalog-validated live map travel
@@ -78,8 +82,8 @@ not redistributed in the source archive.
 - OpenRC
 - Root privileges
 - Internet access to Alpine package mirrors, SteamCMD, Steam content servers,
-  Go module sources, GitHub Releases for the checksum-pinned `repak` helper,
-  and the DB-IP City Lite download host
+  Go module sources, this project's GitHub API and Releases, GitHub Releases
+  for the checksum-pinned `repak` helper, and the DB-IP City Lite download host
 - A mod.io API key when URL lookup, metadata, and recursive dependency
   inspection are required
 - A modern desktop or mobile browser
@@ -132,12 +136,12 @@ history remains in the versioned changelog asset instead of being repeated in
 every Release body.
 
 ```sh
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.3.3/mordhau-server-alpine-linux-v2.3.3.tar.gz
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.3.3/CHANGELOG-v2.3.3.md
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.3.3/SHA256SUMS
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.4.0/mordhau-server-alpine-linux-v2.4.0.tar.gz
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.4.0/CHANGELOG-v2.4.0.md
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.4.0/SHA256SUMS
 sha256sum -c SHA256SUMS
-tar -xzf mordhau-server-alpine-linux-v2.3.3.tar.gz
-cd mordhau-server-alpine-linux-v2.3.3
+tar -xzf mordhau-server-alpine-linux-v2.4.0.tar.gz
+cd mordhau-server-alpine-linux-v2.4.0
 chmod +x src/mordhau-server-alpine-linux.sh
 ./src/mordhau-server-alpine-linux.sh
 ```
@@ -315,6 +319,13 @@ The web manager provides:
 - Responsive phone, tablet, and desktop layouts with notched-display safe
   areas and touch-sized controls
 - Start, stop, restart, and stopped-only update controls
+- Shared top-of-page notifications for newer stable management releases and
+  public MORDHAU Dedicated Server Steam builds
+- Authenticated manual update checks, checksum-verified management release
+  installation, and restart/update controls for a detected Steam build
+- Server-wide, default-off automatic update settings for management releases
+  and dedicated-server builds, with persistent 10-, 5-, 4-, 3-, 2-, and
+  1-minute English in-game notices before a managed restart
 - Persistent latest lifecycle action, requester account and canonical client
   IP, result, timestamps, and output
 - Boot startup mode controls for both OpenRC services
@@ -1111,6 +1122,47 @@ rc-update del mordhau-web default
 
 Changing a boot mode does not change the current process state.
 
+## Management and Dedicated Server Updates
+
+The web manager checks the latest stable GitHub Release for this repository
+and the public Steam build for MORDHAU Dedicated Server once per hour. Check
+timestamps and results are stored on the server, so connected browsers read
+one shared result and do not independently contact GitHub or Steam. Manual
+checks are authenticated, CSRF-protected server requests.
+
+A newer release or Steam build appears in a shared banner at the top of the
+web manager. A management update downloads the versioned release archive and
+`SHA256SUMS` from the fixed project Release origin, verifies the archive
+checksum, validates archive paths and the embedded installer version, and
+runs the installer in a detached process. The update state survives the web
+service replacement, and interrupted work is reported after the next start.
+A dedicated-server update uses the existing managed `restart` action while
+the server is running or the stopped-only `update` action while it is stopped.
+Detached updater output is retained at:
+
+```text
+/root/mordhau/.manager/runtime/manager-update.log
+```
+
+Both automatic options are disabled by default and are stored server-wide in:
+
+```text
+/root/mordhau/.manager/automatic-updates.json
+```
+
+When either option is enabled and an update is detected while the game server
+is running, the manager announces the target in English at 10, 5, 4, 3, 2,
+and 1 minute through the Unicode Bridge, announces the final restart, and
+then performs the corresponding managed update. A stopped server is updated
+without an unnecessary countdown. Automatic management and Steam updates do
+not overlap another lifecycle operation or the active-mod restart scheduler.
+
+An official MORDHAU Dedicated Server release can change executable signatures,
+files, or directory layout. Such changes can temporarily disable the native
+Runtime bridge or require compatible project updates for bridge, PAK, or
+management integration. The web setting displays this warning before
+automatic dedicated-server updates are enabled.
+
 ## Security Model
 
 - The web manager runs as root because it controls Wine processes, OpenRC, and
@@ -1183,6 +1235,14 @@ Changing a boot mode does not change the current process state.
   address without recording property values.
 - Lifecycle operations accept fixed actions and do not execute user-provided
   shell arguments.
+- Management updates accept only the fixed project repository and canonical
+  stable semantic-version tags, require the expected release assets, enforce
+  download and extraction limits, reject unsafe archive entries, and verify
+  the selected archive against `SHA256SUMS` before executing its installer.
+- The detached management updater holds a process lock, records its final
+  state before releasing that lock, excludes itself from installer shutdown,
+  restores previously running services after installer failure, and prevents
+  concurrent web lifecycle operations.
 - Automatic recovery proceeds only when the root-only desired state is
   `running`, no lifecycle action is active, the process identity is absent,
   recovery is enabled, and the configured rolling retry budget permits it.
@@ -1216,9 +1276,17 @@ sh -n src/tests/test-unicode-bridge-install.sh
 sh -n src/runtime-bridge/build.sh
 sh -n src/tests/test-runtime-bridge-build.sh
 sh -n src/tests/test-log-compression.sh
+sh -n src/tests/test-steamcmd-update.sh
+sh -n src/tests/test-installer-versioning.sh
+sh -n src/tests/test-installer-service-lifecycle.sh
+sh -n src/tests/test-installer-update-worker.sh
 ./src/tests/test-unicode-bridge-install.sh
 ./src/tests/test-runtime-bridge-build.sh
 ./src/tests/test-log-compression.sh
+./src/tests/test-steamcmd-update.sh
+./src/tests/test-installer-versioning.sh
+./src/tests/test-installer-service-lifecycle.sh
+./src/tests/test-installer-update-worker.sh
 ```
 
 Installed-service checks:
@@ -1299,8 +1367,14 @@ narrow-screen control reflow, Players search/profile/moderation/comment
 controls, connected-player dashboard navigation, timed restrictions, session
 timelines, visual MapRotation controls, dependency-removal planning,
 restart-policy selection, Monitoring charts and log tools, recovery controls,
-CustomPaks upload and staging controls, and mobile visibility of server and
-account status. The native build test
+CustomPaks upload and staging controls, management and Steam update banners,
+server-wide automatic-update controls, and mobile visibility of server and
+account status. Management-update tests cover stable-release validation,
+semantic version ordering, required assets, bounded downloads, checksum
+selection, safe archive extraction, detached execution, interrupted-state
+reconciliation, lifecycle exclusion, and service restoration. Steam-update
+tests cover installed/public build parsing, server-wide result persistence,
+lifecycle contention, and automatic-update scheduling. The native build test
 compiles the Windows DLL twice, verifies deterministic output and its DXGI
 proxy export, and pins the PDB-derived property-export signature,
 enum-property layout, player identity fields, and net-dormancy entry point.
@@ -1328,7 +1402,12 @@ settings, mod refresh interval and restart policy, CustomPaks state and
 inactive/uploaded packages, player connection history, moderation leases and
 comments, GeoIP database and ignored networks, recovery policy and history,
 desired server state, monitoring policy, metrics history, latest lifecycle
-result, server-event history, and boot modes are preserved.
+result, server-event history, release and Steam check state, automatic-update
+settings, and boot modes are preserved.
+
+The same installer can be started from the management-release banner. The
+manual archive procedure remains available when the web manager is unavailable
+or a controlled rollback is required.
 
 To roll back management code:
 

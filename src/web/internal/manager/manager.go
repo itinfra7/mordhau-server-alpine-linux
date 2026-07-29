@@ -147,6 +147,35 @@ type Manager struct {
 
 	auditMu   sync.Mutex
 	auditPath string
+
+	managerUpdateMu          sync.Mutex
+	managerUpdateHTTPClient  *http.Client
+	managerUpdateLatestURL   string
+	managerUpdateStateFile   string
+	managerUpdateVersionFile string
+	managerUpdateBinary      string
+	managerUpdateLogFile     string
+	managerUpdateLockFile    string
+	managerUpdateNow         func() time.Time
+	managerUpdateWorkerStart func(string) error
+
+	steamUpdateMu            sync.Mutex
+	steamUpdateStateFile     string
+	steamUpdateManifestFile  string
+	steamUpdateConsoleFile   string
+	steamUpdateCommand       string
+	steamUpdateLifecycleLock string
+	steamUpdateNow           func() time.Time
+	steamUpdateRemoteBuild   func(context.Context) (string, error)
+	steamUpdateWake          chan struct{}
+
+	automaticUpdateMu          sync.RWMutex
+	automaticUpdateState       automaticUpdateStateFile
+	automaticUpdateStateFile   string
+	automaticUpdateWake        chan struct{}
+	automaticUpdateNow         func() time.Time
+	automaticUpdateMessageSend func(string) error
+	automaticUpdateProcess     func() (int, bool)
 }
 
 type loginAttempt struct {
@@ -216,7 +245,27 @@ func New(trustedProxies ...netip.Prefix) (*Manager, error) {
 		monitoringAlertQueue:     make(chan monitoringAlert, 32),
 		monitoringAlertLast:      make(map[string]time.Time),
 		monitoringNow:            time.Now,
+		managerUpdateHTTPClient:  defaultManagerUpdateHTTPClient(),
+		managerUpdateLatestURL:   managerUpdateLatestReleaseURL,
+		managerUpdateStateFile:   managerUpdateStatePath,
+		managerUpdateVersionFile: managerVersionPath,
+		managerUpdateBinary:      managerBinaryPath,
+		managerUpdateLogFile:     managerUpdateLogPath,
+		managerUpdateLockFile:    managerUpdateLockPath,
+		managerUpdateNow:         time.Now,
+		steamUpdateStateFile:     steamUpdateStatePath,
+		steamUpdateManifestFile:  steamAppManifestPath,
+		steamUpdateConsoleFile:   steamConsoleLogPath,
+		steamUpdateCommand:       steamCMDPath,
+		steamUpdateLifecycleLock: lifecycleLockPath,
+		steamUpdateNow:           time.Now,
+		steamUpdateWake:          make(chan struct{}, 1),
+		automaticUpdateStateFile: automaticUpdateStatePath,
+		automaticUpdateWake:      make(chan struct{}, 1),
+		automaticUpdateNow:       time.Now,
 	}
+	m.managerUpdateWorkerStart = m.startManagerUpdateWorker
+	m.steamUpdateRemoteBuild = m.querySteamRemoteBuild
 	for _, prefix := range trustedProxies {
 		canonical, err := canonicalTrustedProxyPrefix(prefix)
 		if err != nil {
@@ -270,6 +319,15 @@ func New(trustedProxies ...netip.Prefix) (*Manager, error) {
 	if err := m.loadOrCreateModUpdateState(); err != nil {
 		return nil, err
 	}
+	if err := m.loadOrCreateManagerUpdateState(); err != nil {
+		return nil, err
+	}
+	if err := m.loadOrCreateSteamUpdateState(); err != nil {
+		return nil, err
+	}
+	if err := m.loadOrCreateAutomaticUpdateState(); err != nil {
+		return nil, err
+	}
 	return m, nil
 }
 
@@ -286,6 +344,9 @@ func (m *Manager) StartBackground(ctx context.Context) {
 	go m.cleanupLoop(ctx)
 	go m.modRefreshLoop(ctx)
 	go m.modRestartLoop(ctx)
+	go m.managerUpdateCheckLoop(ctx)
+	go m.steamUpdateCheckLoop(ctx)
+	go m.automaticUpdateLoop(ctx)
 	go func() {
 		<-ctx.Done()
 		m.auditActorEvent("system", "local", "web_manager_stopping", nil)

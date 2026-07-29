@@ -2378,9 +2378,9 @@ func TestDashboardThemeAndServerPromptMarkup(t *testing.T) {
 	for _, expected := range []string{
 		`id="theme-toggle"`,
 		`content="width=device-width, initial-scale=1, viewport-fit=cover"`,
-		`src="/static/theme.js?v=2.3.3"`,
-		`href="/static/app.css?v=2.3.3"`,
-		`src="/static/app.js?v=2.3.3"`,
+		`src="/static/theme.js?v=2.4.0"`,
+		`href="/static/app.css?v=2.4.0"`,
+		`src="/static/app.js?v=2.4.0"`,
 		`<body id="page-top">`,
 		`class="brand" href="#page-top"`,
 		`<p class="eyebrow">SERVER EVENTS</p>`,
@@ -2410,6 +2410,17 @@ func TestDashboardThemeAndServerPromptMarkup(t *testing.T) {
 		`id="logs-search-form"`,
 		`<option value="game">Game logs · raw/XZ</option>`,
 		`id="monitoring-settings-form"`,
+		`id="steam-update-banner"`,
+		`id="steam-update-check"`,
+		`id="steam-update-apply"`,
+		`id="manager-update-banner"`,
+		`id="manager-update-release"`,
+		`id="manager-update-check"`,
+		`id="manager-update-apply"`,
+		`id="automatic-steam-update"`,
+		`id="automatic-manager-update"`,
+		`id="automatic-update-status"`,
+		`Official server file or layout changes can`,
 		`data-panel="mods">Mods</button>` + "\n" +
 			`      <button class="tab" data-panel="custompaks">CustomPaks</button>`,
 		`id="panel-custompaks"`,
@@ -2487,10 +2498,10 @@ func TestDashboardThemeAndServerPromptMarkup(t *testing.T) {
 		t.Fatal(err)
 	}
 	loginSource := string(loginData)
-	if !strings.Contains(loginSource, `src="/static/theme.js?v=2.3.3"`) {
+	if !strings.Contains(loginSource, `src="/static/theme.js?v=2.4.0"`) {
 		t.Fatal("login page does not initialize the persisted theme")
 	}
-	if !strings.Contains(loginSource, `href="/static/app.css?v=2.3.3"`) {
+	if !strings.Contains(loginSource, `href="/static/app.css?v=2.4.0"`) {
 		t.Fatal("login page does not use the release stylesheet version")
 	}
 	if !strings.Contains(loginSource, `viewport-fit=cover`) {
@@ -2514,6 +2525,12 @@ func TestDashboardThemeAndServerPromptMarkup(t *testing.T) {
 		`/api/mods/refresh`,
 		`/api/mods/refresh/settings`,
 		`/api/server/events/history`,
+		`/api/server/update-status`,
+		`/api/server/update-check`,
+		`/api/manager/update`,
+		`/api/manager/update/check`,
+		`/api/manager/update/apply`,
+		`/api/updates/automatic`,
 		`/api/rcon/command`,
 		`/api/runtime/status`,
 		`/api/runtime/target`,
@@ -2571,6 +2588,10 @@ func TestDashboardThemeAndServerPromptMarkup(t *testing.T) {
 		`function submitModRemoval(event)`,
 		`function renderConnectedPlayers(players)`,
 		`function renderMetricsHistory()`,
+		`function renderManagerUpdate(view)`,
+		`function renderSteamUpdate(view)`,
+		`function renderAutomaticUpdates(view)`,
+		`Official server file or layout changes can temporarily break runtime bridges`,
 		`resolvedOptions().timeZone`,
 		`comment: comment.value`,
 		`typeof rule.comment === "string"`,

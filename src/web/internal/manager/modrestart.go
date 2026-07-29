@@ -350,7 +350,8 @@ func (m *Manager) recordSuccessfulModRefreshLocked(
 	}
 	if len(updates) > 0 &&
 		m.modRefreshSettings.RestartOnUpdate &&
-		view.Settings.APIKeyConfigured {
+		view.Settings.APIKeyConfigured &&
+		!m.automaticUpdateScheduled() {
 		if running {
 			switch {
 			case state.Schedule == nil:
@@ -471,6 +472,7 @@ func (m *Manager) clearModRestartSchedule(
 	m.modUpdateState = state
 	m.modRevision++
 	m.modsMu.Unlock()
+	m.signalAutomaticUpdateLoop()
 	if reason != "restart_accepted" {
 		m.auditActorEvent("system", "local", "mod_update_restart_cancelled",
 			map[string]string{
