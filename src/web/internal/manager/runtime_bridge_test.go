@@ -16,6 +16,7 @@ func TestRuntimeBridgeStatusIsCollectedOnceForSnapshots(t *testing.T) {
 	statusPath := filepath.Join(directory, "status.json")
 	requestPath := filepath.Join(directory, "request.txt")
 	responsePath := filepath.Join(directory, "response.json")
+	historyPath := filepath.Join(directory, "players.json")
 	ping := 42
 	status := runtimeBridgeStatusFile{
 		Version:               1,
@@ -58,6 +59,10 @@ func TestRuntimeBridgeStatusIsCollectedOnceForSnapshots(t *testing.T) {
 		runtimeResponsePath:  responsePath,
 		runtimeTargetCache:   make(map[string]runtimeTargetCacheEntry),
 		runtimeServerProcess: func() (int, bool) { return 123, true },
+		playerHistoryFile:    historyPath,
+		playerHistory: playerHistoryFile{
+			Version: playerHistoryVersion,
+		},
 	}
 	manager.sampleRuntimeBridgeStatus()
 
