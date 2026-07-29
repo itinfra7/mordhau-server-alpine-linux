@@ -154,10 +154,11 @@ ensure_packages() {
         p11-kit-trust \
         unzip \
         wget \
-        wine
+        wine \
+        xz
     update-ca-certificates >/dev/null 2>&1 || true
 
-    for command_name in awk flock go rc-service rc-update setsid sha256sum timeout unzip wget wine wineserver x86_64-w64-mingw32-gcc; do
+    for command_name in awk flock go rc-service rc-update setsid sha256sum timeout unzip wget wine wineserver x86_64-w64-mingw32-gcc xz; do
         command -v "$command_name" >/dev/null 2>&1 ||
             die "required command is unavailable after package installation: $command_name"
     done

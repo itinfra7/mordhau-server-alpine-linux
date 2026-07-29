@@ -2,11 +2,13 @@ package manager
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -18,6 +20,8 @@ const (
 	logSearchMaximumLimit = 500
 	logExportMaximumLimit = 10000
 )
+
+var gameLogSearchSlot = make(chan struct{}, 1)
 
 type LogSearchRecord struct {
 	Source   string            `json:"source"`
@@ -66,7 +70,7 @@ func parseLogSearchQuery(request *http.Request, maximum int) (logSearchQuery, er
 		query.Source = "all"
 	}
 	if query.Source != "all" && query.Source != "audit" &&
-		query.Source != "events" {
+		query.Source != "events" && query.Source != "game" {
 		return logSearchQuery{}, errors.New("invalid log source")
 	}
 	if len(query.Query) > 256 || len(query.Account) > 64 ||
@@ -232,7 +236,108 @@ func scanEventLog(
 	return scanner.Err()
 }
 
+func gameLogRecordKind(text string) string {
+	separator := strings.IndexByte(text, ':')
+	if separator <= 0 {
+		return "game"
+	}
+	kind := strings.TrimSpace(text[:separator])
+	if kind == "" || len(kind) > 128 {
+		return "game"
+	}
+	return kind
+}
+
+func scanGameLog(
+	ctx context.Context,
+	path string,
+	query logSearchQuery,
+	records *[]LogSearchRecord,
+	maximum int,
+) error {
+	reader, err := openGameLogReader(ctx, path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	scanner := bufio.NewScanner(reader)
+	scanner.Buffer(make([]byte, 128<<10), playerLogScannerMaximumBytes)
+	for scanner.Scan() {
+		line := strings.TrimSuffix(scanner.Text(), "\r")
+		eventTime, text, valid := parseMordhauLogEnvelope(line)
+		if !valid {
+			continue
+		}
+		record := LogSearchRecord{
+			Source: "game",
+			Time:   eventTime,
+			Kind:   gameLogRecordKind(text),
+			Text:   line,
+			Details: map[string]string{
+				"file": filepath.Base(path),
+			},
+		}
+		if logSearchMatches(record, query) {
+			*records = append(*records, record)
+			if len(*records) > maximum*4 {
+				sort.SliceStable(*records, func(left, right int) bool {
+					return (*records)[left].Time.After((*records)[right].Time)
+				})
+				*records = (*records)[:maximum*2]
+			}
+		}
+	}
+	scanErr := scanner.Err()
+	closeErr := reader.Close()
+	if scanErr != nil {
+		return scanErr
+	}
+	return closeErr
+}
+
+func (m *Manager) archivedGameLogPaths() ([]string, error) {
+	directory := m.playerArchivePath()
+	entries, err := os.ReadDir(directory)
+	if errors.Is(err, os.ErrNotExist) {
+		return []string{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	paths := make(map[string]string)
+	for _, entry := range entries {
+		canonical, valid := canonicalArchivedGameLogName(entry.Name())
+		if entry.IsDir() || entry.Type()&os.ModeSymlink != 0 || !valid {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil || !info.Mode().IsRegular() {
+			continue
+		}
+		path := filepath.Join(directory, entry.Name())
+		current, exists := paths[canonical]
+		if !exists ||
+			(strings.HasSuffix(strings.ToLower(current), ".xz") &&
+				!strings.HasSuffix(strings.ToLower(path), ".xz")) {
+			paths[canonical] = path
+		}
+	}
+	names := make([]string, 0, len(paths))
+	for name := range paths {
+		names = append(names, name)
+	}
+	sort.Sort(sort.Reverse(sort.StringSlice(names)))
+	result := make([]string, 0, len(names))
+	for _, name := range names {
+		result = append(result, paths[name])
+	}
+	return result, nil
+}
+
 func (m *Manager) searchManagedLogs(
+	ctx context.Context,
 	query logSearchQuery,
 ) (LogSearchView, error) {
 	settings := m.managedLogSettings()
@@ -250,6 +355,31 @@ func (m *Manager) searchManagedLogs(
 			settings.LogBackups,
 		) {
 			if err := scanEventLog(path, query, &records, query.Limit); err != nil {
+				return LogSearchView{}, err
+			}
+		}
+	}
+	if query.Source == "game" {
+		select {
+		case gameLogSearchSlot <- struct{}{}:
+			defer func() { <-gameLogSearchSlot }()
+		case <-ctx.Done():
+			return LogSearchView{}, ctx.Err()
+		}
+		paths := []string{m.playerCurrentLogPath()}
+		archives, err := m.archivedGameLogPaths()
+		if err != nil {
+			return LogSearchView{}, err
+		}
+		paths = append(paths, archives...)
+		for _, path := range paths {
+			if err := scanGameLog(
+				ctx,
+				path,
+				query,
+				&records,
+				query.Limit,
+			); err != nil {
 				return LogSearchView{}, err
 			}
 		}

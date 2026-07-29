@@ -923,7 +923,7 @@ func (m *Manager) monitoringLogsHandler(
 		writeError(response, http.StatusBadRequest, err.Error())
 		return
 	}
-	view, err := m.searchManagedLogs(query)
+	view, err := m.searchManagedLogs(request.Context(), query)
 	if err != nil {
 		writeError(response, http.StatusInternalServerError, err.Error())
 		return
@@ -949,7 +949,7 @@ func (m *Manager) monitoringLogsExportHandler(
 	if request.URL.Query().Get("limit") == "" {
 		query.Limit = logExportMaximumLimit
 	}
-	view, err := m.searchManagedLogs(query)
+	view, err := m.searchManagedLogs(request.Context(), query)
 	if err != nil {
 		writeError(response, http.StatusInternalServerError, err.Error())
 		return

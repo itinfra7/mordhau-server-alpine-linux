@@ -849,10 +849,9 @@ func importedPlayerLogMatches(
 	name string,
 	info os.FileInfo,
 ) bool {
+	_ = info
 	for _, item := range imported {
-		if item.Name == name &&
-			item.Size == info.Size() &&
-			item.ModifiedUnixNano == info.ModTime().UnixNano() {
+		if item.Name == name {
 			return true
 		}
 	}
@@ -886,17 +885,16 @@ func scanPlayerLogHistory(
 	closeAtEnd bool,
 	history *playerHistoryFile,
 ) (bool, error) {
-	file, err := os.Open(path)
+	reader, err := openGameLogReader(context.Background(), path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return false, nil
 		}
 		return false, err
 	}
-	defer file.Close()
 
 	processor := newGameLogProcessor()
-	scanner := bufio.NewScanner(file)
+	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, 128<<10), playerLogScannerMaximumBytes)
 	changed := false
 	var lastTime time.Time
@@ -909,8 +907,13 @@ func scanPlayerLogHistory(
 			changed = true
 		}
 	}
-	if err := scanner.Err(); err != nil {
-		return false, err
+	scanErr := scanner.Err()
+	closeErr := reader.Close()
+	if scanErr != nil {
+		return false, scanErr
+	}
+	if closeErr != nil {
+		return false, closeErr
 	}
 	if closeAtEnd && !lastTime.IsZero() &&
 		applyPlayerGameEvents(history, processor.closePlayerSessions(lastTime)) {
@@ -931,9 +934,9 @@ func (m *Manager) importPlayerLogsLocked() (bool, error) {
 	})
 	for _, entry := range entries {
 		name := entry.Name()
+		canonicalName, validName := canonicalArchivedGameLogName(name)
 		if entry.IsDir() || entry.Type()&os.ModeSymlink != 0 ||
-			!strings.HasPrefix(name, "Mordhau_") ||
-			!strings.HasSuffix(strings.ToLower(name), ".log") {
+			!validName {
 			continue
 		}
 		info, err := entry.Info()
@@ -941,7 +944,11 @@ func (m *Manager) importPlayerLogsLocked() (bool, error) {
 			return false, err
 		}
 		if !info.Mode().IsRegular() ||
-			importedPlayerLogMatches(m.playerHistory.ImportedLogs, name, info) {
+			importedPlayerLogMatches(
+				m.playerHistory.ImportedLogs,
+				canonicalName,
+				info,
+			) {
 			continue
 		}
 		importedChanged, err := scanPlayerLogHistory(
@@ -955,7 +962,11 @@ func (m *Manager) importPlayerLogsLocked() (bool, error) {
 		if importedChanged {
 			changed = true
 		}
-		setImportedPlayerLog(&m.playerHistory.ImportedLogs, name, info)
+		setImportedPlayerLog(
+			&m.playerHistory.ImportedLogs,
+			canonicalName,
+			info,
+		)
 		changed = true
 	}
 

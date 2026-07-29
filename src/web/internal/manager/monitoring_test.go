@@ -92,3 +92,44 @@ func TestMetricHistoryRetentionAndManagedLogRotation(t *testing.T) {
 		t.Fatalf("second rotated log = %q, %v", data, err)
 	}
 }
+
+func TestGameLogRetentionIncludesXZArchives(t *testing.T) {
+	directory := t.TempDir()
+	oldPath := filepath.Join(
+		directory,
+		"Mordhau_2026-07-01_00-00-00.log.xz",
+	)
+	recentPath := filepath.Join(
+		directory,
+		"Mordhau_2026-07-29_00-00-00.log.xz",
+	)
+	for _, path := range []string{oldPath, recentPath} {
+		if err := os.WriteFile(path, []byte("archive"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	now := time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC)
+	if err := os.Chtimes(
+		oldPath,
+		now.Add(-31*24*time.Hour),
+		now.Add(-31*24*time.Hour),
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(recentPath, now, now); err != nil {
+		t.Fatal(err)
+	}
+	settings := defaultMonitoringSettings()
+	settings.GameLogRetentionDays = 30
+	manager := &Manager{
+		monitoringSettings:     settings,
+		playerArchiveDirectory: directory,
+	}
+	manager.pruneManagedLogs(now)
+	if _, err := os.Stat(oldPath); !os.IsNotExist(err) {
+		t.Fatalf("expired XZ archive remains: %v", err)
+	}
+	if _, err := os.Stat(recentPath); err != nil {
+		t.Fatalf("recent XZ archive was removed: %v", err)
+	}
+}

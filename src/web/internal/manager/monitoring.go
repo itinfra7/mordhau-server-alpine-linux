@@ -494,8 +494,7 @@ func (m *Manager) pruneManagedLogs(now time.Time) {
 	}
 	for _, entry := range entries {
 		if entry.IsDir() ||
-			!strings.HasPrefix(entry.Name(), "Mordhau_") ||
-			!strings.HasSuffix(strings.ToLower(entry.Name()), ".log") {
+			!archivedGameLogName(entry.Name()) {
 			continue
 		}
 		info, err := entry.Info()

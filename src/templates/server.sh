@@ -18,6 +18,8 @@ PID_FILE="$RUNTIME_DIR/mordhau.pid"
 DESIRED_STATE_FILE="$STATE_DIR/server-desired-state"
 LAUNCH_STATE_FILE="$RUNTIME_DIR/server-launch.json"
 LOCK_FILE="$STATE_DIR/lifecycle.lock"
+LOG_COMPRESSION_LOCK="$STATE_DIR/log-compression.lock"
+LOG_COMPRESSION_LOG="$RUNTIME_DIR/log-compression.log"
 LANGUAGE_FILE="$STATE_DIR/language"
 START_MAP_FILE="$STATE_DIR/start-map"
 SERVER_PORTS_FILE="$STATE_DIR/server-ports"
@@ -44,6 +46,8 @@ Commands:
   restart    Stop, update, apply staged INI/CustomPaks changes, and start it
   update     Update only; the server must be stopped
   recover    Restart the last validated installation after an unexpected exit
+  compress-logs
+             Losslessly compress finalized game-log archives
   status     Show whether the server is running
   help       Show this help
 EOF
@@ -67,6 +71,13 @@ ensure_layout() {
         "$STATE_DIR/custompaks-upload" \
         "$ARCHIVE_DIR" \
         "$XDG_RUNTIME_DIR"
+    if [ ! -e "$LOG_COMPRESSION_LOG" ]; then
+        : > "$LOG_COMPRESSION_LOG"
+    fi
+    if [ ! -e "$LOG_COMPRESSION_LOCK" ]; then
+        : > "$LOG_COMPRESSION_LOCK"
+    fi
+    chmod 600 "$LOG_COMPRESSION_LOG" "$LOG_COMPRESSION_LOCK"
 }
 
 read_pid() {
@@ -340,17 +351,147 @@ apply_pending_custompaks() {
     "$WEB_MANAGER" --apply-custompaks
 }
 
+compress_archived_log() (
+    source_log=$1
+    case "$source_log" in
+        "$ARCHIVE_DIR"/*)
+            ;;
+        *)
+            printf 'Refusing to compress an unexpected path: %s\n' \
+                "$source_log" >&2
+            return 1
+            ;;
+    esac
+    source_name=${source_log#"$ARCHIVE_DIR"/}
+    case "$source_name" in
+        Mordhau_*.log)
+            ;;
+        *)
+            printf 'Refusing to compress an unexpected archive name: %s\n' \
+                "$source_name" >&2
+            return 1
+            ;;
+    esac
+    case "$source_name" in
+        */*)
+            printf 'Refusing to compress a nested archive path: %s\n' \
+                "$source_log" >&2
+            return 1
+            ;;
+    esac
+    [ -f "$source_log" ] || return 0
+    if [ -L "$source_log" ]; then
+        printf 'Refusing to compress a symbolic link: %s\n' "$source_log" >&2
+        return 1
+    fi
+
+    compressed_log="${source_log}.xz"
+    temporary_log="${compressed_log}.tmp.$$"
+    if [ -e "$compressed_log" ]; then
+        if [ -f "$compressed_log" ] && [ ! -L "$compressed_log" ] &&
+           xz -t -- "$compressed_log"; then
+            source_checksum=$(sha256sum "$source_log" | awk '{print $1}')
+            compressed_checksum=$(
+                xz -dc -- "$compressed_log" |
+                    sha256sum |
+                    awk '{print $1}'
+            )
+            if [ "$source_checksum" = "$compressed_checksum" ]; then
+                unlink "$source_log"
+                printf 'Removed verified duplicate source %s; retained %s.\n' \
+                    "$source_log" "$compressed_log"
+                return 0
+            fi
+        fi
+        printf 'Refusing to overwrite existing compressed log: %s\n' \
+            "$compressed_log" >&2
+        return 1
+    fi
+    cleanup_compression_temp() {
+        if [ -f "$temporary_log" ]; then
+            unlink "$temporary_log"
+        fi
+    }
+    trap cleanup_compression_temp EXIT HUP INT TERM
+
+    original_checksum=$(sha256sum "$source_log" | awk '{print $1}')
+    if command -v ionice >/dev/null 2>&1; then
+        nice -n 19 ionice -c 3 \
+            xz -9e -T1 -c -- "$source_log" > "$temporary_log"
+    else
+        nice -n 19 xz -9e -T1 -c -- "$source_log" > "$temporary_log"
+    fi
+    xz -t -- "$temporary_log"
+    restored_checksum=$(
+        xz -dc -- "$temporary_log" |
+            sha256sum |
+            awk '{print $1}'
+    )
+    if [ "$restored_checksum" != "$original_checksum" ]; then
+        printf 'Compressed log verification failed: %s\n' "$source_log" >&2
+        return 1
+    fi
+    current_checksum=$(sha256sum "$source_log" | awk '{print $1}')
+    if [ "$current_checksum" != "$original_checksum" ]; then
+        printf 'Source log changed during compression: %s\n' "$source_log" >&2
+        return 1
+    fi
+
+    touch -r "$source_log" "$temporary_log"
+    chmod 600 "$temporary_log"
+    mv "$temporary_log" "$compressed_log"
+    unlink "$source_log"
+    trap - EXIT HUP INT TERM
+    printf 'Compressed %s as %s (SHA-256 %s).\n' \
+        "$source_log" "$compressed_log" "$original_checksum"
+)
+
+compress_archived_logs() {
+    compressed_count=0
+    failed_count=0
+    for source_log in "$ARCHIVE_DIR"/Mordhau_*.log; do
+        [ -f "$source_log" ] || continue
+        if compress_archived_log "$source_log"; then
+            compressed_count=$((compressed_count + 1))
+        else
+            failed_count=$((failed_count + 1))
+        fi
+    done
+    printf 'Game-log compression finished: %s compressed, %s failed.\n' \
+        "$compressed_count" "$failed_count"
+    [ "$failed_count" -eq 0 ]
+}
+
+run_log_compression() {
+    exec 8> "$LOG_COMPRESSION_LOCK"
+    chmod 600 "$LOG_COMPRESSION_LOCK"
+    if ! flock -n 8; then
+        printf '%s\n' 'Another game-log compression task is already running.'
+        return 0
+    fi
+    compress_archived_logs
+}
+
+queue_log_compression() {
+    (
+        # The background compressor must not retain the lifecycle lock.
+        exec 9>&-
+        run_log_compression
+    ) >> "$LOG_COMPRESSION_LOG" 2>&1 </dev/null &
+}
+
 archive_log() {
     [ -f "$GAME_LOG" ] || return 0
     stamp=$(date -r "$GAME_LOG" '+%Y-%m-%d_%H-%M-%S')
     destination="$ARCHIVE_DIR/Mordhau_${stamp}.log"
-    if [ -e "$destination" ]; then
+    if [ -e "$destination" ] || [ -e "${destination}.xz" ]; then
         printf 'Refusing to overwrite existing archived log: %s\n' "$destination" >&2
         return 1
     fi
     mv "$GAME_LOG" "$destination"
     chmod 600 "$destination"
     printf 'Archived previous log as %s.\n' "$destination"
+    queue_log_compression
 }
 
 configure_runtime_bridge() {
@@ -487,6 +628,10 @@ case "$command" in
         fi
         printf '%s\n' 'stopped'
         exit 3
+        ;;
+    compress-logs)
+        run_log_compression
+        exit $?
         ;;
     start|stop|restart|update|recover)
         ;;

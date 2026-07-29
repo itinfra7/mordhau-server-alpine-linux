@@ -2257,6 +2257,7 @@ func TestDashboardThemeAndServerPromptMarkup(t *testing.T) {
 		`id="player-history-chart"`,
 		`id="recovery-settings-form"`,
 		`id="logs-search-form"`,
+		`<option value="game">Game logs · raw/XZ</option>`,
 		`id="monitoring-settings-form"`,
 		`data-panel="mods">Mods</button>` + "\n" +
 			`      <button class="tab" data-panel="custompaks">CustomPaks</button>`,

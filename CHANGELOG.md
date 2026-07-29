@@ -4,6 +4,43 @@ All notable changes to this repository are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Add lossless, single-threaded XZ `-9e` compression for finalized
+  `Mordhau_<timestamp>.log` archives, including an explicit `compress-logs`
+  maintenance command and automatic background compression after each managed
+  log rotation.
+- Add authenticated raw game-log search and JSON Lines export across the
+  active log, uncompressed archives, and `.log.xz` archives without extracting
+  compressed files to disk.
+
+### Changed
+
+- Preserve each archive's final-use modification time and verify both the XZ
+  stream and restored SHA-256 before replacing an uncompressed archive.
+- Read `.log.xz` archives directly when rebuilding player history, avoid
+  duplicate history import during `.log` to `.log.xz` conversion, and apply
+  configured game-log retention to both formats.
+- Run archive compression with one XZ thread and idle CPU and I/O priority so
+  game-server startup does not wait for compression.
+
+### Security
+
+- Keep compressed archives at mode `0600`, reject symbolic links and
+  out-of-scope archive paths, reject mismatched archive collisions, safely
+  reconcile byte-identical duplicate sources, and retain the uncompressed
+  source whenever compression or verification fails.
+- Serialize authenticated game-log searches and resolve XZ input paths only
+  from the server-owned archive directory.
+
+### Validation
+
+- Verify lossless shell compression, restored content, archive permissions,
+  interrupted-finalization reconciliation, mismatched-collision preservation,
+  idempotent maintenance runs, streamed XZ reads without extracted files,
+  compressed player-history import, duplicate-import prevention, raw/XZ
+  game-log search, and XZ archive retention.
+
 ## [2.3.0] - 2026-07-29
 
 ### Added

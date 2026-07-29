@@ -51,7 +51,8 @@ The repository provides:
 - Desired-state-aware game-process crash detection, bounded automatic recovery,
   retained diagnostics, and manual retry
 - Server-side one-minute metric history, managed log search/export/rotation,
-  archived game-log retention, and optional HTTPS webhook alerts
+  verified XZ game-log archiving and retention, and optional HTTPS webhook
+  alerts
 - UTF-8 server-event following from `Mordhau.log`, including player lifecycle,
   chat, match-state, killfeed, scorefeed, and punishment records, with repeated
   idle empty-server map states suppressed
@@ -93,7 +94,8 @@ MORDHAU Dedicated Server, and Steam update staging.
 - `src/mordhau-server-alpine-linux.sh`
   Idempotent installer and management-code updater.
 - `src/templates/server.sh`
-  MORDHAU update, start, stop, restart, and status controller.
+  MORDHAU update, start, stop, restart, status, and game-log compression
+  controller.
 - `src/templates/webserver.sh`
   Foreground web-manager launcher with persistent port and trusted-proxy
   selection.
@@ -167,7 +169,8 @@ management-code updates.
 
 The installer performs these operations:
 
-1. Installs Alpine packages required by Wine, SteamCMD, Go, and OpenRC.
+1. Installs Alpine packages required by Wine, SteamCMD, Go, OpenRC, and XZ
+   game-log archiving.
 2. Downloads and self-updates Windows SteamCMD.
 3. Installs or validates MORDHAU Dedicated Server App ID `629800`.
 4. Runs the server without game options for five seconds when generated
@@ -201,6 +204,7 @@ numeric characters.
 /root/mordhau/server.sh stop
 /root/mordhau/server.sh restart
 /root/mordhau/server.sh update
+/root/mordhau/server.sh compress-logs
 /root/mordhau/server.sh status
 ```
 
@@ -212,6 +216,8 @@ Behavior:
   prefix if required.
 - `restart` stops, validates, applies staged changes, and starts.
 - `update` only runs while the game server is stopped.
+- `compress-logs` losslessly compresses every finalized, uncompressed game-log
+  archive without stopping the game server.
 - Every managed launch uses the selected initial map, game/RCON/beacon/query
   ports, `-language=<code>`, `-LocalLogTimes`, and `-log`.
 
@@ -222,7 +228,25 @@ Before each managed launch, an existing `Mordhau.log` is moved to:
 ```
 
 The timestamp is derived from the log file's final modification time. Existing
-archives are never overwritten.
+archives are never overwritten. A background task then uses single-threaded
+XZ `-9e` compression at idle CPU and I/O priority and produces:
+
+```text
+/root/mordhau/log/Mordhau_<yyyy-mm-dd_hh-mm-ss>.log.xz
+```
+
+The task tests the XZ stream and compares the restored SHA-256 with the
+uncompressed source before removing that source. A failed compression retains
+the `.log` file. Compressed files preserve the source modification time and
+mode `0600`; progress is recorded in:
+
+```text
+/root/mordhau/.manager/runtime/log-compression.log
+```
+
+Compression never touches the active
+`/root/mordhau/Mordhau/Saved/Logs/Mordhau.log` and does not delay the managed
+game-server launch.
 
 ## Web Manager
 
@@ -368,14 +392,16 @@ matching or rule precedence. Existing rules without a comment remain valid.
 ## Player History and Moderation
 
 The Players panel reconstructs connection history from archived
-`Mordhau_<timestamp>.log` files and the current `Mordhau.log`, then follows new
-records while the web manager is running. Login requests are correlated with
-successful authentication by PlayFab ID and are the only source allowed to
-introduce or reprioritize a persistent nickname. UTF-8 chat identity and the
-authoritative game-connection close record remain available for server-event
-and session correlation without changing nickname history. Archived logs are
-fingerprinted after a successful import, and connection start times prevent a
-repeated scan from duplicating sessions.
+`Mordhau_<timestamp>.log` and `Mordhau_<timestamp>.log.xz` files plus the
+current `Mordhau.log`, then follows new records while the web manager is
+running. XZ archives are decompressed as a stream and are never extracted to
+disk. Login requests are correlated with successful authentication by PlayFab
+ID and are the only source allowed to introduce or reprioritize a persistent
+nickname. UTF-8 chat identity and the authoritative game-connection close
+record remain available for server-event and session correlation without
+changing nickname history. Archived logs are fingerprinted after a successful
+import, and a `.log` to `.log.xz` conversion retains the same archive identity
+so it cannot duplicate sessions.
 
 Persistent history is stored with mode `0600` at:
 
@@ -716,11 +742,15 @@ mode-`0600` history to:
 ```
 
 Audit and Server Events records can be filtered by source, text, account,
-event kind, and time range, then exported as bounded UTF-8 JSON Lines. The
-manager can rotate both managed logs at a configured size, retain a configured
-number of backups, and remove archived `Mordhau_<timestamp>.log` files older
-than the configured retention period. Rotation and retention do not alter the
-active MORDHAU `Mordhau.log`.
+event kind, and time range, then exported as bounded UTF-8 JSON Lines. A
+separate Game logs source searches the active raw game log and finalized
+`.log` or `.log.xz` archives, including each original line and archive name.
+Compressed archives are streamed through XZ without extraction, and only one
+game-log search runs at a time. The manager can rotate both control logs at a
+configured size, retain a configured number of backups, and remove archived
+game logs in either format when they exceed the configured retention period.
+Rotation, compression, search, and retention do not alter the active MORDHAU
+`Mordhau.log`.
 
 An optional HTTPS webhook can receive crash, exhausted-recovery,
 disk-threshold, and mod-refresh-failure alerts. Each alert type has a six-hour
@@ -1175,8 +1205,10 @@ sh -n src/unicode-bridge/build-windows-server.sh
 sh -n src/tests/test-unicode-bridge-install.sh
 sh -n src/runtime-bridge/build.sh
 sh -n src/tests/test-runtime-bridge-build.sh
+sh -n src/tests/test-log-compression.sh
 ./src/tests/test-unicode-bridge-install.sh
 ./src/tests/test-runtime-bridge-build.sh
+./src/tests/test-log-compression.sh
 ```
 
 Installed-service checks:
@@ -1205,7 +1237,8 @@ accounting, attributed persistent comments, verified mute/ban command
 handling, GeoIP edition and ignored-prefix validation, local location-record
 normalization, fixed-origin download failure handling,
 match/kill/score/punishment parsing, current map and game-mode parsing, idle
-match-state suppression,
+match-state suppression, streamed XZ archive reads, compressed archive
+identity and retention, raw/XZ game-log search,
 missing-log creation, partial writes, truncation, and log replacement,
 ASCII-only Unicode token commands, UTF-8 message staging, spool permissions and
 stale-file cleanup, bridge acknowledgements, input validation, start-map
@@ -1241,9 +1274,12 @@ competitive-rank substitutes, normalize the earlier zero-value sentinel, and
 retain the latest valid observation. Platform-identity tests enforce strict
 SteamID64 validation, safe profile-link construction, Epic identity
 normalization, and exact live-ping transport.
-The shell integration test covers PAK installation, active and staged Game.ini
-registration, existing server-actor preservation, backup creation, and
-idempotent reinstallation. Static asset tests verify the default-light theme
+The shell integration tests cover PAK installation, active and staged Game.ini
+registration, existing server-actor preservation, backup creation,
+idempotent reinstallation, verified lossless XZ game-log compression,
+archive permissions, interrupted-finalization recovery, collision
+preservation, and idempotent compression maintenance. Static asset tests
+verify the default-light theme
 initializer, persistent theme, server-managed mod-refresh controls,
 browser-time-zone timestamps, initial server-event history loading, the
 unified RCON/SAY prompt, mobile viewport metadata, touch targets, input sizing,
