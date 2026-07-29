@@ -1,8 +1,10 @@
 @ShutdownOnFailedCommand 1
 @NoPromptForPassword 1
 @sSteamCmdForcePlatformType windows
+@sSteamCmdForcePlatformBitness 64
 force_install_dir Z:\root\mordhau
 login anonymous
 app_info_update 1
+app_info_print 629800
 app_update 629800 validate
 quit

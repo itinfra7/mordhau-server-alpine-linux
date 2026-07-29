@@ -4,6 +4,31 @@ All notable changes to this repository are documented in this file.
 
 ## [Unreleased]
 
+## [2.3.2] - 2026-07-29
+
+### Fixed
+
+- Resolve MORDHAU App ID `629800` metadata before the first SteamCMD
+  `app_update`, explicitly select the Windows 64-bit depot, and retry only the
+  transient `Missing configuration` result with bounded delays.
+- Require an exact MORDHAU executable command and Wine process identity when
+  detecting the game server, preventing unrelated shell or diagnostic command
+  lines from being reported as a running server.
+- Identify an unmanaged web-manager process by its exact `/proc` executable
+  target instead of a command-line substring.
+
+### Validation
+
+- Verify the SteamCMD command order and bounded metadata-only retry behavior,
+  including immediate failure for unrelated update errors.
+- Verify exact game-process matching for the launcher and shipping executable,
+  plus rejection of shell, unrelated Wine, and alternate-path false
+  positives.
+- Verify an empty SteamCMD cache and isolated Wine prefix reach the App ID
+  `629800` Windows depot download, and complete an Alpine installation through
+  SteamCMD validation, native bridge installation, initial configuration,
+  Unicode Bridge installation, Go tests, web-manager build, and OpenRC setup.
+
 ## [2.3.1] - 2026-07-29
 
 ### Added

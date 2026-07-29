@@ -132,12 +132,12 @@ history remains in the versioned changelog asset instead of being repeated in
 every Release body.
 
 ```sh
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.3.1/mordhau-server-alpine-linux-v2.3.1.tar.gz
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.3.1/CHANGELOG-v2.3.1.md
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.3.1/SHA256SUMS
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.3.2/mordhau-server-alpine-linux-v2.3.2.tar.gz
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.3.2/CHANGELOG-v2.3.2.md
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.3.2/SHA256SUMS
 sha256sum -c SHA256SUMS
-tar -xzf mordhau-server-alpine-linux-v2.3.1.tar.gz
-cd mordhau-server-alpine-linux-v2.3.1
+tar -xzf mordhau-server-alpine-linux-v2.3.2.tar.gz
+cd mordhau-server-alpine-linux-v2.3.2
 chmod +x src/mordhau-server-alpine-linux.sh
 ./src/mordhau-server-alpine-linux.sh
 ```
@@ -172,7 +172,9 @@ The installer performs these operations:
 1. Installs Alpine packages required by Wine, SteamCMD, Go, OpenRC, and XZ
    game-log archiving.
 2. Downloads and self-updates Windows SteamCMD.
-3. Installs or validates MORDHAU Dedicated Server App ID `629800`.
+3. Selects the Windows 64-bit depot, resolves App ID `629800` metadata, and
+   installs or validates MORDHAU Dedicated Server. Only a transient
+   SteamCMD `Missing configuration` result is retried.
 4. Runs the server without game options for five seconds when generated
    WindowsServer configuration files do not exist.
 5. Generates an eight-character mixed-case alphanumeric RCON password and

@@ -2,7 +2,7 @@
 
 set -eu
 
-PROJECT_VERSION="2.3.1"
+PROJECT_VERSION="2.3.2"
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 MORDHAU_ROOT="/root/mordhau"
 STEAMCMD_ROOT="/root/steamcmd"
@@ -186,17 +186,17 @@ ensure_layout() {
     validate_port "$WEB_PORT" || die "web port must be between 1 and 65535"
 }
 
-process_matches() {
+process_is_executable() {
     process_id=$1
     expected=$2
-    [ -r "/proc/$process_id/cmdline" ] || return 1
-    tr '\000' ' ' < "/proc/$process_id/cmdline" 2>/dev/null | grep -Fq "$expected"
+    actual=$(readlink "/proc/$process_id/exe" 2>/dev/null) || return 1
+    [ "$actual" = "$expected" ]
 }
 
 find_web_pid() {
     for proc_dir in /proc/[0-9]*; do
         process_id=${proc_dir#/proc/}
-        if process_matches "$process_id" "$MORDHAU_ROOT/bin/mordhau-web"; then
+        if process_is_executable "$process_id" "$MORDHAU_ROOT/bin/mordhau-web"; then
             printf '%s\n' "$process_id"
             return 0
         fi

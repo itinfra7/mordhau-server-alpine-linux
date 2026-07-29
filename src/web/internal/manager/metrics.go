@@ -187,9 +187,28 @@ func processIsMordhau(pid int) bool {
 	if err != nil {
 		return false
 	}
-	command := strings.ReplaceAll(string(data), "\x00", " ")
-	return strings.Contains(command, "MordhauServer.exe") ||
-		strings.Contains(command, "MordhauServer-Win64-Shipping.exe")
+	executable, err := os.Readlink("/proc/" + strconv.Itoa(pid) + "/exe")
+	if err != nil {
+		return false
+	}
+	return isMordhauProcess(data, executable)
+}
+
+func isMordhauProcess(commandLine []byte, executable string) bool {
+	executableName := strings.ToLower(filepath.Base(executable))
+	switch executableName {
+	case "wine", "wine64", "wine-preloader", "wine64-preloader":
+	default:
+		return false
+	}
+	command, _, _ := strings.Cut(string(commandLine), "\x00")
+	switch command {
+	case "/root/mordhau/MordhauServer.exe",
+		`Z:\root\mordhau\Mordhau\Binaries\Win64\MordhauServer-Win64-Shipping.exe`:
+		return true
+	default:
+		return false
+	}
 }
 
 func serverRunning() bool {

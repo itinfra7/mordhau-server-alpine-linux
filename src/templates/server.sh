@@ -26,8 +26,10 @@ SERVER_PORTS_FILE="$STATE_DIR/server-ports"
 CONSOLE_LOG="$RUNTIME_DIR/server-console.log"
 STEAM_RUN_LOG="$RUNTIME_DIR/steamcmd-update.log"
 STEAM_CONSOLE_LOG=/root/steamcmd/logs/console_log.txt
+STEAM_UPDATE_MAX_ATTEMPTS=6
 EXE="$ROOT/MordhauServer.exe"
 SHIPPING_EXE="$ROOT/Mordhau/Binaries/Win64/MordhauServer-Win64-Shipping.exe"
+SHIPPING_WINDOWS_EXE='Z:\root\mordhau\Mordhau\Binaries\Win64\MordhauServer-Win64-Shipping.exe'
 RUNTIME_BRIDGE_DLL="$ROOT/Mordhau/Binaries/Win64/dxgi.dll"
 RUNTIME_BRIDGE_EXE_SHA256="a11348d6bfdb386d7f8a976a59e7d28d38b0d1ba2b9a2a7e0035ac28d53f885e"
 WEB_MANAGER="$ROOT/bin/mordhau-web"
@@ -92,8 +94,25 @@ read_pid() {
 pid_is_mordhau() {
     check_pid=$1
     [ -r "/proc/$check_pid/cmdline" ] || return 1
-    tr '\000' ' ' < "/proc/$check_pid/cmdline" 2>/dev/null |
-        grep -Eq 'MordhauServer(\.exe|-Win64-Shipping\.exe)'
+    process_executable=$(readlink "/proc/$check_pid/exe" 2>/dev/null) ||
+        return 1
+    case "$process_executable" in
+        */wine|*/wine64|*/wine-preloader|*/wine64-preloader)
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+    process_command=$(
+        tr '\000' '\n' < "/proc/$check_pid/cmdline" 2>/dev/null |
+            sed -n '1p'
+    )
+    case "$process_command" in
+        "$EXE"|"$SHIPPING_WINDOWS_EXE")
+            return 0
+            ;;
+    esac
+    return 1
 }
 
 find_mordhau_pid() {
@@ -283,31 +302,61 @@ update_server() {
         return 1
     fi
 
-    console_size=0
-    if [ -f "$STEAM_CONSOLE_LOG" ]; then
-        console_size=$(wc -c < "$STEAM_CONSOLE_LOG" | tr -d ' ')
-    fi
-
     : > "$STEAM_RUN_LOG"
-    printf '%s\n' 'Updating MORDHAU Dedicated Server through SteamCMD...'
-    (
-        cd /root/steamcmd
-        wine "$STEAMCMD" +runscript 'Z:\root\steamcmd\mordhau-update.txt'
-    ) >> "$STEAM_RUN_LOG" 2>&1 || true
-    wineserver -w >> "$STEAM_RUN_LOG" 2>&1 || true
-
     new_console="$RUNTIME_DIR/steamcmd-console-current.log"
-    if [ -f "$STEAM_CONSOLE_LOG" ]; then
-        tail -c "+$((console_size + 1))" "$STEAM_CONSOLE_LOG" > "$new_console" 2>/dev/null ||
-            cp "$STEAM_CONSOLE_LOG" "$new_console"
-    else
-        : > "$new_console"
-    fi
+    attempt_console="$RUNTIME_DIR/steamcmd-console-attempt.log"
+    : > "$new_console"
+    : > "$attempt_console"
+    chmod 600 "$STEAM_RUN_LOG" "$new_console" "$attempt_console"
 
-    if grep -Fq "Success! App '629800' fully installed." "$new_console"; then
-        printf '%s\n' 'MORDHAU Dedicated Server is up to date.'
-        return 0
-    fi
+    printf '%s\n' 'Updating MORDHAU Dedicated Server through SteamCMD...'
+    attempt=1
+    while [ "$attempt" -le "$STEAM_UPDATE_MAX_ATTEMPTS" ]; do
+        console_size=0
+        if [ -f "$STEAM_CONSOLE_LOG" ]; then
+            console_size=$(wc -c < "$STEAM_CONSOLE_LOG" | tr -d ' ')
+        fi
+
+        printf 'SteamCMD attempt %s/%s.\n' \
+            "$attempt" "$STEAM_UPDATE_MAX_ATTEMPTS"
+        printf '\n--- SteamCMD attempt %s/%s ---\n' \
+            "$attempt" "$STEAM_UPDATE_MAX_ATTEMPTS" >> "$STEAM_RUN_LOG"
+        (
+            cd /root/steamcmd
+            wine "$STEAMCMD" +runscript 'Z:\root\steamcmd\mordhau-update.txt'
+        ) >> "$STEAM_RUN_LOG" 2>&1 || true
+        wineserver -w >> "$STEAM_RUN_LOG" 2>&1 || true
+
+        if [ -f "$STEAM_CONSOLE_LOG" ]; then
+            tail -c "+$((console_size + 1))" "$STEAM_CONSOLE_LOG" \
+                > "$attempt_console" 2>/dev/null ||
+                cp "$STEAM_CONSOLE_LOG" "$attempt_console"
+        else
+            : > "$attempt_console"
+        fi
+        printf '\n--- SteamCMD attempt %s/%s ---\n' \
+            "$attempt" "$STEAM_UPDATE_MAX_ATTEMPTS" >> "$new_console"
+        cat "$attempt_console" >> "$new_console"
+
+        if grep -Fq "Success! App '629800' fully installed." "$attempt_console"; then
+            unlink "$attempt_console"
+            printf '%s\n' 'MORDHAU Dedicated Server is up to date.'
+            return 0
+        fi
+        if ! grep -Fq "Missing configuration" "$attempt_console"; then
+            break
+        fi
+        if [ "$attempt" -ge "$STEAM_UPDATE_MAX_ATTEMPTS" ]; then
+            break
+        fi
+
+        retry_delay=$((attempt * 5))
+        printf 'SteamCMD is still loading App ID 629800 metadata; retrying in %s seconds.\n' \
+            "$retry_delay"
+        sleep "$retry_delay"
+        attempt=$((attempt + 1))
+    done
+    unlink "$attempt_console"
 
     printf '%s\n' "SteamCMD update failed. See $STEAM_RUN_LOG and $new_console." >&2
     tail -n 40 "$new_console" >&2 || true

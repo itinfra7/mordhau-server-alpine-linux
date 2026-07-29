@@ -29,6 +29,53 @@ func TestMetricsSampleInterval(t *testing.T) {
 	}
 }
 
+func TestMordhauProcessIdentificationRequiresWineAndExactCommand(t *testing.T) {
+	tests := []struct {
+		name       string
+		command    string
+		executable string
+		want       bool
+	}{
+		{
+			name:       "launcher",
+			command:    "/root/mordhau/MordhauServer.exe\x00-language=en\x00",
+			executable: "/usr/lib/wine/x86_64-unix/wine-preloader",
+			want:       true,
+		},
+		{
+			name:       "shipping",
+			command:    "Z:\\root\\mordhau\\Mordhau\\Binaries\\Win64\\MordhauServer-Win64-Shipping.exe\x00Mordhau\x00",
+			executable: "/usr/lib/wine/x86_64-unix/wine64-preloader",
+			want:       true,
+		},
+		{
+			name:       "shell argument false positive",
+			command:    "sh\x00-c\x00test -s /root/mordhau/MordhauServer.exe\x00",
+			executable: "/bin/busybox",
+			want:       false,
+		},
+		{
+			name:       "wine argument false positive",
+			command:    "wine\x00cmd /c dir MordhauServer.exe\x00",
+			executable: "/usr/lib/wine/x86_64-unix/wine-preloader",
+			want:       false,
+		},
+		{
+			name:       "wrong installation path",
+			command:    "/tmp/MordhauServer.exe\x00",
+			executable: "/usr/lib/wine/x86_64-unix/wine-preloader",
+			want:       false,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := isMordhauProcess([]byte(test.command), test.executable); got != test.want {
+				t.Fatalf("isMordhauProcess() = %v, want %v", got, test.want)
+			}
+		})
+	}
+}
+
 func TestRandomPasswordShape(t *testing.T) {
 	for i := 0; i < 100; i++ {
 		password, err := randomPassword()
@@ -2227,9 +2274,9 @@ func TestDashboardThemeAndServerPromptMarkup(t *testing.T) {
 	for _, expected := range []string{
 		`id="theme-toggle"`,
 		`content="width=device-width, initial-scale=1, viewport-fit=cover"`,
-		`src="/static/theme.js?v=2.3.1"`,
-		`href="/static/app.css?v=2.3.1"`,
-		`src="/static/app.js?v=2.3.1"`,
+		`src="/static/theme.js?v=2.3.2"`,
+		`href="/static/app.css?v=2.3.2"`,
+		`src="/static/app.js?v=2.3.2"`,
 		`<body id="page-top">`,
 		`class="brand" href="#page-top"`,
 		`<p class="eyebrow">SERVER EVENTS</p>`,
@@ -2336,10 +2383,10 @@ func TestDashboardThemeAndServerPromptMarkup(t *testing.T) {
 		t.Fatal(err)
 	}
 	loginSource := string(loginData)
-	if !strings.Contains(loginSource, `src="/static/theme.js?v=2.3.1"`) {
+	if !strings.Contains(loginSource, `src="/static/theme.js?v=2.3.2"`) {
 		t.Fatal("login page does not initialize the persisted theme")
 	}
-	if !strings.Contains(loginSource, `href="/static/app.css?v=2.3.1"`) {
+	if !strings.Contains(loginSource, `href="/static/app.css?v=2.3.2"`) {
 		t.Fatal("login page does not use the release stylesheet version")
 	}
 	if !strings.Contains(loginSource, `viewport-fit=cover`) {
