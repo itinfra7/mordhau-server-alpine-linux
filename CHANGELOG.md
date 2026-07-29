@@ -4,6 +4,8 @@ All notable changes to this repository are documented in this file.
 
 ## [Unreleased]
 
+## [2.3.1] - 2026-07-29
+
 ### Added
 
 - Add lossless, single-threaded XZ `-9e` compression for finalized
