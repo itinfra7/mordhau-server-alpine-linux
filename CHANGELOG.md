@@ -14,6 +14,9 @@ All notable changes to this repository are documented in this file.
 - Stage the synchronized INI value while the game server is running and update
   the active configuration while it is stopped, preventing configuration
   display and managed launch settings from diverging.
+- Stop an OpenRC-managed game server through OpenRC during an in-place upgrade
+  so its service state is cleared and the previously running server is
+  reliably started after validation.
 
 ### Security
 
@@ -28,6 +31,8 @@ All notable changes to this repository are documented in this file.
 - Verify synchronization of duplicate active values, disabled entries,
   disabled sections, missing values, CRLF input, unrelated INI content, and
   invalid port rejection.
+- Verify OpenRC-managed and manually launched game servers use their respective
+  shutdown paths during an in-place upgrade.
 
 ## [2.3.2] - 2026-07-29
 

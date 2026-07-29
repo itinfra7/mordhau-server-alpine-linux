@@ -208,8 +208,14 @@ remember_and_stop_services() {
     if [ -x "$MORDHAU_ROOT/server.sh" ] &&
        "$MORDHAU_ROOT/server.sh" status >/dev/null 2>&1; then
         SERVER_WAS_RUNNING=1
-        log "Stopping the running MORDHAU server before validation..."
-        "$MORDHAU_ROOT/server.sh" stop
+        if [ -x /etc/init.d/mordhau-server ] &&
+           rc-service mordhau-server status >/dev/null 2>&1; then
+            log "Stopping the OpenRC-managed MORDHAU server before validation..."
+            rc-service mordhau-server stop
+        else
+            log "Stopping the running MORDHAU server before validation..."
+            "$MORDHAU_ROOT/server.sh" stop
+        fi
     fi
 
     if [ -x /etc/init.d/mordhau-web ] &&

@@ -9,6 +9,8 @@ This release contains the following changes relative to v2.3.2.
   the updated web manager.
 - Stage the synchronized INI value while the game server is running and update
   the active configuration while it is stopped.
+- Stop an OpenRC-managed game server through OpenRC during an in-place upgrade
+  so the previously running server is reliably started after validation.
 
 ### Security
 
@@ -22,6 +24,8 @@ This release contains the following changes relative to v2.3.2.
 
 - Verify duplicate active values, disabled entries, disabled sections, missing
   values, CRLF input, unrelated INI content, and invalid port rejection.
+- Verify OpenRC-managed and manually launched game servers use their respective
+  shutdown paths during an in-place upgrade.
 - Verify the complete Go test suite and both upgraded Alpine installations.
 
 ## Documentation
