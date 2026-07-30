@@ -2521,9 +2521,9 @@ func TestDashboardThemeAndServerPromptMarkup(t *testing.T) {
 	for _, expected := range []string{
 		`id="theme-toggle"`,
 		`content="width=device-width, initial-scale=1, viewport-fit=cover"`,
-		`src="/static/theme.js?v=2.6.2"`,
-		`href="/static/app.css?v=2.6.2"`,
-		`src="/static/app.js?v=2.6.2"`,
+		`src="/static/theme.js?v=2.6.3"`,
+		`href="/static/app.css?v=2.6.3"`,
+		`src="/static/app.js?v=2.6.3"`,
 		`<body id="page-top">`,
 		`class="brand" href="#page-top"`,
 		`id="fleet-server-picker"`,
@@ -2660,10 +2660,10 @@ func TestDashboardThemeAndServerPromptMarkup(t *testing.T) {
 		t.Fatal(err)
 	}
 	loginSource := string(loginData)
-	if !strings.Contains(loginSource, `src="/static/theme.js?v=2.6.2"`) {
+	if !strings.Contains(loginSource, `src="/static/theme.js?v=2.6.3"`) {
 		t.Fatal("login page does not initialize the persisted theme")
 	}
-	if !strings.Contains(loginSource, `href="/static/app.css?v=2.6.2"`) {
+	if !strings.Contains(loginSource, `href="/static/app.css?v=2.6.3"`) {
 		t.Fatal("login page does not use the release stylesheet version")
 	}
 	if !strings.Contains(loginSource, `viewport-fit=cover`) {

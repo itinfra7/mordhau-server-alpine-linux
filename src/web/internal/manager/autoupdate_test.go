@@ -46,6 +46,14 @@ func testAutomaticUpdateManager(t *testing.T) (*Manager, string) {
 	); err != nil {
 		t.Fatal(err)
 	}
+	managerUpdatePath := filepath.Join(root, "manager-update.json")
+	if err := writeJSONAtomic(
+		managerUpdatePath,
+		initialManagerUpdateState(),
+		0600,
+	); err != nil {
+		t.Fatal(err)
+	}
 	manager := &Manager{
 		automaticUpdateState:     state,
 		automaticUpdateStateFile: statePath,
@@ -55,11 +63,24 @@ func testAutomaticUpdateManager(t *testing.T) (*Manager, string) {
 		auditPath:                filepath.Join(root, "audit.log"),
 		automaticUpdateProcess:   func() (int, bool) { return 4321, true },
 		automaticUpdateNow:       time.Now,
+		managerUpdateStateFile:   managerUpdatePath,
 	}
 	if err := manager.initializeAuditLog(); err != nil {
 		t.Fatal(err)
 	}
 	return manager, statePath
+}
+
+func TestAutomaticUpdateFixtureUsesIsolatedManagerState(t *testing.T) {
+	manager, _ := testAutomaticUpdateManager(t)
+	if manager.managerUpdateStateFile == "" ||
+		filepath.Clean(manager.managerUpdateStateFile) ==
+			filepath.Clean(managerUpdateStatePath) {
+		t.Fatalf(
+			"automatic-update fixture uses installed manager state %q",
+			manager.managerUpdateStateFile,
+		)
+	}
 }
 
 func TestAutomaticUpdateSettingsDefaultOffAndPersisted(t *testing.T) {

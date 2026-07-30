@@ -1,27 +1,20 @@
-This release contains the following changes relative to v2.6.1.
+This release contains the following changes relative to v2.6.2.
 
 ## Changelog
 
 ### Fixed
 
-- Prefix locally collected Server Events with the selected server's display
-  name in Fleet Controller and Managed Server modes while preserving the
-  source label already carried by relayed events.
-- Remove redundant embedded timestamps from new player login and logout
-  records. Browser-local event timestamps remain the single visible time
-  source.
-- Compact legacy embedded login/logout timestamps when Fleet event history is
-  displayed without rewriting the append-only stored event log.
-- Keep source-server in-game echo suppression intact while providing the
-  source server's corresponding web-visible lifecycle record.
+- Keep unconfigured manager instances isolated from the installed server's
+  active self-update state, allowing the verified installer test suite to run
+  inside the detached web-update worker.
+- Give automatic-update and trusted-proxy test fixtures explicit private
+  manager-update state files instead of permitting access to installed state.
 
 ### Validation
 
-- Verify Controller and Managed Server labels, local match-state and lifecycle
-  attribution, relayed-source preservation, standalone compatibility,
-  legacy timestamp compaction, and immutable persistent history.
-- Verify both direct Managed Server event history and Controller-routed Fleet
-  history retain locally collected login and logout records.
+- Verify fixture state paths are isolated from the installed manager state.
+- Verify the complete installer test suite while the detached update worker
+  owns the production update state.
 
 ## Documentation
 
@@ -38,6 +31,6 @@ sha256sum -c SHA256SUMS
 
 Repository-authored source is available under the MIT License.
 
-Previous release: [v2.6.1](https://github.com/itinfra7/mordhau-server-alpine-linux/releases/tag/v2.6.1)
+Previous release: [v2.6.2](https://github.com/itinfra7/mordhau-server-alpine-linux/releases/tag/v2.6.2)
 
-Full comparison: [v2.6.1...v2.6.2](https://github.com/itinfra7/mordhau-server-alpine-linux/compare/v2.6.1...v2.6.2)
+Full comparison: [v2.6.2...v2.6.3](https://github.com/itinfra7/mordhau-server-alpine-linux/compare/v2.6.2...v2.6.3)

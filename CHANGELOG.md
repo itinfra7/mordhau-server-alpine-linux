@@ -4,6 +4,22 @@ All notable changes to this repository are documented in this file.
 
 ## [Unreleased]
 
+## [2.6.3] - 2026-07-30
+
+### Fixed
+
+- Keep unconfigured manager instances isolated from the installed server's
+  active self-update state, allowing the verified installer test suite to run
+  inside the detached web-update worker.
+- Give automatic-update and trusted-proxy test fixtures explicit private
+  manager-update state files instead of permitting access to installed state.
+
+### Validation
+
+- Verify fixture state paths are isolated from the installed manager state.
+- Verify the complete installer test suite while the detached update worker
+  owns the production update state.
+
 ## [2.6.2] - 2026-07-30
 
 ### Fixed

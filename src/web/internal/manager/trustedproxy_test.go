@@ -19,13 +19,23 @@ const testTrustedProxy = "192.0.2.200/32"
 
 func newTrustedProxyTestManager(t *testing.T, access AccessConfig) *Manager {
 	t.Helper()
+	root := t.TempDir()
+	managerUpdatePath := filepath.Join(root, "manager-update.json")
+	if err := writeJSONAtomic(
+		managerUpdatePath,
+		initialManagerUpdateState(),
+		0600,
+	); err != nil {
+		t.Fatal(err)
+	}
 	return &Manager{
 		access: access,
 		trustedProxies: []netip.Prefix{
 			netip.MustParsePrefix(testTrustedProxy),
 		},
-		loginAttempts: make(map[string]*loginAttempt),
-		auditPath:     filepath.Join(t.TempDir(), "mordhau-web.log"),
+		loginAttempts:          make(map[string]*loginAttempt),
+		auditPath:              filepath.Join(root, "mordhau-web.log"),
+		managerUpdateStateFile: managerUpdatePath,
 	}
 }
 
@@ -384,6 +394,10 @@ func TestLoginRateLimitKeysUseResolvedClientAddress(t *testing.T) {
 
 func TestServerActionRequesterUsesResolvedClientAndPeer(t *testing.T) {
 	manager := newTrustedProxyTestManager(t, AccessConfig{BasePolicy: "all_allow"})
+	if filepath.Clean(manager.managerUpdateStateFile) ==
+		filepath.Clean(managerUpdateStatePath) {
+		t.Fatal("trusted-proxy fixture uses installed manager update state")
+	}
 	var action, username, clientIP, peerIP string
 	manager.operationStart = func(
 		gotAction, gotUsername, gotClientIP, gotPeerIP string,

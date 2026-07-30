@@ -560,7 +560,13 @@ func (m *Manager) currentManagerUpdateView() (ManagerUpdateView, error) {
 }
 
 func (m *Manager) managerUpdateRunning() bool {
-	state, err := readManagerUpdateState(m.managerUpdateStatePath())
+	// Production managers always receive an explicit state path from New.
+	// An unconfigured Manager has no update state and must not consult the
+	// installed server's global state.
+	if m.managerUpdateStateFile == "" {
+		return false
+	}
+	state, err := readManagerUpdateState(m.managerUpdateStateFile)
 	return err == nil && state.Status == "running"
 }
 
