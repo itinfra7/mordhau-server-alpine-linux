@@ -50,6 +50,7 @@ func (m *Manager) startOperation(action, username, clientIP, peerIP string) erro
 	}
 	m.mu.Unlock()
 	m.signalModRestartLoop()
+	m.signalScheduledServerRestartLoop()
 	m.addRCONEvent("system", "Server operation started: "+action)
 
 	go func() {
@@ -84,6 +85,7 @@ func (m *Manager) startOperation(action, username, clientIP, peerIP string) erro
 			m.signalSteamUpdateCheck()
 		}
 		m.signalAutomaticUpdateLoop()
+		m.signalScheduledServerRestartLoop()
 		m.auditNetworkActorEvent(username, clientIP, peerIP, "server_action_completed", map[string]string{
 			"action": action,
 			"result": result,

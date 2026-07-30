@@ -2380,9 +2380,9 @@ func TestDashboardThemeAndServerPromptMarkup(t *testing.T) {
 	for _, expected := range []string{
 		`id="theme-toggle"`,
 		`content="width=device-width, initial-scale=1, viewport-fit=cover"`,
-		`src="/static/theme.js?v=2.5.0"`,
-		`href="/static/app.css?v=2.5.0"`,
-		`src="/static/app.js?v=2.5.0"`,
+		`src="/static/theme.js?v=2.6.0"`,
+		`href="/static/app.css?v=2.6.0"`,
+		`src="/static/app.js?v=2.6.0"`,
 		`<body id="page-top">`,
 		`class="brand" href="#page-top"`,
 		`id="fleet-server-picker"`,
@@ -2431,8 +2431,16 @@ func TestDashboardThemeAndServerPromptMarkup(t *testing.T) {
 		`id="manager-update-check"`,
 		`id="manager-update-apply"`,
 		`id="automatic-steam-update"`,
+		`id="automatic-steam-policy"`,
+		`id="automatic-steam-time"`,
 		`id="automatic-manager-update"`,
+		`id="automatic-manager-policy"`,
+		`id="automatic-manager-time"`,
 		`id="automatic-update-status"`,
+		`id="scheduled-restart-form"`,
+		`id="scheduled-restart-enabled"`,
+		`id="scheduled-restart-time"`,
+		`class="scheduled-restart-weekdays"`,
 		`Official server file or layout changes can`,
 		`data-panel="mods">Mods</button>` + "\n" +
 			`      <button class="tab" data-panel="custompaks">CustomPaks</button>`,
@@ -2511,10 +2519,10 @@ func TestDashboardThemeAndServerPromptMarkup(t *testing.T) {
 		t.Fatal(err)
 	}
 	loginSource := string(loginData)
-	if !strings.Contains(loginSource, `src="/static/theme.js?v=2.5.0"`) {
+	if !strings.Contains(loginSource, `src="/static/theme.js?v=2.6.0"`) {
 		t.Fatal("login page does not initialize the persisted theme")
 	}
-	if !strings.Contains(loginSource, `href="/static/app.css?v=2.5.0"`) {
+	if !strings.Contains(loginSource, `href="/static/app.css?v=2.6.0"`) {
 		t.Fatal("login page does not use the release stylesheet version")
 	}
 	if !strings.Contains(loginSource, `viewport-fit=cover`) {
@@ -2544,6 +2552,7 @@ func TestDashboardThemeAndServerPromptMarkup(t *testing.T) {
 		`/api/manager/update/check`,
 		`/api/manager/update/apply`,
 		`/api/updates/automatic`,
+		`/api/server/restart-schedule`,
 		`/api/rcon/command`,
 		`/api/runtime/status`,
 		`/api/runtime/target`,

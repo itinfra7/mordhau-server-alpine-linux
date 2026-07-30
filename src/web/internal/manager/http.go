@@ -124,19 +124,40 @@ func (m *Manager) automaticUpdateSettingsHandler(
 		return
 	}
 	var body struct {
-		ManagerEnabled bool `json:"manager_enabled"`
-		SteamEnabled   bool `json:"steam_enabled"`
+		ManagerEnabled       bool   `json:"manager_enabled"`
+		SteamEnabled         bool   `json:"steam_enabled"`
+		ManagerRestartPolicy string `json:"manager_restart_policy"`
+		ManagerScheduledTime string `json:"manager_scheduled_time"`
+		SteamRestartPolicy   string `json:"steam_restart_policy"`
+		SteamScheduledTime   string `json:"steam_scheduled_time"`
 	}
 	if err := decodeJSON(response, request, &body); err != nil {
 		writeError(response, http.StatusBadRequest, err.Error())
 		return
 	}
+	current := m.automaticUpdateView()
+	if body.ManagerRestartPolicy == "" {
+		body.ManagerRestartPolicy = current.ManagerRestartPolicy
+	}
+	if body.ManagerScheduledTime == "" {
+		body.ManagerScheduledTime = current.ManagerScheduledTime
+	}
+	if body.SteamRestartPolicy == "" {
+		body.SteamRestartPolicy = current.SteamRestartPolicy
+	}
+	if body.SteamScheduledTime == "" {
+		body.SteamScheduledTime = current.SteamScheduledTime
+	}
 	view, err := m.setAutomaticUpdateSettings(
 		body.ManagerEnabled,
 		body.SteamEnabled,
+		body.ManagerRestartPolicy,
+		body.ManagerScheduledTime,
+		body.SteamRestartPolicy,
+		body.SteamScheduledTime,
 	)
 	if err != nil {
-		writeError(response, http.StatusInternalServerError, err.Error())
+		writeError(response, http.StatusBadRequest, err.Error())
 		return
 	}
 	m.auditRequestEvent(
@@ -144,8 +165,61 @@ func (m *Manager) automaticUpdateSettingsHandler(
 		session.Username,
 		"automatic_update_settings_saved",
 		map[string]string{
-			"manager_enabled": strconv.FormatBool(body.ManagerEnabled),
-			"steam_enabled":   strconv.FormatBool(body.SteamEnabled),
+			"manager_enabled":        strconv.FormatBool(body.ManagerEnabled),
+			"manager_restart_policy": body.ManagerRestartPolicy,
+			"manager_scheduled_time": body.ManagerScheduledTime,
+			"steam_enabled":          strconv.FormatBool(body.SteamEnabled),
+			"steam_restart_policy":   body.SteamRestartPolicy,
+			"steam_scheduled_time":   body.SteamScheduledTime,
+		},
+	)
+	writeJSON(response, http.StatusOK, view)
+}
+
+func (m *Manager) scheduledServerRestartSettingsHandler(
+	response http.ResponseWriter,
+	request *http.Request,
+	session Session,
+) {
+	if request.Method == http.MethodGet {
+		writeJSON(response, http.StatusOK, m.scheduledServerRestartView())
+		return
+	}
+	if request.Method != http.MethodPost {
+		response.Header().Set("Allow", "GET, POST")
+		http.Error(response, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !validCSRF(request, session) {
+		writeError(response, http.StatusForbidden, "invalid CSRF token")
+		return
+	}
+	var body struct {
+		Enabled       bool     `json:"enabled"`
+		ScheduledTime string   `json:"scheduled_time"`
+		Weekdays      []string `json:"weekdays"`
+	}
+	if err := decodeJSON(response, request, &body); err != nil {
+		writeError(response, http.StatusBadRequest, err.Error())
+		return
+	}
+	view, err := m.setScheduledServerRestartSettings(
+		body.Enabled,
+		body.ScheduledTime,
+		body.Weekdays,
+	)
+	if err != nil {
+		writeError(response, http.StatusBadRequest, err.Error())
+		return
+	}
+	m.auditRequestEvent(
+		request,
+		session.Username,
+		"scheduled_server_restart_settings_saved",
+		map[string]string{
+			"enabled":        strconv.FormatBool(body.Enabled),
+			"scheduled_time": body.ScheduledTime,
+			"weekdays":       strings.Join(view.Weekdays, ","),
 		},
 	)
 	writeJSON(response, http.StatusOK, view)

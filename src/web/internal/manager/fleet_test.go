@@ -103,7 +103,7 @@ func TestFleetStatusCannotReturnAfterManagedServerRemoval(t *testing.T) {
 			Managed: []fleetManagedPeer{{
 				NodeID:  nodeID,
 				Alias:   "Managed",
-				Address: "172.27.0.20:8091",
+				Address: "192.0.2.20:8091",
 			}},
 		},
 		fleetStatuses: map[string]FleetNodeStatus{
@@ -500,7 +500,7 @@ func TestFleetAddressValidation(t *testing.T) {
 		"0.0.0.0:8091",
 		"[::]:8091",
 		"example.com:8091",
-		"172.27.0.20",
+		"192.0.2.20",
 	} {
 		if _, err := normalizeFleetPeerAddress(invalid); err == nil {
 			t.Fatalf("accepted invalid Managed Server address %q", invalid)
@@ -854,7 +854,7 @@ func TestFleetRoutingRequiresOriginAndDestinationOptIn(t *testing.T) {
 					Managed: []fleetManagedPeer{{
 						NodeID:    peerIdentity.NodeID,
 						Alias:     "Duel",
-						Address:   "172.27.0.20:8091",
+						Address:   "192.0.2.20:8091",
 						PublicKey: encodedFleetPublicKey(peerIdentity),
 						Sync: FleetSyncPolicy{
 							AllChat: test.destinationEnable,

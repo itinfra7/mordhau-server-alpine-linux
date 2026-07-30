@@ -27,6 +27,7 @@ func (m *Manager) managerAPIRoutes() []managerAPIRoute {
 		{"/api/server/update-status", m.steamUpdateStatusHandler, true},
 		{"/api/server/update-check", m.steamUpdateCheckHandler, true},
 		{"/api/updates/automatic", m.automaticUpdateSettingsHandler, true},
+		{"/api/server/restart-schedule", m.scheduledServerRestartSettingsHandler, true},
 		{"/api/recovery/settings", m.recoverySettingsHandler, true},
 		{"/api/recovery/retry", m.recoveryRetryHandler, true},
 		{"/api/monitoring", m.monitoringHandler, true},

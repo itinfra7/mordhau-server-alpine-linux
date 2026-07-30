@@ -1,76 +1,56 @@
-This release contains the following changes relative to v2.4.0.
+This release contains the following changes relative to v2.5.0.
 
 ## Changelog
 
 ### Added
 
-- Add `Standalone`, `Fleet Controller`, and `Managed Server` roles with
-  persistent Ed25519 identities, Controller-assigned aliases, pairings, and
-  connectivity state.
-- Add a node-ID-scoped top-bar server selector. A Fleet Controller can operate
-  the existing management panels against its local server or an explicitly
-  selected Managed Server while direct Managed Server web access remains
-  available.
-- Add ten-second Managed Server heartbeats carrying game-process state,
-  connected-player count, management version, and server-collected resource
-  metrics to the Fleet Controller cache.
-- Add independent, per-server controls for All Chat, Team Chat, Web SAY, web
-  RCON SAY, and player login/logout routing. Every category defaults to OFF,
-  requires both source and destination opt-in, and includes a mandatory
-  Controller-assigned source label.
+- Add independent `10-minute countdown`, `when the server is empty`, and
+  `scheduled server time` policies for automatic MORDHAU Control and
+  Dedicated Server updates.
+- Add a default-off recurring Dedicated Server restart schedule with
+  server-local time and weekday selection.
+- Add persistent 10-, 5-, 4-, 3-, 2-, and 1-minute Unicode Bridge notices for
+  recurring scheduled restarts.
 
 ### Changed
 
-- Parse chat channel and message fields from `Mordhau.log` for All Chat and
-  Team Chat routing while retaining the existing UTF-8 Server Events output.
-- Route still-tracked player logout events when the game process stops or the
-  active log is replaced, and preserve event order per destination server.
-- Use one explicit authenticated API registry for direct and remotely selected
-  manager operations.
-- Retain each browser tab's selected node in its URL and reload safely when a
-  role changes or the active Managed Server is removed.
+- Migrate existing automatic-update state to the countdown policy without
+  changing either update enablement setting.
+- Require a continuously empty 30-second Runtime observation before an
+  empty-server automatic update begins.
+- Use the MORDHAU Control policy for a combined maintenance window when both a
+  Control release and Dedicated Server build are available, because the
+  verified Control installer also updates the Dedicated Server.
+- Skip a recurring restart occurrence when a mod update, product update,
+  detached manager update, or manual lifecycle operation already owns the
+  maintenance window.
+- Keep future scheduled-policy windows from blocking an earlier compatible
+  update or restart; only the active ten-minute window claims restart
+  coordination.
 
 ### Security
 
-- Keep new and upgraded installations in `Standalone` mode with no fleet
-  listener and no event routing until an administrator explicitly enables a
-  fleet role.
-- Require TLS 1.3 with mutually pinned Ed25519 public identities. Managed
-  Servers additionally require the direct TCP peer to equal the configured
-  Controller source IP; Controllers validate the Managed Server node ID and
-  reject redirects.
-- Store identity and fleet state in root-only files. Private keys never leave
-  an installation, and the Controller does not forward browser cookies,
-  authorization headers, forwarding headers, or public-proxy trust.
-- Bind IPv4 and IPv6 Fleet listener addresses to their explicit socket
-  families so an IPv4 wildcard cannot become an unintended dual-stack socket.
-- Require browser authentication and the original CSRF token before any
-  remote state change. Restrict the internal gateway to the explicit manager
-  API registry and audit the Controller account, canonical browser IP, fleet
-  peer, request ID, and destination node.
-- Recheck destination policy at delivery, deduplicate event IDs, bound queues
-  and fields, enforce Unicode Bridge message limits, and omit web credentials,
-  administrator identities, player IPs, and PlayFab IDs from relay events.
+- Store automatic-update and recurring-restart policy, countdown progress,
+  and next-occurrence state in mode-`0600` server files.
+- Keep recurring restart and automatic update mutations behind authenticated,
+  CSRF-protected APIs, including Fleet Controller remote routing and requester
+  auditing.
 
 ### Validation
 
-- Verify identity permissions and connection-key parsing, mutual TLS pinning,
-  TLS 1.3 restriction, IPv4/IPv6 endpoint validation, expected Controller
-  source-IP enforcement, canonical browser-IP propagation, forwarding-header
-  removal, and remote browser CSRF rejection.
-- Verify node-scoped API routing, structured All/Team chat parsing,
-  multilingual source labels, all five rendered event types, forced
-  live-session logout, RCON SAY parsing, per-destination ordering, and
-  symmetric source and destination event opt-in.
-- Verify frontend syntax and responsive Fleet controls, the complete Go suite,
-  shell syntax, installer version transitions, and existing integration
-  tests.
+- Verify v1 automatic-update migration, independent policy persistence,
+  empty-server grace handling, server-local scheduled windows, weekday
+  selection, complete countdown sequences, next-occurrence persistence, CSRF
+  enforcement, and lifecycle conflict exclusion.
+- Verify frontend syntax, responsive policy and weekday controls, the complete
+  Go suite, race detection, shell syntax, installer version transitions, and
+  the existing integration-test suite.
 
 ## Documentation
 
-See `README.md` for installation, pairing, event routing, security, testing,
-update, and rollback instructions. See `CHANGELOG.md` for the complete version
-history.
+See `README.md` for installation, update policies, recurring restart
+scheduling, testing, security, and rollback instructions. See `CHANGELOG.md`
+for the complete version history.
 
 ## Integrity
 
@@ -82,6 +62,6 @@ sha256sum -c SHA256SUMS
 
 Repository-authored source is available under the MIT License.
 
-Previous release: [v2.4.0](https://github.com/itinfra7/mordhau-server-alpine-linux/releases/tag/v2.4.0)
+Previous release: [v2.5.0](https://github.com/itinfra7/mordhau-server-alpine-linux/releases/tag/v2.5.0)
 
-Full comparison: [v2.4.0...v2.5.0](https://github.com/itinfra7/mordhau-server-alpine-linux/compare/v2.4.0...v2.5.0)
+Full comparison: [v2.5.0...v2.6.0](https://github.com/itinfra7/mordhau-server-alpine-linux/compare/v2.5.0...v2.6.0)

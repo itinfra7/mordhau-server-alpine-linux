@@ -589,10 +589,43 @@ a:hover { color: var(--link-hover); }
 .service-setting select { width: 100%; }
 .service-setting small { color: var(--muted); line-height: 1.4; }
 .automatic-update-setting .mod-restart-setting { width: auto; }
+.automatic-update-policy-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(8rem, .65fr);
+  gap: .55rem;
+}
+.automatic-update-policy-fields > label,
+.scheduled-restart-setting > label {
+  display: grid;
+  gap: .35rem;
+}
 .automatic-update-status-setting strong {
   color: var(--connected-text);
   overflow-wrap: anywhere;
 }
+.scheduled-restart-weekdays {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: .35rem;
+  min-width: 0;
+  margin: 0;
+  padding: .55rem;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+}
+.scheduled-restart-weekdays legend {
+  padding: 0 .25rem;
+  color: var(--muted);
+  font-size: .7rem;
+}
+.scheduled-restart-weekdays label {
+  display: grid;
+  justify-items: center;
+  gap: .25rem;
+  color: var(--muted);
+  font-size: .7rem;
+}
+.scheduled-restart-weekdays input { margin: 0; }
 .port-setting { margin: 0; }
 .port-setting input, .start-map-setting input, .server-ports-setting input { width: 100%; }
 .server-ports-setting { grid-column: 1 / -1; }
@@ -2576,6 +2609,10 @@ input:focus, select:focus, textarea:focus { border-color: rgba(233, 79, 81, .65)
   .mod-refresh-status { text-align: left; }
   .mod-summary { white-space: normal; overflow-wrap: anywhere; }
   .server-port-grid { grid-template-columns: 1fr 1fr; }
+  .automatic-update-policy-fields { grid-template-columns: 1fr; }
+  .scheduled-restart-weekdays {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
   .server-port-actions { align-items: stretch; flex-direction: column; }
   .server-port-actions button { width: 100%; }
   .console { height: 20rem; }
@@ -2658,6 +2695,9 @@ input:focus, select:focus, textarea:focus { border-color: rgba(233, 79, 81, .65)
   .card { padding: .9rem; border-radius: 14px; }
   .card-heading { gap: .65rem; }
   .server-port-grid { grid-template-columns: 1fr; }
+  .scheduled-restart-weekdays {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
   .mod-refresh-controls {
     grid-template-columns: 1fr;
     justify-items: stretch;

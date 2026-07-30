@@ -50,7 +50,9 @@ The repository provides:
 - Hourly server-side checks for stable management releases and public
   MORDHAU Dedicated Server Steam builds, with shared update banners
 - Optional server-wide automatic management and dedicated-server updates with
-  a persistent ten-minute in-game restart countdown
+  independent countdown, empty-server, or scheduled restart policies
+- Optional weekday-aware Dedicated Server restart scheduling with a persistent
+  ten-minute in-game countdown
 - Dependency-aware mod removal with shared-dependency protection
 - Persistent initial-map and dedicated-server port selection
 - Current map and game-mode display plus catalog-validated live map travel
@@ -143,12 +145,12 @@ history remains in the versioned changelog asset instead of being repeated in
 every Release body.
 
 ```sh
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.5.0/mordhau-server-alpine-linux-v2.5.0.tar.gz
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.5.0/CHANGELOG-v2.5.0.md
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.5.0/SHA256SUMS
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.6.0/mordhau-server-alpine-linux-v2.6.0.tar.gz
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.6.0/CHANGELOG-v2.6.0.md
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.6.0/SHA256SUMS
 sha256sum -c SHA256SUMS
-tar -xzf mordhau-server-alpine-linux-v2.5.0.tar.gz
-cd mordhau-server-alpine-linux-v2.5.0
+tar -xzf mordhau-server-alpine-linux-v2.6.0.tar.gz
+cd mordhau-server-alpine-linux-v2.6.0
 chmod +x src/mordhau-server-alpine-linux.sh
 ./src/mordhau-server-alpine-linux.sh
 ```
@@ -1250,12 +1252,39 @@ Both automatic options are disabled by default and are stored server-wide in:
 /root/mordhau/.manager/automatic-updates.json
 ```
 
-When either option is enabled and an update is detected while the game server
-is running, the manager announces the target in English at 10, 5, 4, 3, 2,
-and 1 minute through the Unicode Bridge, announces the final restart, and
-then performs the corresponding managed update. A stopped server is updated
-without an unnecessary countdown. Automatic management and Steam updates do
-not overlap another lifecycle operation or the active-mod restart scheduler.
+Each automatic update option has its own restart policy:
+
+- **10-minute countdown** starts immediately and announces the target in
+  English at 10, 5, 4, 3, 2, and 1 minute through the Unicode Bridge.
+- **When the server is empty** announces that an update is ready, waits for
+  the Runtime bridge to report zero PlayerControllers continuously for
+  30 seconds, and then performs the update.
+- **Scheduled server time** selects the next server-local `HH:MM` that permits
+  the complete ten-minute announcement sequence. A missed announcement window
+  is moved to the next valid server-local occurrence instead of restarting
+  immediately without notice.
+
+A stopped server is updated without an unnecessary countdown. If management
+and Dedicated Server updates are available together, the checksum-verified
+management installer also updates the Dedicated Server, so the management
+update policy controls that combined maintenance window. Automatic updates do
+not overlap another lifecycle operation, an active mod-update restart, or an
+active scheduled-restart countdown.
+
+The Dashboard can also enable recurring Dedicated Server restarts for selected
+weekdays and one server-local time. This feature is disabled by default and is
+stored in:
+
+```text
+/root/mordhau/.manager/scheduled-restart.json
+```
+
+Each occurrence uses the same 10-, 5-, 4-, 3-, 2-, and 1-minute in-game
+announcement sequence. A missed countdown is moved to the next selected day.
+A stopped server is not started by the schedule. If a
+mod update, automatic product update, detached management update, or manual
+lifecycle operation already owns that maintenance window, the recurring
+restart occurrence is skipped rather than causing a second restart.
 
 An official MORDHAU Dedicated Server release can change executable signatures,
 files, or directory layout. Such changes can temporarily disable the native
@@ -1452,7 +1481,9 @@ retry-window pruning, exponential recovery delays, retry exhaustion,
 one-minute metric history and retention, log rotation and search, webhook
 destination policy and cooldown, timed moderation expiry, rollback after
 failed RCON confirmation, connection-session timelines, dependency-aware mod
-removal, and countdown, empty-server, and scheduled mod restart policies.
+removal, countdown, empty-server, and scheduled mod restart policies,
+automatic-update policy migration and execution, weekday restart selection,
+scheduled-restart countdown persistence, and maintenance-window exclusion.
 CustomPaks tests cover visible project-managed package protection,
 staged state, activation and deactivation moves, deletion and cancellation,
 upload limits, case-insensitive duplicate rejection, lifecycle locking, and
@@ -1497,8 +1528,9 @@ controls, connected-player dashboard navigation, timed restrictions, session
 timelines, visual MapRotation controls, dependency-removal planning,
 restart-policy selection, Monitoring charts and log tools, recovery controls,
 CustomPaks upload and staging controls, management and Steam update banners,
-server-wide automatic-update controls, and mobile visibility of server and
-account status. Management-update tests cover stable-release validation,
+server-wide automatic-update policy controls, recurring restart scheduling,
+and mobile visibility of server and account status. Management-update tests
+cover stable-release validation,
 semantic version ordering, required assets, bounded downloads, checksum
 selection, safe archive extraction, detached execution, interrupted-state
 reconciliation, lifecycle exclusion, and service restoration. Steam-update
@@ -1532,8 +1564,8 @@ inactive/uploaded packages, player connection history, moderation leases and
 comments, GeoIP database and ignored networks, recovery policy and history,
 desired server state, monitoring policy, metrics history, latest lifecycle
 result, server-event history, release and Steam check state, automatic-update
-settings, Server Fleet role, identities, pairings, aliases and event-sync
-policies, and boot modes are preserved.
+settings, scheduled-restart policy, Server Fleet role, identities, pairings,
+aliases and event-sync policies, and boot modes are preserved.
 
 The same installer can be started from the management-release banner. The
 manual archive procedure remains available when the web manager is unavailable

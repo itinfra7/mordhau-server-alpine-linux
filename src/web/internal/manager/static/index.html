@@ -5,9 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="light dark">
   <title>MORDHAU Control</title>
-  <script src="/static/theme.js?v=2.5.0"></script>
-  <link rel="stylesheet" href="/static/app.css?v=2.5.0">
-  <script src="/static/app.js?v=2.5.0" defer></script>
+  <script src="/static/theme.js?v=2.6.0"></script>
+  <link rel="stylesheet" href="/static/app.css?v=2.6.0">
+  <script src="/static/app.js?v=2.6.0" defer></script>
 </head>
 <body id="page-top">
   <div class="ambient ambient-one"></div>
@@ -226,34 +226,57 @@
                 <option value="automatic">Automatic · start at boot</option>
               </select>
             </label>
-            <label class="service-setting automatic-update-setting"
-                   for="automatic-steam-update">
+            <div class="service-setting automatic-update-setting">
               <span>MORDHAU Dedicated Server updates</span>
-              <span class="mod-restart-setting">
+              <label class="mod-restart-setting" for="automatic-steam-update">
                 <input id="automatic-steam-update" type="checkbox">
                 <span>Notify players and install automatically</span>
-              </span>
+              </label>
+              <div class="automatic-update-policy-fields">
+                <label>
+                  <span>Restart policy</span>
+                  <select id="automatic-steam-policy">
+                    <option value="countdown">10-minute countdown</option>
+                    <option value="when_empty">When the server is empty</option>
+                    <option value="scheduled">Scheduled server time</option>
+                  </select>
+                </label>
+                <label id="automatic-steam-time-field">
+                  <span>Scheduled time</span>
+                  <input id="automatic-steam-time" type="time" step="60">
+                </label>
+              </div>
               <small>
-                Off by default. A detected public Steam build starts the same
-                10-minute in-game countdown used for mod updates, then updates and
-                restarts the server. Official server file or layout changes can
-                temporarily break runtime bridges, PAK integration, or management
-                features until this project is updated for compatibility.
+                Off by default. Official server file or layout changes can temporarily
+                break runtime bridges, PAK integration, or management features until
+                this project is updated for compatibility.
               </small>
-            </label>
-            <label class="service-setting automatic-update-setting"
-                   for="automatic-manager-update">
+            </div>
+            <div class="service-setting automatic-update-setting">
               <span>MORDHAU Control updates</span>
-              <span class="mod-restart-setting">
+              <label class="mod-restart-setting" for="automatic-manager-update">
                 <input id="automatic-manager-update" type="checkbox">
                 <span>Notify players and install automatically</span>
-              </span>
+              </label>
+              <div class="automatic-update-policy-fields">
+                <label>
+                  <span>Restart policy</span>
+                  <select id="automatic-manager-policy">
+                    <option value="countdown">10-minute countdown</option>
+                    <option value="when_empty">When the server is empty</option>
+                    <option value="scheduled">Scheduled server time</option>
+                  </select>
+                </label>
+                <label id="automatic-manager-time-field">
+                  <span>Scheduled time</span>
+                  <input id="automatic-manager-time" type="time" step="60">
+                </label>
+              </div>
               <small>
-                Off by default. A newer stable GitHub Release starts a 10-minute
-                in-game countdown, verifies the release checksum, and runs the
-                detached updater.
+                Off by default. A newer stable GitHub Release is checksum-verified
+                before the detached updater installs it.
               </small>
-            </label>
+            </div>
             <div class="service-setting automatic-update-status-setting">
               <span>Automatic update status</span>
               <strong id="automatic-update-status">Disabled</strong>
@@ -261,6 +284,32 @@
                 Enable either option to schedule detected updates.
               </small>
             </div>
+            <form id="scheduled-restart-form"
+                  class="service-setting scheduled-restart-setting">
+              <span>Dedicated Server scheduled restart</span>
+              <label class="mod-restart-setting" for="scheduled-restart-enabled">
+                <input id="scheduled-restart-enabled" type="checkbox">
+                <span>Restart automatically on selected days</span>
+              </label>
+              <label>
+                <span>Server-local time</span>
+                <input id="scheduled-restart-time" type="time" step="60" required>
+              </label>
+              <fieldset class="scheduled-restart-weekdays">
+                <legend>Days</legend>
+                <label><input type="checkbox" value="mon">Mon</label>
+                <label><input type="checkbox" value="tue">Tue</label>
+                <label><input type="checkbox" value="wed">Wed</label>
+                <label><input type="checkbox" value="thu">Thu</label>
+                <label><input type="checkbox" value="fri">Fri</label>
+                <label><input type="checkbox" value="sat">Sat</label>
+                <label><input type="checkbox" value="sun">Sun</label>
+              </fieldset>
+              <button class="secondary compact" type="submit">Save restart schedule</button>
+              <small id="scheduled-restart-status">
+                Disabled. Scheduled restarts use the 10-minute in-game countdown.
+              </small>
+            </form>
             <form id="web-port-form" class="service-setting port-setting">
               <span>Web service boot port</span>
               <div class="field-row">
@@ -1136,7 +1185,7 @@
             <label>
               <span>Controller source IP</span>
               <input id="fleet-controller-address" type="text" required
-                     placeholder="172.27.0.10" autocomplete="off"
+                     placeholder="192.0.2.10" autocomplete="off"
                      autocapitalize="none" spellcheck="false">
             </label>
             <label>
@@ -1176,7 +1225,7 @@
             <label>
               <span>Managed IP and port</span>
               <input id="fleet-node-address" type="text" required
-                     placeholder="172.27.0.20:8091" autocomplete="off"
+                     placeholder="192.0.2.20:8091" autocomplete="off"
                      autocapitalize="none" spellcheck="false">
             </label>
             <label class="fleet-node-key-field">

@@ -177,6 +177,14 @@ type Manager struct {
 	automaticUpdateMessageSend func(string) error
 	automaticUpdateProcess     func() (int, bool)
 
+	scheduledRestartMu            sync.RWMutex
+	scheduledRestartState         scheduledServerRestartStateFile
+	scheduledRestartStateFile     string
+	scheduledRestartWake          chan struct{}
+	scheduledRestartNow           func() time.Time
+	scheduledRestartMessageSend   func(string) error
+	scheduledRestartServerProcess func() (int, bool)
+
 	fleetMu               sync.RWMutex
 	fleetMutationMu       sync.Mutex
 	fleetSettings         fleetSettingsFile
@@ -233,71 +241,74 @@ func New(trustedProxies ...netip.Prefix) (*Manager, error) {
 	}
 
 	m := &Manager{
-		loginAttempts:            make(map[string]*loginAttempt),
-		eventSourceStatus:        "Waiting for server",
-		auditPath:                webAuditLogPath,
-		operationPath:            operationStatePath,
-		rconLogPath:              rconEventLogPath,
-		modRefreshWake:           make(chan struct{}, 1),
-		modRestartWake:           make(chan struct{}, 1),
-		runtimeStatusPath:        runtimeBridgeStatusPath,
-		runtimeRequestPath:       runtimeBridgeRequestPath,
-		runtimeResponsePath:      runtimeBridgeResponsePath,
-		runtimeTargetCache:       make(map[string]runtimeTargetCacheEntry),
-		customPakPaths:           customPaks,
-		playerHistoryFile:        playerHistoryPath,
-		playerArchiveDirectory:   logDir,
-		playerCurrentLogFile:     gameLogPath,
-		playerServerProcess:      serverProcess,
-		mapServerProcess:         serverProcess,
-		geoIPDatabaseFile:        geoIPDatabasePath,
-		geoIPStateFile:           geoIPStatePath,
-		geoIPIgnoreFile:          geoIPIgnorePath,
-		geoIPDownloadBaseURL:     defaultGeoIPDownloadBaseURL,
-		geoIPHTTPClient:          defaultGeoIPHTTPClient,
-		geoIPNow:                 time.Now,
-		recoverySettingsFile:     recoverySettingsPath,
-		recoveryStateFile:        recoveryStatePath,
-		recoveryDesiredStateFile: serverDesiredStatePath,
-		recoveryLaunchStateFile:  serverLaunchStatePath,
-		recoveryConsoleLogFile:   serverConsoleLogPath,
-		recoveryServerProcess:    serverProcess,
-		recoveryLifecycleBusy:    lifecycleOperationBusy,
-		recoveryNow:              time.Now,
-		monitoringSettingsFile:   monitoringSettingsPath,
-		metricsHistoryFile:       metricsHistoryPath,
-		monitoringAlertQueue:     make(chan monitoringAlert, 32),
-		monitoringAlertLast:      make(map[string]time.Time),
-		monitoringNow:            time.Now,
-		managerUpdateHTTPClient:  defaultManagerUpdateHTTPClient(),
-		managerUpdateLatestURL:   managerUpdateLatestReleaseURL,
-		managerUpdateStateFile:   managerUpdateStatePath,
-		managerUpdateVersionFile: managerVersionPath,
-		managerUpdateBinary:      managerBinaryPath,
-		managerUpdateLogFile:     managerUpdateLogPath,
-		managerUpdateLockFile:    managerUpdateLockPath,
-		managerUpdateNow:         time.Now,
-		steamUpdateStateFile:     steamUpdateStatePath,
-		steamUpdateManifestFile:  steamAppManifestPath,
-		steamUpdateConsoleFile:   steamConsoleLogPath,
-		steamUpdateCommand:       steamCMDPath,
-		steamUpdateLifecycleLock: lifecycleLockPath,
-		steamUpdateNow:           time.Now,
-		steamUpdateWake:          make(chan struct{}, 1),
-		automaticUpdateStateFile: automaticUpdateStatePath,
-		automaticUpdateWake:      make(chan struct{}, 1),
-		automaticUpdateNow:       time.Now,
-		fleetStatuses:            make(map[string]FleetNodeStatus),
-		fleetSettingsFile:        fleetSettingsPath,
-		fleetIdentityKeyFile:     fleetIdentityKeyPath,
-		fleetIdentityCertFile:    fleetIdentityCertPath,
-		fleetWake:                make(chan struct{}, 1),
-		fleetNow:                 time.Now,
-		fleetSubscribers:         make(map[uint64]chan FleetEvent),
-		fleetRecentDeliveries:    make(map[string]time.Time),
-		fleetRouteQueue:          make(chan FleetEvent, 256),
-		fleetDeliverQueues:       newFleetDeliveryQueues(),
-		fleetClients:             make(map[string]fleetCachedHTTPClient),
+		loginAttempts:             make(map[string]*loginAttempt),
+		eventSourceStatus:         "Waiting for server",
+		auditPath:                 webAuditLogPath,
+		operationPath:             operationStatePath,
+		rconLogPath:               rconEventLogPath,
+		modRefreshWake:            make(chan struct{}, 1),
+		modRestartWake:            make(chan struct{}, 1),
+		runtimeStatusPath:         runtimeBridgeStatusPath,
+		runtimeRequestPath:        runtimeBridgeRequestPath,
+		runtimeResponsePath:       runtimeBridgeResponsePath,
+		runtimeTargetCache:        make(map[string]runtimeTargetCacheEntry),
+		customPakPaths:            customPaks,
+		playerHistoryFile:         playerHistoryPath,
+		playerArchiveDirectory:    logDir,
+		playerCurrentLogFile:      gameLogPath,
+		playerServerProcess:       serverProcess,
+		mapServerProcess:          serverProcess,
+		geoIPDatabaseFile:         geoIPDatabasePath,
+		geoIPStateFile:            geoIPStatePath,
+		geoIPIgnoreFile:           geoIPIgnorePath,
+		geoIPDownloadBaseURL:      defaultGeoIPDownloadBaseURL,
+		geoIPHTTPClient:           defaultGeoIPHTTPClient,
+		geoIPNow:                  time.Now,
+		recoverySettingsFile:      recoverySettingsPath,
+		recoveryStateFile:         recoveryStatePath,
+		recoveryDesiredStateFile:  serverDesiredStatePath,
+		recoveryLaunchStateFile:   serverLaunchStatePath,
+		recoveryConsoleLogFile:    serverConsoleLogPath,
+		recoveryServerProcess:     serverProcess,
+		recoveryLifecycleBusy:     lifecycleOperationBusy,
+		recoveryNow:               time.Now,
+		monitoringSettingsFile:    monitoringSettingsPath,
+		metricsHistoryFile:        metricsHistoryPath,
+		monitoringAlertQueue:      make(chan monitoringAlert, 32),
+		monitoringAlertLast:       make(map[string]time.Time),
+		monitoringNow:             time.Now,
+		managerUpdateHTTPClient:   defaultManagerUpdateHTTPClient(),
+		managerUpdateLatestURL:    managerUpdateLatestReleaseURL,
+		managerUpdateStateFile:    managerUpdateStatePath,
+		managerUpdateVersionFile:  managerVersionPath,
+		managerUpdateBinary:       managerBinaryPath,
+		managerUpdateLogFile:      managerUpdateLogPath,
+		managerUpdateLockFile:     managerUpdateLockPath,
+		managerUpdateNow:          time.Now,
+		steamUpdateStateFile:      steamUpdateStatePath,
+		steamUpdateManifestFile:   steamAppManifestPath,
+		steamUpdateConsoleFile:    steamConsoleLogPath,
+		steamUpdateCommand:        steamCMDPath,
+		steamUpdateLifecycleLock:  lifecycleLockPath,
+		steamUpdateNow:            time.Now,
+		steamUpdateWake:           make(chan struct{}, 1),
+		automaticUpdateStateFile:  automaticUpdateStatePath,
+		automaticUpdateWake:       make(chan struct{}, 1),
+		automaticUpdateNow:        time.Now,
+		scheduledRestartStateFile: scheduledServerRestartStatePath,
+		scheduledRestartWake:      make(chan struct{}, 1),
+		scheduledRestartNow:       time.Now,
+		fleetStatuses:             make(map[string]FleetNodeStatus),
+		fleetSettingsFile:         fleetSettingsPath,
+		fleetIdentityKeyFile:      fleetIdentityKeyPath,
+		fleetIdentityCertFile:     fleetIdentityCertPath,
+		fleetWake:                 make(chan struct{}, 1),
+		fleetNow:                  time.Now,
+		fleetSubscribers:          make(map[uint64]chan FleetEvent),
+		fleetRecentDeliveries:     make(map[string]time.Time),
+		fleetRouteQueue:           make(chan FleetEvent, 256),
+		fleetDeliverQueues:        newFleetDeliveryQueues(),
+		fleetClients:              make(map[string]fleetCachedHTTPClient),
 	}
 	m.managerUpdateWorkerStart = m.startManagerUpdateWorker
 	m.steamUpdateRemoteBuild = m.querySteamRemoteBuild
@@ -363,6 +374,9 @@ func New(trustedProxies ...netip.Prefix) (*Manager, error) {
 	if err := m.loadOrCreateAutomaticUpdateState(); err != nil {
 		return nil, err
 	}
+	if err := m.loadOrCreateScheduledServerRestartState(); err != nil {
+		return nil, err
+	}
 	if err := m.loadOrCreateFleetSettings(); err != nil {
 		return nil, err
 	}
@@ -395,6 +409,7 @@ func (m *Manager) StartBackground(ctx context.Context) {
 	go m.managerUpdateCheckLoop(ctx)
 	go m.steamUpdateCheckLoop(ctx)
 	go m.automaticUpdateLoop(ctx)
+	go m.scheduledServerRestartLoop(ctx)
 	go m.fleetSupervisorLoop(ctx)
 	go m.fleetBrokerLoop(ctx)
 	for _, deliveries := range m.fleetDeliverQueues {

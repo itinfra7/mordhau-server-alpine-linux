@@ -58,6 +58,7 @@ const app = {
   steamUpdateLoading: false,
   steamUpdateApplying: false,
   automaticUpdates: null,
+  scheduledRestart: null,
   fleet: null,
   activeNodeID: "",
   fleetLoading: false,
@@ -178,11 +179,15 @@ function managerUpdateRecentlyFinished(view) {
 
 function automaticUpdateScheduleText(kind) {
   const settings = app.automaticUpdates;
-  if (!settings?.scheduled || !settings.restart_at) return "";
+  if (!settings?.scheduled) return "";
   const targetMatches = kind === "manager"
     ? Boolean(settings.manager_version)
     : Boolean(settings.steam_build_id);
   if (!targetMatches) return "";
+  if (settings.waiting_for_empty) {
+    return " Automatic installation is waiting for the server to become empty.";
+  }
+  if (!settings.restart_at) return "";
   return ` Automatic installation is scheduled for ${new Date(settings.restart_at).toLocaleString()}.`;
 }
 
@@ -342,14 +347,43 @@ function renderAutomaticUpdates(view) {
   app.automaticUpdates = view;
   $("#automatic-manager-update").checked = view?.manager_enabled === true;
   $("#automatic-steam-update").checked = view?.steam_enabled === true;
+  const managerPolicy = ["countdown", "when_empty", "scheduled"].includes(
+    view?.manager_restart_policy,
+  ) ? view.manager_restart_policy : "countdown";
+  const steamPolicy = ["countdown", "when_empty", "scheduled"].includes(
+    view?.steam_restart_policy,
+  ) ? view.steam_restart_policy : "countdown";
+  $("#automatic-manager-policy").value = managerPolicy;
+  $("#automatic-steam-policy").value = steamPolicy;
+  $("#automatic-manager-time").value =
+    /^\d{2}:\d{2}$/.test(view?.manager_scheduled_time)
+      ? view.manager_scheduled_time
+      : "04:00";
+  $("#automatic-steam-time").value =
+    /^\d{2}:\d{2}$/.test(view?.steam_scheduled_time)
+      ? view.steam_scheduled_time
+      : "04:00";
+  $("#automatic-manager-time-field").classList.toggle(
+    "hidden",
+    managerPolicy !== "scheduled",
+  );
+  $("#automatic-steam-time-field").classList.toggle(
+    "hidden",
+    steamPolicy !== "scheduled",
+  );
   const status = $("#automatic-update-status");
   const detail = $("#automatic-update-detail");
   if (view?.scheduled) {
     const targets = [];
     if (view.manager_version) targets.push(`Control v${view.manager_version}`);
     if (view.steam_build_id) targets.push(`Steam build ${view.steam_build_id}`);
-    status.textContent = `Scheduled · ${new Date(view.restart_at).toLocaleString()}`;
-    detail.textContent = `10-minute in-game countdown for ${targets.join(" and ")}.`;
+    if (view.waiting_for_empty) {
+      status.textContent = "Waiting for an empty server";
+      detail.textContent = `Automatic installation of ${targets.join(" and ")} begins after the server remains empty for 30 seconds.`;
+    } else {
+      status.textContent = `Scheduled · ${new Date(view.restart_at).toLocaleString()}`;
+      detail.textContent = `${view.restart_policy === "scheduled" ? "Server-time maintenance window" : "10-minute in-game countdown"} for ${targets.join(" and ")}.`;
+    }
   } else if (view?.manager_enabled || view?.steam_enabled) {
     status.textContent = "Watching for updates";
     detail.textContent = "Checks are performed once per hour by this server.";
@@ -381,14 +415,25 @@ async function saveAutomaticUpdates(changed) {
     steam.checked = false;
     return;
   }
-  steam.disabled = true;
-  manager.disabled = true;
+  const controls = [
+    steam,
+    manager,
+    $("#automatic-steam-policy"),
+    $("#automatic-steam-time"),
+    $("#automatic-manager-policy"),
+    $("#automatic-manager-time"),
+  ];
+  for (const control of controls) control.disabled = true;
   try {
     const view = await api("/api/updates/automatic", {
       method: "POST",
       body: {
         manager_enabled: manager.checked,
         steam_enabled: steam.checked,
+        manager_restart_policy: $("#automatic-manager-policy").value,
+        manager_scheduled_time: $("#automatic-manager-time").value,
+        steam_restart_policy: $("#automatic-steam-policy").value,
+        steam_scheduled_time: $("#automatic-steam-time").value,
       },
     });
     renderAutomaticUpdates(view);
@@ -397,8 +442,70 @@ async function saveAutomaticUpdates(changed) {
     await loadAutomaticUpdates({ silent: true });
     toast(error.message, true);
   } finally {
-    steam.disabled = false;
-    manager.disabled = false;
+    for (const control of controls) control.disabled = false;
+  }
+}
+
+function renderScheduledRestart(view) {
+  app.scheduledRestart = view;
+  $("#scheduled-restart-enabled").checked = view?.enabled === true;
+  $("#scheduled-restart-time").value =
+    /^\d{2}:\d{2}$/.test(view?.scheduled_time)
+      ? view.scheduled_time
+      : "04:00";
+  const selected = new Set(Array.isArray(view?.weekdays) ? view.weekdays : []);
+  for (const input of $$(".scheduled-restart-weekdays input")) {
+    input.checked = selected.has(input.value);
+  }
+  const status = $("#scheduled-restart-status");
+  if (!view?.enabled) {
+    status.textContent =
+      "Disabled. Scheduled restarts use the 10-minute in-game countdown.";
+  } else if (view?.scheduled && view.restart_at) {
+    status.textContent =
+      `Next restart ${new Date(view.restart_at).toLocaleString()} · ` +
+      "players are notified at 10, 5, 4, 3, 2, and 1 minute.";
+  } else {
+    status.textContent =
+      "Enabled. The next occurrence is calculated while the game server is running.";
+  }
+}
+
+async function loadScheduledRestart({ silent = false } = {}) {
+  try {
+    renderScheduledRestart(await api("/api/server/restart-schedule"));
+  } catch (error) {
+    if (!silent) toast(error.message, true);
+  }
+}
+
+async function saveScheduledRestart(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = form.querySelector('button[type="submit"]');
+  const weekdays = $$(".scheduled-restart-weekdays input:checked")
+    .map((input) => input.value);
+  if (!weekdays.length) {
+    toast("Select at least one scheduled restart day.", true);
+    return;
+  }
+  button.disabled = true;
+  try {
+    const view = await api("/api/server/restart-schedule", {
+      method: "POST",
+      body: {
+        enabled: $("#scheduled-restart-enabled").checked,
+        scheduled_time: $("#scheduled-restart-time").value,
+        weekdays,
+      },
+    });
+    renderScheduledRestart(view);
+    toast("Dedicated Server restart schedule saved.");
+  } catch (error) {
+    await loadScheduledRestart({ silent: true });
+    toast(error.message, true);
+  } finally {
+    button.disabled = false;
   }
 }
 
@@ -4505,6 +4612,28 @@ function bindEvents() {
     saveAutomaticUpdates(event.target));
   $("#automatic-manager-update").addEventListener("change", (event) =>
     saveAutomaticUpdates(event.target));
+  $("#automatic-steam-policy").addEventListener("change", (event) => {
+    $("#automatic-steam-time-field").classList.toggle(
+      "hidden",
+      event.target.value !== "scheduled",
+    );
+    saveAutomaticUpdates(event.target);
+  });
+  $("#automatic-manager-policy").addEventListener("change", (event) => {
+    $("#automatic-manager-time-field").classList.toggle(
+      "hidden",
+      event.target.value !== "scheduled",
+    );
+    saveAutomaticUpdates(event.target);
+  });
+  $("#automatic-steam-time").addEventListener("change", (event) =>
+    saveAutomaticUpdates(event.target));
+  $("#automatic-manager-time").addEventListener("change", (event) =>
+    saveAutomaticUpdates(event.target));
+  $("#scheduled-restart-form").addEventListener(
+    "submit",
+    saveScheduledRestart,
+  );
   $("#theme-toggle").addEventListener("click", () => {
     setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
     if (app.metricsHistory) requestAnimationFrame(renderMetricsHistory);
@@ -4980,6 +5109,7 @@ async function initialize() {
       loadManagerUpdate({ silent: true }),
       loadSteamUpdate({ silent: true }),
       loadAutomaticUpdates({ silent: true }),
+      loadScheduledRestart({ silent: true }),
     ]);
     scheduleManagerUpdatePoll();
     const stream = new EventSource(nodeAPIPath("/api/events"));
