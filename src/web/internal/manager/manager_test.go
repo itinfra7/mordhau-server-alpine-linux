@@ -1510,7 +1510,7 @@ func TestGameLogProcessorSuppressesRepeatedEmptyServerMatchStates(t *testing.T) 
 		`[2026.07.28-16.00.00:005][204]LogGameMode: Display: Match State Changed from WaitingToStart to LeavingMap`,
 	}
 	want := []string{
-		matchStateWaitingToStartText,
+		"",
 		"",
 		matchStateLeavingMapText,
 		"",
@@ -1542,10 +1542,12 @@ func TestGameLogProcessorReopensEmptyMatchStateWindowAfterPlayerSession(t *testi
 	processor := newGameLogProcessor()
 	waiting := `[2026.07.28-15.40.00:001][200]LogGameMode: Display: Match State Changed from LeavingMap to WaitingToStart`
 	leaving := `[2026.07.28-15.50.00:002][201]LogGameMode: Display: Match State Changed from WaitingToStart to LeavingMap`
-	for _, line := range []string{waiting, leaving} {
-		if events := processor.processLine(line); len(events) != 1 {
-			t.Fatalf("initial empty-state event was not emitted: %#v", events)
-		}
+	if events := processor.processLine(waiting); len(events) != 0 {
+		t.Fatalf("empty-server waiting state was not suppressed: %#v", events)
+	}
+	if events := processor.processLine(leaving); len(events) != 1 ||
+		events[0].Text != matchStateLeavingMapText {
+		t.Fatalf("initial empty-server map reset was not emitted: %#v", events)
 	}
 
 	loginLines := []string{
@@ -1566,12 +1568,14 @@ func TestGameLogProcessorReopensEmptyMatchStateWindowAfterPlayerSession(t *testi
 		events[0].PlayerAction != "logout" {
 		t.Fatalf("logout event = %#v", events)
 	}
-	for _, line := range []string{waiting, leaving} {
-		if events := processor.processLine(line); len(events) != 1 {
-			t.Fatalf("new empty-state event was not emitted: %#v", events)
-		}
-	}
 	if events := processor.processLine(waiting); len(events) != 0 {
+		t.Fatalf("new empty-server waiting state was not suppressed: %#v", events)
+	}
+	if events := processor.processLine(leaving); len(events) != 1 ||
+		events[0].Text != matchStateLeavingMapText {
+		t.Fatalf("new empty-server map reset was not emitted: %#v", events)
+	}
+	if events := processor.processLine(leaving); len(events) != 0 {
 		t.Fatalf("new empty-state repetition was not suppressed: %#v", events)
 	}
 }
@@ -1644,6 +1648,72 @@ func TestStoredRCONTransportStatusEventsAreFiltered(t *testing.T) {
 	events = manager.rconHistory(rconBrowserHistoryLimit)
 	if len(events) != 2 || events[1].Sequence != 4 {
 		t.Fatalf("sequence did not continue after filtered records: %#v", events)
+	}
+}
+
+func TestStoredRCONHistoryCompactsIdleMapCycles(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "mordhau-rcon.log")
+	now := time.Now()
+	const playerID = "A1B2C3D4E5F60718"
+	stored := []RCONEvent{
+		{Sequence: 1, Time: now, Text: matchStateWaitingToStartText, Kind: "matchstate"},
+		{Sequence: 2, Time: now, Text: matchStateLeavingMapText, Kind: "matchstate"},
+		{Sequence: 3, Time: now, Text: matchStateWaitingToStartText, Kind: "matchstate"},
+		{Sequence: 4, Time: now, Text: matchStateLeavingMapText, Kind: "matchstate"},
+		{
+			Sequence: 5,
+			Time:     now,
+			Text:     "Login: 2026.07.30-10.00.00: Player (" + playerID + ") logged in",
+			Kind:     "login",
+		},
+		{Sequence: 6, Time: now, Text: matchStateWaitingToStartText, Kind: "matchstate"},
+		{Sequence: 7, Time: now, Text: matchStateLeavingMapText, Kind: "matchstate"},
+		{
+			Sequence: 8,
+			Time:     now,
+			Text:     "Login: 2026.07.30-10.05.00: Player (" + playerID + ") logged out",
+			Kind:     "login",
+		},
+		{Sequence: 9, Time: now, Text: matchStateWaitingToStartText, Kind: "matchstate"},
+		{Sequence: 10, Time: now, Text: matchStateLeavingMapText, Kind: "matchstate"},
+		{Sequence: 11, Time: now, Text: matchStateWaitingToStartText, Kind: "matchstate"},
+		{Sequence: 12, Time: now, Text: matchStateLeavingMapText, Kind: "matchstate"},
+	}
+	var data bytes.Buffer
+	encoder := json.NewEncoder(&data)
+	for _, event := range stored {
+		if err := encoder.Encode(event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(path, data.Bytes(), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	manager := &Manager{rconLogPath: path}
+	if err := manager.loadRCONEventLog(); err != nil {
+		t.Fatal(err)
+	}
+	events := manager.rconHistory(rconBrowserHistoryLimit)
+	wantSequences := []uint64{2, 5, 6, 7, 8, 10}
+	if len(events) != len(wantSequences) {
+		t.Fatalf("compacted history = %#v", events)
+	}
+	for index, sequence := range wantSequences {
+		if events[index].Sequence != sequence {
+			t.Fatalf(
+				"compacted history sequence %d = %d, want %d",
+				index,
+				events[index].Sequence,
+				sequence,
+			)
+		}
+	}
+	if manager.rconSequence != 12 {
+		t.Fatalf("stored sequence = %d, want 12", manager.rconSequence)
+	}
+	if !manager.persistedEmptyLeavingMapShown() {
+		t.Fatal("final empty-server map reset state was not retained")
 	}
 }
 
@@ -2380,9 +2450,9 @@ func TestDashboardThemeAndServerPromptMarkup(t *testing.T) {
 	for _, expected := range []string{
 		`id="theme-toggle"`,
 		`content="width=device-width, initial-scale=1, viewport-fit=cover"`,
-		`src="/static/theme.js?v=2.6.0"`,
-		`href="/static/app.css?v=2.6.0"`,
-		`src="/static/app.js?v=2.6.0"`,
+		`src="/static/theme.js?v=2.6.1"`,
+		`href="/static/app.css?v=2.6.1"`,
+		`src="/static/app.js?v=2.6.1"`,
 		`<body id="page-top">`,
 		`class="brand" href="#page-top"`,
 		`id="fleet-server-picker"`,
@@ -2519,10 +2589,10 @@ func TestDashboardThemeAndServerPromptMarkup(t *testing.T) {
 		t.Fatal(err)
 	}
 	loginSource := string(loginData)
-	if !strings.Contains(loginSource, `src="/static/theme.js?v=2.6.0"`) {
+	if !strings.Contains(loginSource, `src="/static/theme.js?v=2.6.1"`) {
 		t.Fatal("login page does not initialize the persisted theme")
 	}
-	if !strings.Contains(loginSource, `href="/static/app.css?v=2.6.0"`) {
+	if !strings.Contains(loginSource, `href="/static/app.css?v=2.6.1"`) {
 		t.Fatal("login page does not use the release stylesheet version")
 	}
 	if !strings.Contains(loginSource, `viewport-fit=cover`) {
@@ -2631,6 +2701,11 @@ func TestDashboardThemeAndServerPromptMarkup(t *testing.T) {
 		`comment: comment.value`,
 		`typeof rule.comment === "string"`,
 		`event.text.startsWith("RCON connection closed:")`,
+		`history.scrollRestoration = "manual"`,
+		`window.addEventListener("pageshow", () => requestAnimationFrame(resetInitialViewport))`,
+		`updateServerPromptMode(false)`,
+		`updateServerPromptMode(true)`,
+		`if (focusInput) input.focus()`,
 		`action: "set_section_enabled"`,
 		`section_id: section.id || ""`,
 		`entry_id: entry.id || ""`,
@@ -2642,9 +2717,10 @@ func TestDashboardThemeAndServerPromptMarkup(t *testing.T) {
 	for _, unwanted := range []string{
 		`getItem("mordhau-mod-refresh-minutes")`,
 		`setItem("mordhau-mod-refresh-minutes"`,
+		`updateServerPromptMode();`,
 	} {
 		if strings.Contains(appSource, unwanted) {
-			t.Fatal("mod refresh interval is still read from or written to browser-local state")
+			t.Fatalf("frontend still contains unwanted pattern %q", unwanted)
 		}
 	}
 }

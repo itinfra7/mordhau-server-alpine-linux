@@ -70,6 +70,17 @@ const themeStorageKey = "mordhau-control-theme";
 const minimumModRefreshMinutes = 1;
 const maximumModRefreshMinutes = 10080;
 
+function resetInitialViewport() {
+  const root = document.documentElement;
+  const previousBehavior = root.style.scrollBehavior;
+  root.style.scrollBehavior = "auto";
+  window.scrollTo(0, 0);
+  root.style.scrollBehavior = previousBehavior;
+}
+
+if ("scrollRestoration" in history) history.scrollRestoration = "manual";
+window.addEventListener("pageshow", () => requestAnimationFrame(resetInitialViewport));
+
 function setTheme(theme, persist = true) {
   const dark = theme === "dark";
   document.documentElement.dataset.theme = dark ? "dark" : "light";
@@ -1356,7 +1367,7 @@ async function submitServerPrompt(event) {
   }
 }
 
-function updateServerPromptMode() {
+function updateServerPromptMode(focusInput = false) {
   const sayMode = $("#server-prompt-mode").value === "say";
   const input = $("#server-prompt-input");
   input.placeholder = sayMode ? "Enter server message" : "Enter RCON command";
@@ -1365,7 +1376,7 @@ function updateServerPromptMode() {
   $("#server-prompt-help").textContent = sayMode
     ? "SAY sends a multilingual message through the local server-only Unicode bridge."
     : "RCON commands run with full administrator authority; commands and responses are retained.";
-  input.focus();
+  if (focusInput) input.focus();
 }
 
 const runtimeKindLabels = {
@@ -4700,7 +4711,7 @@ function bindEvents() {
     if (app.mapChanging) event.preventDefault();
   });
   $("#server-prompt-form").addEventListener("submit", submitServerPrompt);
-  $("#server-prompt-mode").addEventListener("change", updateServerPromptMode);
+  $("#server-prompt-mode").addEventListener("change", () => updateServerPromptMode(true));
   $("#runtime-refresh-targets").addEventListener("click", async () => {
     await loadRuntimeTargets({ selectDefault: !app.runtimeSelectedID });
     if (app.runtimeSelectedID) await loadRuntimeTarget();
@@ -5074,6 +5085,7 @@ function bindEvents() {
 }
 
 async function initialize() {
+  resetInitialViewport();
   initializeTheme();
   clearLegacyModRefreshPreference();
   bindEvents();
@@ -5083,7 +5095,7 @@ async function initialize() {
       requestAnimationFrame(renderMetricsHistory);
     }
   });
-  updateServerPromptMode();
+  updateServerPromptMode(false);
   try {
     const me = await api("/api/me");
     app.csrf = me.csrf;

@@ -77,6 +77,7 @@ type Manager struct {
 	eventSourceStatus    string
 	rconEvents           []RCONEvent
 	rconSequence         uint64
+	emptyLeavingMapShown bool
 	rconLogMu            sync.Mutex
 	rconLogPath          string
 	rconCommandMu        sync.Mutex

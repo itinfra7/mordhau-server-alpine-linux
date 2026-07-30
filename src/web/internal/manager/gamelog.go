@@ -61,13 +61,12 @@ type pendingGameConnection struct {
 }
 
 type gameLogProcessor struct {
-	players                  map[string]gameLogPlayer
-	pending                  map[string]gameLogPlayer
-	connections              []pendingGameConnection
-	emptyWaitingToStartShown bool
-	emptyLeavingMapShown     bool
-	currentMap               string
-	currentGameMode          string
+	players              map[string]gameLogPlayer
+	pending              map[string]gameLogPlayer
+	connections          []pendingGameConnection
+	emptyLeavingMapShown bool
+	currentMap           string
+	currentGameMode      string
 }
 
 func newGameLogProcessor() *gameLogProcessor {
@@ -92,7 +91,6 @@ func (processor *gameLogProcessor) gameContext() (string, string) {
 }
 
 func (processor *gameLogProcessor) resetEmptyMatchStateWindow() {
-	processor.emptyWaitingToStartShown = false
 	processor.emptyLeavingMapShown = false
 }
 
@@ -102,10 +100,7 @@ func (processor *gameLogProcessor) allowMatchStateEvent(text string) bool {
 	}
 	switch text {
 	case matchStateWaitingToStartText:
-		if processor.emptyWaitingToStartShown || processor.emptyLeavingMapShown {
-			return false
-		}
-		processor.emptyWaitingToStartShown = true
+		return false
 	case matchStateLeavingMapText:
 		if processor.emptyLeavingMapShown {
 			return false
@@ -834,6 +829,7 @@ func (manager *Manager) closeLivePlayerSessions(
 func (manager *Manager) gameLogLoop(ctx context.Context) {
 	follower := &gameLogFollower{path: gameLogPath}
 	processor := newGameLogProcessor()
+	processor.emptyLeavingMapShown = manager.persistedEmptyLeavingMapShown()
 	ticker := time.NewTicker(gameLogPollInterval)
 	defer ticker.Stop()
 

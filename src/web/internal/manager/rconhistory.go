@@ -14,6 +14,79 @@ const (
 	rconBrowserHistoryLimit = 400
 )
 
+type rconHistoryVisibility struct {
+	activePlayers        map[string]struct{}
+	emptyLeavingMapShown bool
+}
+
+func newRCONHistoryVisibility() *rconHistoryVisibility {
+	return &rconHistoryVisibility{
+		activePlayers: make(map[string]struct{}),
+	}
+}
+
+func storedRCONPlayerLifecycle(event RCONEvent) (string, string, bool) {
+	if event.Kind != "login" {
+		return "", "", false
+	}
+	action := ""
+	body := event.Text
+	switch {
+	case strings.HasSuffix(body, " logged in"):
+		action = "login"
+		body = strings.TrimSuffix(body, " logged in")
+	case strings.HasSuffix(body, " logged out"):
+		action = "logout"
+		body = strings.TrimSuffix(body, " logged out")
+	default:
+		return "", "", false
+	}
+	if !strings.HasSuffix(body, ")") {
+		return "", "", false
+	}
+	body = strings.TrimSuffix(body, ")")
+	open := strings.LastIndex(body, " (")
+	if open < 0 {
+		return "", "", false
+	}
+	playerID := body[open+2:]
+	if !validMordhauPlayerID(playerID) {
+		return "", "", false
+	}
+	return playerID, action, true
+}
+
+func (visibility *rconHistoryVisibility) retain(event RCONEvent) bool {
+	if playerID, action, ok := storedRCONPlayerLifecycle(event); ok {
+		switch action {
+		case "login":
+			if len(visibility.activePlayers) == 0 {
+				visibility.emptyLeavingMapShown = false
+			}
+			visibility.activePlayers[playerID] = struct{}{}
+		case "logout":
+			delete(visibility.activePlayers, playerID)
+			if len(visibility.activePlayers) == 0 {
+				visibility.emptyLeavingMapShown = false
+			}
+		}
+		return true
+	}
+	if event.Kind != "matchstate" || len(visibility.activePlayers) > 0 {
+		return true
+	}
+	switch event.Text {
+	case matchStateWaitingToStartText:
+		return false
+	case matchStateLeavingMapText:
+		if visibility.emptyLeavingMapShown {
+			return false
+		}
+		visibility.emptyLeavingMapShown = true
+	}
+	return true
+}
+
 func (m *Manager) rconEventLogFilePath() string {
 	if m.rconLogPath != "" {
 		return m.rconLogPath
@@ -49,6 +122,7 @@ func (m *Manager) loadRCONEventLog() error {
 
 	var events []RCONEvent
 	var sequence uint64
+	visibility := newRCONHistoryVisibility()
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 64<<10), 4<<20)
 	for scanner.Scan() {
@@ -63,6 +137,9 @@ func (m *Manager) loadRCONEventLog() error {
 		}
 		sequence = event.Sequence
 		if isRCONTransportStatusEvent(event.Kind, event.Text) {
+			continue
+		}
+		if !visibility.retain(event) {
 			continue
 		}
 		events = retainRCONEvent(events, event)
@@ -90,8 +167,15 @@ func (m *Manager) loadRCONEventLog() error {
 	m.rconMu.Lock()
 	m.rconEvents = events
 	m.rconSequence = sequence
+	m.emptyLeavingMapShown = visibility.emptyLeavingMapShown
 	m.rconMu.Unlock()
 	return nil
+}
+
+func (m *Manager) persistedEmptyLeavingMapShown() bool {
+	m.rconMu.RLock()
+	defer m.rconMu.RUnlock()
+	return m.emptyLeavingMapShown
 }
 
 func (m *Manager) appendRCONEventLog(event RCONEvent) error {
