@@ -5,9 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="light dark">
   <title>MORDHAU Control</title>
-  <script src="/static/theme.js?v=2.4.0"></script>
-  <link rel="stylesheet" href="/static/app.css?v=2.4.0">
-  <script src="/static/app.js?v=2.4.0" defer></script>
+  <script src="/static/theme.js?v=2.5.0"></script>
+  <link rel="stylesheet" href="/static/app.css?v=2.5.0">
+  <script src="/static/app.js?v=2.5.0" defer></script>
 </head>
 <body id="page-top">
   <div class="ambient ambient-one"></div>
@@ -21,6 +21,10 @@
       </div>
     </a>
     <div class="top-actions">
+      <label id="fleet-server-picker" class="fleet-server-picker hidden">
+        <span>Server</span>
+        <select id="fleet-server-select" aria-label="Managed server"></select>
+      </label>
       <button id="theme-toggle" class="ghost compact theme-toggle" type="button"
               aria-label="Switch to dark mode" aria-pressed="false">
         <span id="theme-toggle-icon" aria-hidden="true">☾</span>
@@ -79,6 +83,7 @@
       <button class="tab" data-panel="custompaks">CustomPaks</button>
       <button class="tab" data-panel="accounts">Accounts</button>
       <button class="tab" data-panel="access">Network access</button>
+      <button class="tab" data-panel="fleet">Server Fleet</button>
     </nav>
 
     <section id="panel-dashboard" class="panel active">
@@ -1058,6 +1063,155 @@
         </p>
         <div id="access-rules" class="list-stack"></div>
       </article>
+    </section>
+
+    <section id="panel-fleet" class="panel">
+      <div class="fleet-grid">
+        <article class="card fleet-settings-card">
+          <div class="card-heading wrap">
+            <div>
+              <p class="eyebrow">SERVER FLEET</p>
+              <h2>Role and identity</h2>
+            </div>
+            <span id="fleet-role-status" class="connection-pill">Standalone</span>
+          </div>
+          <form id="fleet-settings-form" class="fleet-settings-form">
+            <label>
+              <span>Role</span>
+              <select id="fleet-role">
+                <option value="standalone">Standalone</option>
+                <option value="controller">Fleet Controller</option>
+                <option value="managed">Managed Server</option>
+              </select>
+            </label>
+            <label>
+              <span>Server display name</span>
+              <input id="fleet-alias" type="text" maxlength="32" required
+                     autocomplete="off">
+            </label>
+            <label>
+              <span>Managed connection listener</span>
+              <input id="fleet-listen-address" type="text" required
+                     placeholder="0.0.0.0:8091" autocomplete="off"
+                     autocapitalize="none" spellcheck="false">
+            </label>
+            <button class="primary" type="submit">Save fleet settings</button>
+          </form>
+          <p class="hint">
+            Standalone opens no fleet listener. A Managed Server accepts only its
+            configured Controller over TLS 1.3 with mutually pinned Ed25519 identities.
+          </p>
+          <div class="fleet-identity-block">
+            <div class="card-heading wrap">
+              <div>
+                <strong>Connection key</strong>
+                <p id="fleet-node-id" class="hint">No identity generated.</p>
+              </div>
+              <div class="control-row tight">
+                <button id="fleet-identity-generate" class="secondary compact"
+                        type="button">Generate identity</button>
+                <button id="fleet-identity-copy" class="ghost compact"
+                        type="button" disabled>Copy key</button>
+              </div>
+            </div>
+            <textarea id="fleet-connection-key" rows="4" readonly
+                      aria-label="Fleet connection key"
+                      placeholder="Generate an identity to create a connection key."></textarea>
+            <p class="hint">
+              Share this public connection key with the other server. The private
+              identity key never leaves this installation.
+            </p>
+          </div>
+        </article>
+
+        <article id="fleet-managed-controller-card"
+                 class="card fleet-managed-controller-card hidden">
+          <div class="card-heading">
+            <div>
+              <p class="eyebrow">MANAGED SERVER</p>
+              <h2>Trusted Controller</h2>
+            </div>
+          </div>
+          <form id="fleet-controller-form" class="fleet-controller-form">
+            <label>
+              <span>Controller source IP</span>
+              <input id="fleet-controller-address" type="text" required
+                     placeholder="172.27.0.10" autocomplete="off"
+                     autocapitalize="none" spellcheck="false">
+            </label>
+            <label>
+              <span>Controller connection key</span>
+              <textarea id="fleet-controller-key" rows="5" required
+                        autocomplete="off" autocapitalize="none"
+                        spellcheck="false"></textarea>
+            </label>
+            <div class="control-row">
+              <button class="primary" type="submit">Trust Controller</button>
+              <button id="fleet-controller-remove" class="danger hidden"
+                      type="button">Remove Controller</button>
+            </div>
+          </form>
+          <p id="fleet-controller-status" class="policy-note">
+            No Controller is trusted. The fleet listener remains closed.
+          </p>
+        </article>
+
+        <article id="fleet-controller-nodes-card"
+                 class="card fleet-controller-nodes-card hidden">
+          <div class="card-heading wrap">
+            <div>
+              <p class="eyebrow">FLEET CONTROLLER</p>
+              <h2>Managed Servers</h2>
+            </div>
+            <button id="fleet-refresh" class="ghost compact" type="button">
+              Refresh status
+            </button>
+          </div>
+          <form id="fleet-node-add-form" class="fleet-node-add-form">
+            <label>
+              <span>Display name</span>
+              <input id="fleet-node-alias" type="text" maxlength="32" required
+                     placeholder="Duel" autocomplete="off">
+            </label>
+            <label>
+              <span>Managed IP and port</span>
+              <input id="fleet-node-address" type="text" required
+                     placeholder="172.27.0.20:8091" autocomplete="off"
+                     autocapitalize="none" spellcheck="false">
+            </label>
+            <label class="fleet-node-key-field">
+              <span>Managed Server connection key</span>
+              <textarea id="fleet-node-key" rows="4" required
+                        autocomplete="off" autocapitalize="none"
+                        spellcheck="false"></textarea>
+            </label>
+            <button class="primary" type="submit">Add Managed Server</button>
+          </form>
+          <div id="fleet-node-list" class="fleet-node-list"></div>
+        </article>
+
+        <article id="fleet-sync-card" class="card fleet-sync-card hidden">
+          <div class="card-heading wrap">
+            <div>
+              <p class="eyebrow">OPT-IN EVENT ROUTING</p>
+              <h2>Cross-server event sync</h2>
+            </div>
+            <span class="stage-pill">Default OFF</span>
+          </div>
+          <div class="policy-note">
+            Every category is independently enabled per server. A disabled server
+            neither publishes nor receives that category. Every relayed line is
+            prefixed with its source server name.
+          </div>
+          <div id="fleet-team-chat-notice" class="policy-note fleet-team-notice"></div>
+          <p class="hint">
+            Web SAY covers messages sent from this control site. RCON SAY covers
+            successful <code>say</code> commands entered through this site's RCON
+            prompt; external RCON clients are not observable in Mordhau.log.
+          </p>
+          <div id="fleet-sync-list" class="fleet-sync-list"></div>
+        </article>
+      </div>
     </section>
   </main>
 

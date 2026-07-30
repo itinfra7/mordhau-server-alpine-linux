@@ -16,6 +16,11 @@ The repository provides:
 - OpenRC service definitions for the game server and web manager
 - An animated responsive Go web manager with shared one-minute system metrics
   and persistent light/dark themes
+- Optional multi-server operation with `Standalone`, `Fleet Controller`, and
+  `Managed Server` roles, an explicit top-bar server selector, and remote
+  access to each registered server's management panels
+- Default-off cross-server routing for All Chat, Team Chat, Web SAY, web RCON
+  SAY, and player login/logout events with mandatory source-server labels
 - A native, game-thread Unreal Reflection bridge for authenticated inspection
   and controlled editing of current server actor properties
 - Type-aware Runtime property controls with exact Boolean and enum choices,
@@ -81,6 +86,8 @@ not redistributed in the source archive.
 - x86_64 architecture
 - OpenRC
 - Root privileges
+- Direct IP connectivity from a Fleet Controller to each Managed Server when
+  the optional Server Fleet feature is enabled
 - Internet access to Alpine package mirrors, SteamCMD, Steam content servers,
   Go module sources, this project's GitHub API and Releases, GitHub Releases
   for the checksum-pinned `repak` helper, and the DB-IP City Lite download host
@@ -136,12 +143,12 @@ history remains in the versioned changelog asset instead of being repeated in
 every Release body.
 
 ```sh
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.4.0/mordhau-server-alpine-linux-v2.4.0.tar.gz
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.4.0/CHANGELOG-v2.4.0.md
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.4.0/SHA256SUMS
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.5.0/mordhau-server-alpine-linux-v2.5.0.tar.gz
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.5.0/CHANGELOG-v2.5.0.md
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.5.0/SHA256SUMS
 sha256sum -c SHA256SUMS
-tar -xzf mordhau-server-alpine-linux-v2.4.0.tar.gz
-cd mordhau-server-alpine-linux-v2.4.0
+tar -xzf mordhau-server-alpine-linux-v2.5.0.tar.gz
+cd mordhau-server-alpine-linux-v2.5.0
 chmod +x src/mordhau-server-alpine-linux.sh
 ./src/mordhau-server-alpine-linux.sh
 ```
@@ -318,6 +325,15 @@ The web manager provides:
 - A default light theme with a persistent light/dark toggle
 - Responsive phone, tablet, and desktop layouts with notched-display safe
   areas and touch-sized controls
+- Optional Fleet Controller and Managed Server roles with a top-bar,
+  node-ID-scoped server selector; Dashboard, Monitoring, Runtime, Players,
+  Configuration, Mods, CustomPaks, Accounts, and Network access remain
+  available for the selected server
+- Controller-cached Managed Server connectivity, game state, player count,
+  manager version, and server-collected resource metrics refreshed through a
+  ten-second authenticated heartbeat
+- Per-server, default-off event-routing controls for All Chat, Team Chat, Web
+  SAY, web RCON SAY, and player login/logout
 - Start, stop, restart, and stopped-only update controls
 - Shared top-of-page notifications for newer stable management releases and
   public MORDHAU Dedicated Server Steam builds
@@ -406,6 +422,90 @@ precedence as ordinary CIDR rules.
 Each explicit network rule can store an optional single-line comment of up to
 160 Unicode characters. Comments are metadata only and do not affect address
 matching or rule precedence. Existing rules without a comment remain valid.
+
+## Server Fleet
+
+Every installation starts in `Standalone` mode. Standalone mode opens no fleet
+listener, creates no outbound fleet connection, and keeps every event-sync
+category disabled.
+
+The optional roles are:
+
+- `Fleet Controller`: stores the Managed Server directory, maintains
+  Controller-initiated connections, routes selected server APIs, and provides
+  the top-bar server selector.
+- `Managed Server`: retains its ordinary direct web interface and additionally
+  accepts a configured Fleet Controller on a separate listener. The default
+  fleet listener is IPv4-only `0.0.0.0:8091`; use an explicit IPv6 address or
+  `[::]:8091` when an IPv6 listener is required.
+
+The browser connects only to the Fleet Controller when using the top-bar
+selector. Each browser tab carries an explicit node ID in its URL; changing
+the selected server in one tab does not change another tab or another
+administrator's target. The Fleet Controller forwards only registered manager
+API routes and does not forward browser cookies or authorization headers.
+
+Pair two installations:
+
+1. Open **Server Fleet** on the Controller installation, choose
+   `Fleet Controller`, assign its display name, save, and copy its connection
+   key.
+2. Open **Server Fleet** on the Managed installation, choose
+   `Managed Server`, assign its display name and listener address, and save.
+   Copy the Managed Server connection key.
+3. On the Managed Server, enter the exact source IP from which the Controller
+   reaches it and paste the Controller connection key.
+4. On the Fleet Controller, add the Managed Server with a unique display name,
+   its reachable `IP:port`, and its connection key.
+5. Permit the configured fleet TCP port from the Controller IP to the Managed
+   Server. The fleet port does not need general Internet exposure.
+
+A connection key contains only an Ed25519 public identity and its derived node
+ID. Private identities and fleet state are retained with root-only permissions:
+
+```text
+/root/mordhau/.manager/fleet.json
+/root/mordhau/.manager/fleet-identity-key.pem
+/root/mordhau/.manager/fleet-identity-cert.pem
+```
+
+Fleet links require TLS 1.3, mutual possession of the configured Ed25519 keys,
+the Managed Server's exact configured Controller source IP, and a matching
+Managed Server node ID. Public certificate authorities, DNS names, redirects,
+and forwarded client-address headers are not trusted for this channel.
+
+Cross-server events are opt-in per server and category. A server with a
+category disabled neither publishes nor receives that category. New nodes and
+new installations start with all five categories disabled:
+
+- All Chat
+- Team Chat
+- Web SAY
+- RCON SAY issued successfully through the web RCON prompt
+- Player login and logout
+
+Relayed lines always include the Controller-assigned source display name, for
+example:
+
+```text
+(Dread Server) <Player> : hello
+(Dread Server · TEAM) <Player> : defend
+(Dread Server · WEB SAY) maintenance soon
+(Dread Server · RCON SAY) match restarting
+(Dread Server) <Player> joined the server.
+```
+
+MORDHAU does not expose equivalent team membership across independent
+servers. A relayed Team Chat line is therefore labeled `TEAM` but displayed
+server-wide on each destination. External RCON clients' SAY commands are not
+identifiable in `Mordhau.log`; RCON SAY synchronization covers commands issued
+through this web manager. Web SAY and every relayed message use the server-only
+Unicode Bridge. Login/logout routing also closes any still-tracked live
+sessions when the game process stops or the active log is replaced. Delivery
+order is retained per destination server.
+
+Changing a server back to `Standalone` closes its fleet transport while
+preserving its pairing configuration for a later authorized role change.
 
 ## Player History and Moderation
 
@@ -1198,6 +1298,28 @@ automatic dedicated-server updates are enabled.
   authentication.
 - Canonical client and TCP peer addresses are retained separately in request
   context and root-only audit records.
+- Server Fleet is disabled by default. A Managed Server listener starts only
+  after the role, Controller public identity, and exact Controller source IP
+  are configured.
+- Fleet transport is restricted to TLS 1.3 with mutually pinned Ed25519
+  subject-public-key identities. The Controller initiates every connection,
+  validates the Managed Server node ID, rejects redirects, and does not trust
+  DNS names or public certificate authorities for fleet identity.
+- A Managed Server independently verifies the Controller certificate and
+  direct TCP peer address before handling a request. Fleet-provided canonical
+  browser and TCP peer addresses are stored separately in request context and
+  audit records; forwarded-address and browser credential headers are removed.
+- Remote state changes require the authenticated Controller browser's original
+  CSRF token before the Controller creates a separate internal request.
+  Internal requests are limited to an explicit manager API registry and retain
+  the Controller account, canonical browser IP, destination node ID, and
+  request ID in root-only audit records.
+- Fleet identity keys and settings use root-only files. Event routing requires
+  both source and destination category opt-in, deduplicates event IDs, bounds
+  per-destination queues and Unicode message size, preserves destination
+  ordering, and never accepts a source display name from a Managed Server.
+  Relay events contain no web credential, administrator identity, player IP,
+  or PlayFab ID.
 - The most specific CIDR block wins; inclusive IPv4 ranges are evaluated as
   exact minimal CIDR blocks. Deny wins an equal-prefix tie except for the
   active emergency exact-address allow.
@@ -1352,6 +1474,13 @@ competitive-rank substitutes, normalize the earlier zero-value sentinel, and
 retain the latest valid observation. Platform-identity tests enforce strict
 SteamID64 validation, safe profile-link construction, Epic identity
 normalization, and exact live-ping transport.
+Server Fleet tests cover mode defaults, connection-key round trips, root-only
+identity permissions, TLS 1.3 mutual Ed25519 pinning, expected Controller
+source-IP enforcement, canonical browser-IP propagation with forwarding-header
+spoof removal, node-scoped API allowlisting, outer-browser CSRF enforcement,
+Unicode source labels, all five rendered event types, All/Team game-log
+mapping, forced live-session logout, RCON SAY parsing, per-destination order,
+and source/destination event opt-in.
 The shell integration tests cover PAK installation, active and staged Game.ini
 registration, existing server-actor preservation, backup creation,
 idempotent reinstallation, verified lossless XZ game-log compression,
@@ -1403,7 +1532,8 @@ inactive/uploaded packages, player connection history, moderation leases and
 comments, GeoIP database and ignored networks, recovery policy and history,
 desired server state, monitoring policy, metrics history, latest lifecycle
 result, server-event history, release and Steam check state, automatic-update
-settings, and boot modes are preserved.
+settings, Server Fleet role, identities, pairings, aliases and event-sync
+policies, and boot modes are preserved.
 
 The same installer can be started from the management-release banner. The
 manual archive procedure remains available when the web manager is unavailable

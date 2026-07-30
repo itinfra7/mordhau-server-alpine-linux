@@ -58,6 +58,9 @@ const app = {
   steamUpdateLoading: false,
   steamUpdateApplying: false,
   automaticUpdates: null,
+  fleet: null,
+  activeNodeID: "",
+  fleetLoading: false,
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -102,6 +105,23 @@ function validModRefreshMinutes(value) {
     : null;
 }
 
+function fleetLocalAPIPath(path) {
+  return path === "/api/me" ||
+    path === "/api/fleet" ||
+    path.startsWith("/api/fleet/") ||
+    path.startsWith("/api/fleet?");
+}
+
+function nodeAPIPath(path) {
+  if (!path.startsWith("/api/") ||
+      app.fleet?.role !== "controller" ||
+      !app.activeNodeID ||
+      fleetLocalAPIPath(path)) {
+    return path;
+  }
+  return `/api/nodes/${encodeURIComponent(app.activeNodeID)}/${path.slice(5)}`;
+}
+
 async function api(path, options = {}) {
   const settings = { ...options, headers: { ...(options.headers || {}) } };
   if (settings.body && typeof settings.body !== "string") {
@@ -111,7 +131,7 @@ async function api(path, options = {}) {
   if ((settings.method || "GET") !== "GET") {
     settings.headers["X-CSRF-Token"] = app.csrf;
   }
-  const response = await fetch(path, settings);
+  const response = await fetch(nodeAPIPath(path), settings);
   if (response.status === 401) {
     location.href = "/login";
     throw new Error("Session expired");
@@ -1017,7 +1037,9 @@ async function exportMonitoringLogs() {
   button.disabled = true;
   try {
     const response = await fetch(
-      `/api/monitoring/logs/export?${logSearchParameters(10000).toString()}`,
+      nodeAPIPath(
+        `/api/monitoring/logs/export?${logSearchParameters(10000).toString()}`,
+      ),
     );
     if (!response.ok) {
       let message = `${response.status} ${response.statusText}`;
@@ -3752,7 +3774,7 @@ function uploadCustomPak(file) {
   const xhr = new XMLHttpRequest();
   app.customPakUploadXHR = xhr;
   setCustomPakUploading(true, file.name);
-  xhr.open("POST", "/api/custompaks/upload");
+  xhr.open("POST", nodeAPIPath("/api/custompaks/upload"));
   xhr.withCredentials = true;
   xhr.setRequestHeader("X-CSRF-Token", app.csrf);
   xhr.upload.addEventListener("progress", (event) => {
@@ -3887,7 +3909,7 @@ function renderAccounts(accounts) {
           body: { old_username: account.username, username: username.value, password: password.value },
         });
         toast("Account updated. Its sessions were signed out.");
-        if (account.username === app.username) {
+        if (activeFleetNodeIsLocal() && account.username === app.username) {
           location.href = "/login";
           return;
         }
@@ -3901,7 +3923,7 @@ function renderAccounts(accounts) {
       try {
         await api("/api/accounts/delete", { method: "POST", body: { username: account.username } });
         toast("Account deleted.");
-        if (account.username === app.username) {
+        if (activeFleetNodeIsLocal() && account.username === app.username) {
           location.href = "/login";
           return;
         }
@@ -3957,6 +3979,443 @@ async function setServiceMode(service, value) {
   } catch (error) {
     toast(error.message, true);
     loadServices();
+  }
+}
+
+function fleetRoleLabel(role) {
+  if (role === "controller") return "Fleet Controller";
+  if (role === "managed") return "Managed Server";
+  return "Standalone";
+}
+
+function fleetNodes() {
+  return Array.isArray(app.fleet?.nodes) ? app.fleet.nodes : [];
+}
+
+function fleetNode(nodeID) {
+  return fleetNodes().find((node) => node.node_id === nodeID) || null;
+}
+
+function activeFleetNodeIsLocal() {
+  if (app.fleet?.role !== "controller") return true;
+  return fleetNode(app.activeNodeID)?.local === true;
+}
+
+function resolveFleetTarget() {
+  const nodes = fleetNodes();
+  const local = nodes.find((node) => node.local) || null;
+  if (app.fleet?.role !== "controller") {
+    app.activeNodeID = local?.node_id || "";
+    const url = new URL(location.href);
+    if (url.searchParams.has("node")) {
+      url.searchParams.delete("node");
+      history.replaceState(null, "", url);
+    }
+    return;
+  }
+  const requested = new URLSearchParams(location.search).get("node") || "";
+  const selected = nodes.some((node) => node.node_id === requested)
+    ? requested
+    : local?.node_id || nodes[0]?.node_id || "";
+  app.activeNodeID = selected;
+  if (selected !== requested && selected) {
+    const url = new URL(location.href);
+    url.searchParams.set("node", selected);
+    history.replaceState(null, "", url);
+  }
+}
+
+function fleetNodeStatusText(node) {
+  if (node.local) {
+    const state = node.status?.server_running ? "game online" : "game stopped";
+    return `Local · ${state}`;
+  }
+  if (!node.status?.connected) {
+    const lastSeen = node.status?.last_seen
+      ? ` · last seen ${new Date(node.status.last_seen).toLocaleString()}`
+      : "";
+    return node.status?.last_error
+      ? `Offline · ${node.status.last_error}${lastSeen}`
+      : `Offline${lastSeen}`;
+  }
+  const state = node.status.server_running ? "game online" : "game stopped";
+  const players = Number(node.status.player_count) || 0;
+  return `Connected · ${state} · ${players} player${players === 1 ? "" : "s"}`;
+}
+
+function renderFleetServerSelector() {
+  const picker = $("#fleet-server-picker");
+  const select = $("#fleet-server-select");
+  const nodes = fleetNodes();
+  const visible = app.fleet?.role === "controller" && nodes.length > 0;
+  picker.classList.toggle("hidden", !visible);
+  if (!visible) return;
+  select.replaceChildren();
+  for (const node of nodes) {
+    const option = document.createElement("option");
+    option.value = node.node_id;
+    const state = node.local
+      ? "Controller"
+      : node.status?.connected ? "Connected" : "Offline";
+    option.textContent = `${node.alias} · ${state}`;
+    select.append(option);
+  }
+  if (nodes.some((node) => node.node_id === app.activeNodeID)) {
+    select.value = app.activeNodeID;
+  }
+}
+
+function renderFleetNodeList() {
+  const list = $("#fleet-node-list");
+  list.replaceChildren();
+  const nodes = fleetNodes().filter((node) => !node.local);
+  if (!nodes.length) {
+    const empty = document.createElement("p");
+    empty.className = "hint";
+    empty.textContent = "No Managed Servers are registered.";
+    list.append(empty);
+    return;
+  }
+  for (const node of nodes) {
+    const row = document.createElement("form");
+    row.className = "fleet-node-row";
+    const heading = document.createElement("div");
+    heading.className = "fleet-node-heading";
+    const identity = document.createElement("div");
+    const title = document.createElement("strong");
+    title.textContent = node.alias;
+    const nodeID = document.createElement("code");
+    nodeID.textContent = node.node_id;
+    identity.append(title, nodeID);
+    const status = document.createElement("span");
+    status.className = `connection-pill${node.status?.connected ? " connected" : ""}`;
+    status.textContent = fleetNodeStatusText(node);
+    heading.append(identity, status);
+
+    const fields = document.createElement("div");
+    fields.className = "fleet-node-edit-fields";
+    const aliasLabel = document.createElement("label");
+    const aliasCaption = document.createElement("span");
+    aliasCaption.textContent = "Display name";
+    const alias = document.createElement("input");
+    alias.value = node.alias;
+    alias.maxLength = 32;
+    alias.required = true;
+    alias.autocomplete = "off";
+    aliasLabel.append(aliasCaption, alias);
+    const addressLabel = document.createElement("label");
+    const addressCaption = document.createElement("span");
+    addressCaption.textContent = "Managed IP and port";
+    const address = document.createElement("input");
+    address.value = node.address || "";
+    address.required = true;
+    address.autocomplete = "off";
+    address.autocapitalize = "none";
+    address.spellcheck = false;
+    addressLabel.append(addressCaption, address);
+    fields.append(aliasLabel, addressLabel);
+
+    const actions = document.createElement("div");
+    actions.className = "control-row";
+    const save = makeButton("Save", "secondary compact", () => {});
+    save.type = "submit";
+    const remove = makeButton("Remove", "danger compact", async () => {
+      if (!confirm(`Remove ${node.alias} from this Fleet Controller?`)) return;
+      try {
+        app.fleet = await api("/api/fleet/nodes", {
+          method: "DELETE",
+          body: { node_id: node.node_id },
+        });
+        if (node.node_id === app.activeNodeID) {
+          const local = fleetNodes().find((entry) => entry.local);
+          const url = new URL(location.href);
+          if (local?.node_id) url.searchParams.set("node", local.node_id);
+          else url.searchParams.delete("node");
+          location.assign(url.toString());
+          return;
+        }
+        renderFleet({ settings: true });
+        toast(`${node.alias} removed from the fleet.`);
+      } catch (error) {
+        toast(error.message, true);
+      }
+    });
+    remove.type = "button";
+    actions.append(save, remove);
+    row.append(heading, fields, actions);
+    row.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      save.disabled = true;
+      try {
+        app.fleet = await api("/api/fleet/nodes", {
+          method: "PUT",
+          body: {
+            node_id: node.node_id,
+            alias: alias.value,
+            address: address.value,
+          },
+        });
+        renderFleet({ settings: true });
+        toast("Managed Server details saved.");
+      } catch (error) {
+        toast(error.message, true);
+      } finally {
+        save.disabled = false;
+      }
+    });
+    list.append(row);
+  }
+}
+
+const fleetSyncFields = [
+  ["all_chat", "All Chat"],
+  ["team_chat", "Team Chat"],
+  ["web_say", "Web SAY"],
+  ["rcon_say", "RCON SAY"],
+  ["player_lifecycle", "Login / Logout"],
+];
+
+function renderFleetSyncList() {
+  const list = $("#fleet-sync-list");
+  list.replaceChildren();
+  for (const node of fleetNodes()) {
+    const card = document.createElement("article");
+    card.className = "fleet-sync-node";
+    const heading = document.createElement("div");
+    heading.className = "fleet-sync-heading";
+    const name = document.createElement("div");
+    const title = document.createElement("strong");
+    title.textContent = node.alias;
+    const type = document.createElement("small");
+    type.textContent = node.local
+      ? fleetRoleLabel(app.fleet.role)
+      : fleetNodeStatusText(node);
+    name.append(title, type);
+    const badge = document.createElement("span");
+    const enabledCount = fleetSyncFields.reduce(
+      (count, [key]) => count + (node.sync?.[key] === true ? 1 : 0),
+      0,
+    );
+    badge.className = `stage-pill${enabledCount ? " staged" : ""}`;
+    badge.textContent = `${enabledCount} / ${fleetSyncFields.length} enabled`;
+    heading.append(name, badge);
+
+    const controls = document.createElement("div");
+    controls.className = "fleet-sync-options";
+    for (const [key, label] of fleetSyncFields) {
+      const field = document.createElement("label");
+      const input = document.createElement("input");
+      input.type = "checkbox";
+      input.dataset.syncField = key;
+      input.checked = node.sync?.[key] === true;
+      const caption = document.createElement("span");
+      caption.textContent = label;
+      field.append(input, caption);
+      controls.append(field);
+      input.addEventListener("change", async () => {
+        const sync = {};
+        for (const [fieldName] of fleetSyncFields) {
+          sync[fieldName] = controls.querySelector(
+            `[data-sync-field="${fieldName}"]`,
+          ).checked;
+        }
+        controls.querySelectorAll("input").forEach((item) => {
+          item.disabled = true;
+        });
+        try {
+          app.fleet = await api("/api/fleet/sync", {
+            method: "POST",
+            body: { node_id: node.node_id, sync },
+          });
+          renderFleet({ settings: true });
+          toast(`${node.alias} event sync policy saved.`);
+        } catch (error) {
+          renderFleetSyncList();
+          toast(error.message, true);
+        }
+      });
+    }
+    card.append(heading, controls);
+    list.append(card);
+  }
+}
+
+function renderFleet({ settings = false } = {}) {
+  if (!app.fleet) return;
+  renderFleetServerSelector();
+  if (!settings) return;
+
+  const role = app.fleet.role || "standalone";
+  const roleStatus = $("#fleet-role-status");
+  roleStatus.textContent = fleetRoleLabel(role);
+  roleStatus.className = `connection-pill${role === "standalone" ? "" : " connected"}`;
+  $("#fleet-role").value = role;
+  $("#fleet-alias").value = app.fleet.alias || "";
+  $("#fleet-listen-address").value =
+    app.fleet.listen_address || "0.0.0.0:8091";
+  $("#fleet-node-id").textContent = app.fleet.identity_ready
+    ? `Node ID: ${app.fleet.node_id}`
+    : "No identity generated.";
+  $("#fleet-connection-key").value = app.fleet.connection_key || "";
+  $("#fleet-identity-copy").disabled = !app.fleet.connection_key;
+  const generate = $("#fleet-identity-generate");
+  generate.disabled = app.fleet.identity_ready === true;
+  generate.textContent = app.fleet.identity_ready
+    ? "Identity ready"
+    : "Generate identity";
+
+  const managed = role === "managed";
+  const controller = role === "controller";
+  $("#fleet-managed-controller-card").classList.toggle("hidden", !managed);
+  $("#fleet-controller-nodes-card").classList.toggle("hidden", !controller);
+  $("#fleet-sync-card").classList.toggle(
+    "hidden",
+    role === "standalone" || !app.fleet.identity_ready,
+  );
+  $("#fleet-team-chat-notice").textContent =
+    app.fleet.team_chat_notice || "";
+
+  if (managed) {
+    const trusted = app.fleet.controller;
+    $("#fleet-controller-address").value = trusted?.address || "";
+    $("#fleet-controller-key").value = "";
+    $("#fleet-controller-key").required = !trusted;
+    $("#fleet-controller-key").placeholder = trusted
+      ? "Leave blank to keep the current Controller key."
+      : "Paste the Controller connection key.";
+    $("#fleet-controller-remove").classList.toggle("hidden", !trusted);
+    $("#fleet-controller-status").textContent = trusted
+      ? `Trusted Controller ${trusted.node_id} at ${trusted.address}.`
+      : "No Controller is trusted. The fleet listener remains closed.";
+  }
+  if (controller) renderFleetNodeList();
+  if (role !== "standalone") renderFleetSyncList();
+}
+
+async function loadFleet({ full = true, silent = false } = {}) {
+  if (app.fleetLoading) return;
+  app.fleetLoading = true;
+  try {
+    const previousNodeID = app.activeNodeID;
+    app.fleet = await api("/api/fleet");
+    resolveFleetTarget();
+    if (previousNodeID && previousNodeID !== app.activeNodeID) {
+      location.assign(location.href);
+      return;
+    }
+    renderFleet({ settings: full });
+  } catch (error) {
+    if (!silent) toast(error.message, true);
+  } finally {
+    app.fleetLoading = false;
+  }
+}
+
+async function saveFleetSettings(event) {
+  event.preventDefault();
+  const role = $("#fleet-role").value;
+  const roleChanged = app.fleet?.role !== role;
+  if (roleChanged &&
+      !confirm(
+        `Change this server from ${fleetRoleLabel(app.fleet?.role)} to ` +
+        `${fleetRoleLabel(role)}? Active fleet connections will be reconfigured.`,
+      )) {
+    $("#fleet-role").value = app.fleet?.role || "standalone";
+    return;
+  }
+  try {
+    app.fleet = await api("/api/fleet/settings", {
+      method: "POST",
+      body: {
+        role,
+        alias: $("#fleet-alias").value,
+        listen_address: $("#fleet-listen-address").value,
+      },
+    });
+    if (roleChanged) {
+      const url = new URL(location.href);
+      url.searchParams.delete("node");
+      location.assign(url.toString());
+      return;
+    }
+    resolveFleetTarget();
+    renderFleet({ settings: true });
+    toast("Server Fleet settings saved.");
+  } catch (error) {
+    renderFleet({ settings: true });
+    toast(error.message, true);
+  }
+}
+
+async function generateFleetIdentity() {
+  try {
+    app.fleet = await api("/api/fleet/identity", { method: "POST" });
+    resolveFleetTarget();
+    renderFleet({ settings: true });
+    toast("Fleet identity generated.");
+  } catch (error) {
+    toast(error.message, true);
+  }
+}
+
+async function copyFleetConnectionKey() {
+  const value = app.fleet?.connection_key || "";
+  if (!value) return;
+  try {
+    await navigator.clipboard.writeText(value);
+    toast("Connection key copied.");
+  } catch (_) {
+    const input = $("#fleet-connection-key");
+    input.focus();
+    input.select();
+    toast("Connection key selected; copy it from the field.");
+  }
+}
+
+async function saveFleetController(event) {
+  event.preventDefault();
+  try {
+    app.fleet = await api("/api/fleet/controller", {
+      method: "POST",
+      body: {
+        address: $("#fleet-controller-address").value,
+        connection_key: $("#fleet-controller-key").value,
+      },
+    });
+    renderFleet({ settings: true });
+    toast("Trusted Controller saved.");
+  } catch (error) {
+    toast(error.message, true);
+  }
+}
+
+async function removeFleetController() {
+  if (!confirm("Remove the trusted Controller and close the fleet listener?")) return;
+  try {
+    app.fleet = await api("/api/fleet/controller", { method: "DELETE" });
+    renderFleet({ settings: true });
+    toast("Trusted Controller removed.");
+  } catch (error) {
+    toast(error.message, true);
+  }
+}
+
+async function addFleetNode(event) {
+  event.preventDefault();
+  try {
+    app.fleet = await api("/api/fleet/nodes", {
+      method: "POST",
+      body: {
+        alias: $("#fleet-node-alias").value,
+        address: $("#fleet-node-address").value,
+        connection_key: $("#fleet-node-key").value,
+      },
+    });
+    event.target.reset();
+    renderFleet({ settings: true });
+    toast("Managed Server added with every sync category OFF.");
+  } catch (error) {
+    toast(error.message, true);
   }
 }
 
@@ -4031,6 +4490,13 @@ function renderAccessRules(rules) {
 }
 
 function bindEvents() {
+  $("#fleet-server-select").addEventListener("change", (event) => {
+    if (!fleetNode(event.target.value) ||
+        event.target.value === app.activeNodeID) return;
+    const url = new URL(location.href);
+    url.searchParams.set("node", event.target.value);
+    location.assign(url.toString());
+  });
   $("#manager-update-check").addEventListener("click", checkManagerUpdate);
   $("#manager-update-apply").addEventListener("click", applyManagerUpdate);
   $("#steam-update-check").addEventListener("click", checkSteamUpdate);
@@ -4064,7 +4530,18 @@ function bindEvents() {
     if (tab.dataset.panel === "custompaks") {
       loadCustomPaks({ silent: true });
     }
+    if (tab.dataset.panel === "fleet") {
+      loadFleet({ full: true, silent: true });
+    }
   }));
+  $("#fleet-settings-form").addEventListener("submit", saveFleetSettings);
+  $("#fleet-identity-generate").addEventListener("click", generateFleetIdentity);
+  $("#fleet-identity-copy").addEventListener("click", copyFleetConnectionKey);
+  $("#fleet-controller-form").addEventListener("submit", saveFleetController);
+  $("#fleet-controller-remove").addEventListener("click", removeFleetController);
+  $("#fleet-node-add-form").addEventListener("submit", addFleetNode);
+  $("#fleet-refresh").addEventListener("click", () =>
+    loadFleet({ full: true }));
   $("#players-metric").addEventListener("click", openConnectedPlayers);
   $("#players-metric").addEventListener("keydown", (event) => {
     if (event.key === "Enter" || event.key === " ") {
@@ -4483,6 +4960,9 @@ async function initialize() {
     app.csrf = me.csrf;
     app.username = me.username;
     $("#current-user").textContent = `${me.username} · ${me.current_ip}`;
+    app.fleet = await api("/api/fleet");
+    resolveFleetTarget();
+    renderFleet({ settings: true });
     const [snapshot, eventHistory] = await Promise.all([
       api("/api/snapshot"),
       api("/api/server/events/history"),
@@ -4502,7 +4982,7 @@ async function initialize() {
       loadAutomaticUpdates({ silent: true }),
     ]);
     scheduleManagerUpdatePoll();
-    const stream = new EventSource("/api/events");
+    const stream = new EventSource(nodeAPIPath("/api/events"));
     stream.addEventListener("snapshot", (event) => {
       try { renderSnapshot(JSON.parse(event.data)); } catch (_) {}
     });
@@ -4516,6 +4996,7 @@ async function initialize() {
     setInterval(() => {
       if (playersPanelActive()) loadPlayers({ silent: true });
     }, 30000);
+    setInterval(() => loadFleet({ full: false, silent: true }), 10000);
   } catch (error) {
     toast(error.message, true);
   }

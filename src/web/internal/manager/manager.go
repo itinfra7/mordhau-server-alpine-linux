@@ -176,6 +176,30 @@ type Manager struct {
 	automaticUpdateNow         func() time.Time
 	automaticUpdateMessageSend func(string) error
 	automaticUpdateProcess     func() (int, bool)
+
+	fleetMu               sync.RWMutex
+	fleetMutationMu       sync.Mutex
+	fleetSettings         fleetSettingsFile
+	fleetStatuses         map[string]FleetNodeStatus
+	fleetSettingsFile     string
+	fleetIdentityKeyFile  string
+	fleetIdentityCertFile string
+	fleetIdentityMu       sync.Mutex
+	fleetIdentityCache    *fleetIdentity
+	fleetWake             chan struct{}
+	fleetNow              func() time.Time
+
+	fleetEventMu          sync.Mutex
+	fleetEventSequence    uint64
+	fleetSubscriberID     uint64
+	fleetSubscribers      map[uint64]chan FleetEvent
+	fleetRecentDeliveries map[string]time.Time
+	fleetBootID           string
+	fleetRouteQueue       chan FleetEvent
+	fleetDeliverQueues    []chan fleetDelivery
+	fleetMessageSend      func(string) error
+	fleetClientMu         sync.Mutex
+	fleetClients          map[string]fleetCachedHTTPClient
 }
 
 type loginAttempt struct {
@@ -263,6 +287,17 @@ func New(trustedProxies ...netip.Prefix) (*Manager, error) {
 		automaticUpdateStateFile: automaticUpdateStatePath,
 		automaticUpdateWake:      make(chan struct{}, 1),
 		automaticUpdateNow:       time.Now,
+		fleetStatuses:            make(map[string]FleetNodeStatus),
+		fleetSettingsFile:        fleetSettingsPath,
+		fleetIdentityKeyFile:     fleetIdentityKeyPath,
+		fleetIdentityCertFile:    fleetIdentityCertPath,
+		fleetWake:                make(chan struct{}, 1),
+		fleetNow:                 time.Now,
+		fleetSubscribers:         make(map[uint64]chan FleetEvent),
+		fleetRecentDeliveries:    make(map[string]time.Time),
+		fleetRouteQueue:          make(chan FleetEvent, 256),
+		fleetDeliverQueues:       newFleetDeliveryQueues(),
+		fleetClients:             make(map[string]fleetCachedHTTPClient),
 	}
 	m.managerUpdateWorkerStart = m.startManagerUpdateWorker
 	m.steamUpdateRemoteBuild = m.querySteamRemoteBuild
@@ -328,6 +363,19 @@ func New(trustedProxies ...netip.Prefix) (*Manager, error) {
 	if err := m.loadOrCreateAutomaticUpdateState(); err != nil {
 		return nil, err
 	}
+	if err := m.loadOrCreateFleetSettings(); err != nil {
+		return nil, err
+	}
+	if m.currentFleetSettings().Role != FleetRoleStandalone {
+		if _, err := m.ensureFleetIdentity(); err != nil {
+			return nil, fmt.Errorf("initialize fleet identity: %w", err)
+		}
+	}
+	bootID, err := randomToken(12)
+	if err != nil {
+		return nil, fmt.Errorf("generate fleet boot ID: %w", err)
+	}
+	m.fleetBootID = bootID
 	return m, nil
 }
 
@@ -347,6 +395,11 @@ func (m *Manager) StartBackground(ctx context.Context) {
 	go m.managerUpdateCheckLoop(ctx)
 	go m.steamUpdateCheckLoop(ctx)
 	go m.automaticUpdateLoop(ctx)
+	go m.fleetSupervisorLoop(ctx)
+	go m.fleetBrokerLoop(ctx)
+	for _, deliveries := range m.fleetDeliverQueues {
+		go m.fleetDeliveryLoop(ctx, deliveries)
+	}
 	go func() {
 		<-ctx.Done()
 		m.auditActorEvent("system", "local", "web_manager_stopping", nil)

@@ -26,78 +26,16 @@ func (m *Manager) Handler() http.Handler {
 	mux.HandleFunc("/login", m.loginHandler)
 	mux.HandleFunc("/logout", m.withSession(m.logoutHandler))
 	mux.HandleFunc("/static/", m.staticHandler)
-	mux.HandleFunc("/api/me", m.withSession(m.meHandler))
-	mux.HandleFunc("/api/snapshot", m.withSession(m.snapshotHandler))
-	mux.HandleFunc("/api/events", m.withSession(m.eventsHandler))
-	mux.HandleFunc("/api/runtime/status", m.withSession(m.runtimeStatusHandler))
-	mux.HandleFunc("/api/runtime/target", m.withSession(m.runtimeTargetHandler))
-	mux.HandleFunc("/api/runtime/property", m.withSession(m.runtimePropertyHandler))
-	mux.HandleFunc("/api/players", m.withSession(m.playersHandler))
-	mux.HandleFunc("/api/players/detail", m.withSession(m.playerDetailHandler))
-	mux.HandleFunc("/api/players/restriction", m.withSession(m.playerRestrictionHandler))
-	mux.HandleFunc("/api/players/action", m.withSession(m.playerActionHandler))
-	mux.HandleFunc("/api/players/comments", m.withSession(m.playerCommentHandler))
-	mux.HandleFunc("/api/server/action", m.withSession(m.serverActionHandler))
-	mux.HandleFunc("/api/server/update-status", m.withSession(m.steamUpdateStatusHandler))
-	mux.HandleFunc("/api/server/update-check", m.withSession(m.steamUpdateCheckHandler))
-	mux.HandleFunc(
-		"/api/updates/automatic",
-		m.withSession(m.automaticUpdateSettingsHandler),
-	)
-	mux.HandleFunc("/api/recovery/settings", m.withSession(m.recoverySettingsHandler))
-	mux.HandleFunc("/api/recovery/retry", m.withSession(m.recoveryRetryHandler))
-	mux.HandleFunc("/api/monitoring", m.withSession(m.monitoringHandler))
-	mux.HandleFunc("/api/monitoring/settings", m.withSession(m.monitoringSettingsHandler))
-	mux.HandleFunc("/api/monitoring/webhook/test", m.withSession(m.monitoringWebhookTestHandler))
-	mux.HandleFunc("/api/monitoring/metrics", m.withSession(m.monitoringMetricsHandler))
-	mux.HandleFunc("/api/monitoring/logs", m.withSession(m.monitoringLogsHandler))
-	mux.HandleFunc("/api/monitoring/logs/export", m.withSession(m.monitoringLogsExportHandler))
-	mux.HandleFunc("/api/maps", m.withSession(m.mapCatalogHandler))
-	mux.HandleFunc("/api/maps/change", m.withSession(m.mapChangeHandler))
-	mux.HandleFunc("/api/maprotation", m.withSession(m.mapRotationHandler))
-	mux.HandleFunc("/api/maprotation/save", m.withSession(m.mapRotationSaveHandler))
-	mux.HandleFunc("/api/server/events/history", m.withSession(m.rconHistoryHandler))
-	mux.HandleFunc("/api/rcon/history", m.withSession(m.rconHistoryHandler))
-	mux.HandleFunc("/api/rcon/message", m.withSession(m.rconMessageHandler))
-	mux.HandleFunc("/api/rcon/command", m.withSession(m.rconCommandHandler))
-	mux.HandleFunc("/api/language", m.withSession(m.languageHandler))
-	mux.HandleFunc("/api/config", m.withSession(m.configHandler))
-	mux.HandleFunc("/api/config/mutate", m.withSession(m.configMutationHandler))
-	mux.HandleFunc("/api/config/discard", m.withSession(m.configDiscardHandler))
-	mux.HandleFunc("/api/mods", m.withSession(m.modsHandler))
-	mux.HandleFunc("/api/mods/refresh", m.withSession(m.modRefreshHandler))
-	mux.HandleFunc("/api/mods/refresh/settings", m.withSession(m.modRefreshSettingsHandler))
-	mux.HandleFunc("/api/mods/plan", m.withSession(m.modPlanHandler))
-	mux.HandleFunc("/api/mods/add", m.withSession(m.modAddHandler))
-	mux.HandleFunc("/api/mods/enabled", m.withSession(m.modEnabledHandler))
-	mux.HandleFunc("/api/mods/remove/plan", m.withSession(m.modRemovePlanHandler))
-	mux.HandleFunc("/api/mods/remove", m.withSession(m.modRemoveHandler))
-	mux.HandleFunc("/api/modio/settings", m.withSession(m.modIOSettingsHandler))
-	mux.HandleFunc("/api/modio/settings/clear", m.withSession(m.modIOSettingsClearHandler))
-	mux.HandleFunc("/api/custompaks", m.withSession(m.customPaksHandler))
-	mux.HandleFunc("/api/custompaks/upload", m.withSession(m.customPakUploadHandler))
-	mux.HandleFunc("/api/custompaks/enabled", m.withSession(m.customPakEnabledHandler))
-	mux.HandleFunc("/api/custompaks/delete", m.withSession(m.customPakDeleteHandler))
-	mux.HandleFunc(
-		"/api/custompaks/delete/cancel",
-		m.withSession(m.customPakDeleteCancelHandler),
-	)
-	mux.HandleFunc("/api/accounts", m.withSession(m.accountsHandler))
-	mux.HandleFunc("/api/accounts/create", m.withSession(m.accountCreateHandler))
-	mux.HandleFunc("/api/accounts/edit", m.withSession(m.accountEditHandler))
-	mux.HandleFunc("/api/accounts/delete", m.withSession(m.accountDeleteHandler))
-	mux.HandleFunc("/api/access", m.withSession(m.accessHandler))
-	mux.HandleFunc("/api/access/base", m.withSession(m.accessBaseHandler))
-	mux.HandleFunc("/api/access/rule", m.withSession(m.accessRuleHandler))
-	mux.HandleFunc("/api/access/rule/delete", m.withSession(m.accessRuleDeleteHandler))
-	mux.HandleFunc("/api/services", m.withSession(m.servicesHandler))
-	mux.HandleFunc("/api/services/mode", m.withSession(m.serviceModeHandler))
-	mux.HandleFunc("/api/services/web-port", m.withSession(m.webPortHandler))
-	mux.HandleFunc("/api/services/server-ports", m.withSession(m.serverPortsHandler))
-	mux.HandleFunc("/api/services/start-map", m.withSession(m.startMapHandler))
-	mux.HandleFunc("/api/manager/update", m.withSession(m.managerUpdateStatusHandler))
-	mux.HandleFunc("/api/manager/update/check", m.withSession(m.managerUpdateCheckHandler))
-	mux.HandleFunc("/api/manager/update/apply", m.withSession(m.managerUpdateApplyHandler))
+	for _, route := range m.managerAPIRoutes() {
+		mux.HandleFunc(route.Path, m.withSession(route.Handler))
+	}
+	mux.HandleFunc("/api/nodes/", m.withSession(m.fleetNodeGatewayHandler))
+	mux.HandleFunc("/api/fleet", m.withSession(m.fleetViewHandler))
+	mux.HandleFunc("/api/fleet/identity", m.withSession(m.fleetIdentityHandler))
+	mux.HandleFunc("/api/fleet/settings", m.withSession(m.fleetSettingsHandler))
+	mux.HandleFunc("/api/fleet/controller", m.withSession(m.fleetControllerHandler))
+	mux.HandleFunc("/api/fleet/nodes", m.withSession(m.fleetNodesHandler))
+	mux.HandleFunc("/api/fleet/sync", m.withSession(m.fleetSyncHandler))
 	return m.securityHeaders(
 		m.requestAddressMiddleware(
 			m.auditMiddleware(
@@ -1450,6 +1388,11 @@ func (m *Manager) rconMessageHandler(
 	}
 
 	m.addRCONEvent("outbound", session.Username+": "+body.Message)
+	m.publishFleetEvent(
+		FleetEventWebSAY,
+		"",
+		body.Message,
+	)
 	m.auditRequestEvent(request, session.Username, "unicode_server_message_sent", map[string]string{
 		"characters": strconv.Itoa(utf8.RuneCountInString(body.Message)),
 		"utf8_bytes": strconv.Itoa(len(body.Message)),
@@ -1547,6 +1490,13 @@ func (m *Manager) rconCommandHandler(
 
 	details["response_lines"] = strconv.Itoa(len(result.Lines))
 	details["response_truncated"] = strconv.FormatBool(result.Truncated)
+	if message, ok := rconSAYMessage(command); ok {
+		m.publishFleetEvent(
+			FleetEventRCONSAY,
+			"",
+			message,
+		)
+	}
 	m.auditRequestEvent(request, session.Username, "rcon_command_executed", details)
 	writeJSON(response, http.StatusOK, map[string]any{
 		"status":             "executed",

@@ -45,6 +45,8 @@ type gameLogEvent struct {
 	PlayerNameAuthenticated bool
 	PlayerIP                string
 	PlayerJoinedAt          time.Time
+	ChatChannel             string
+	ChatMessage             string
 }
 
 type gameLogPlayer struct {
@@ -422,27 +424,30 @@ func parseMordhauGameConnectionClose(body string) (string, string, bool) {
 	return playerID, address, true
 }
 
-func parseMordhauChatPayload(body string) (
-	chat string,
-	playerID string,
-	name string,
-	ok bool,
-) {
+type mordhauChatPayload struct {
+	Text     string
+	PlayerID string
+	Name     string
+	Channel  string
+	Message  string
+}
+
+func parseMordhauChatDetails(body string) (mordhauChatPayload, bool) {
 	const marker = "LogGameMode: Display: "
 	markerIndex := strings.Index(body, marker)
 	if markerIndex < 0 {
-		return "", "", "", false
+		return mordhauChatPayload{}, false
 	}
 	payload := strings.TrimSpace(body[markerIndex+len(marker):])
 	channelEnd := strings.Index(payload, ") ")
 	if !strings.HasPrefix(payload, "(") || channelEnd < 2 {
-		return "", "", "", false
+		return mordhauChatPayload{}, false
 	}
 	channel := payload[:channelEnd+1]
 	remainder := payload[channelEnd+2:]
 
 	if !strings.HasSuffix(remainder, `"`) {
-		return "", "", "", false
+		return mordhauChatPayload{}, false
 	}
 	var (
 		identitySeparator int
@@ -451,7 +456,7 @@ func parseMordhauChatPayload(body string) (
 	for searchStart := 0; searchStart < len(remainder); {
 		relative := strings.Index(remainder[searchStart:], `: "`)
 		if relative < 0 {
-			return "", "", "", false
+			return mordhauChatPayload{}, false
 		}
 		candidateMessageStart := searchStart + relative
 		identity := remainder[:candidateMessageStart]
@@ -465,20 +470,39 @@ func parseMordhauChatPayload(body string) (
 		searchStart = candidateMessageStart + 1
 	}
 	if messageStart == 0 {
-		return "", "", "", false
+		return mordhauChatPayload{}, false
 	}
-	name = remainder[:identitySeparator]
-	playerID = remainder[identitySeparator+2 : messageStart]
+	name := remainder[:identitySeparator]
+	playerID := remainder[identitySeparator+2 : messageStart]
 	message := strings.TrimSuffix(remainder[messageStart+3:], `"`)
 
-	chat = fmt.Sprintf(
+	chat := fmt.Sprintf(
 		"Chat: %s, %s, %s %s",
 		playerID,
 		name,
 		channel,
 		message,
 	)
-	return strings.ToValidUTF8(chat, "�"), playerID, name, true
+	return mordhauChatPayload{
+		Text:     strings.ToValidUTF8(chat, "�"),
+		PlayerID: playerID,
+		Name:     name,
+		Channel:  strings.ToUpper(strings.Trim(channel, "()")),
+		Message:  strings.ToValidUTF8(message, "�"),
+	}, true
+}
+
+func parseMordhauChatPayload(body string) (
+	chat string,
+	playerID string,
+	name string,
+	ok bool,
+) {
+	details, ok := parseMordhauChatDetails(body)
+	if !ok {
+		return "", "", "", false
+	}
+	return details.Text, details.PlayerID, details.Name, true
 }
 
 func parseMordhauChatLogLine(line string) (string, bool) {
@@ -723,20 +747,22 @@ func (processor *gameLogProcessor) processLine(line string) []gameLogEvent {
 			PlayerJoinedAt:          eventTime,
 		}}
 	}
-	if chat, playerID, name, ok := parseMordhauChatPayload(body); ok {
-		player := processor.players[playerID]
-		player.name = name
-		processor.players[playerID] = player
-		delete(processor.pending, playerID)
+	if chat, ok := parseMordhauChatDetails(body); ok {
+		player := processor.players[chat.PlayerID]
+		player.name = chat.Name
+		processor.players[chat.PlayerID] = player
+		delete(processor.pending, chat.PlayerID)
 		return []gameLogEvent{{
 			Time:           eventTime,
 			Kind:           "chat",
-			Text:           chat,
+			Text:           chat.Text,
 			PlayerAction:   "observe",
-			PlayerID:       playerID,
-			PlayerName:     name,
+			PlayerID:       chat.PlayerID,
+			PlayerName:     chat.Name,
 			PlayerIP:       player.ip,
 			PlayerJoinedAt: player.joinedAt,
+			ChatChannel:    chat.Channel,
+			ChatMessage:    chat.Message,
 		}}
 	}
 	if playerID, address, ok := parseMordhauGameConnectionClose(body); ok {
@@ -794,6 +820,17 @@ func (manager *Manager) setGameContext(mapName, gameMode string) {
 	manager.rconMu.Unlock()
 }
 
+func (manager *Manager) closeLivePlayerSessions(
+	processor *gameLogProcessor,
+	at time.Time,
+) {
+	events := processor.closePlayerSessions(at)
+	for _, event := range events {
+		manager.publishFleetGameLogEvent(event)
+	}
+	manager.recordPlayerGameEvents(events)
+}
+
 func (manager *Manager) gameLogLoop(ctx context.Context) {
 	follower := &gameLogFollower{path: gameLogPath}
 	processor := newGameLogProcessor()
@@ -822,7 +859,7 @@ func (manager *Manager) gameLogLoop(ctx context.Context) {
 		running := serverRunning()
 		if !running {
 			if wasRunning {
-				manager.recordPlayerGameEvents(processor.closePlayerSessions(time.Now()))
+				manager.closeLivePlayerSessions(processor, time.Now())
 				processor.reset()
 			}
 			wasRunning = false
@@ -846,7 +883,7 @@ func (manager *Manager) gameLogLoop(ctx context.Context) {
 			if follower.initialized {
 				lines, replaced, available, err := follower.readNewLines()
 				if replaced {
-					manager.recordPlayerGameEvents(processor.closePlayerSessions(time.Now()))
+					manager.closeLivePlayerSessions(processor, time.Now())
 					processor.reset()
 				}
 				if err != nil {
@@ -866,6 +903,7 @@ func (manager *Manager) gameLogLoop(ctx context.Context) {
 					for _, line := range lines {
 						for _, event := range processor.processLine(line) {
 							manager.addRCONEventAt(event.Time, event.Kind, event.Text)
+							manager.publishFleetGameLogEvent(event)
 							if event.PlayerAction != "" {
 								playerEvents = append(playerEvents, event)
 							}

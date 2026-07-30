@@ -1460,7 +1460,9 @@ func TestGameLogProcessorPreservesUnicodePlayerLifecycle(t *testing.T) {
 		t.Fatalf("login event = %#v", events[0])
 	}
 	if events[1].Kind != "chat" ||
-		events[1].Text != "Chat: "+playerID+", 테스트유저, (ALL) 한국어 — Русский — 简体中文" {
+		events[1].Text != "Chat: "+playerID+", 테스트유저, (ALL) 한국어 — Русский — 简体中文" ||
+		events[1].ChatChannel != "ALL" ||
+		events[1].ChatMessage != "한국어 — Русский — 简体中文" {
 		t.Fatalf("chat event = %#v", events[1])
 	}
 	if events[2].Kind != "login" ||
@@ -2378,11 +2380,22 @@ func TestDashboardThemeAndServerPromptMarkup(t *testing.T) {
 	for _, expected := range []string{
 		`id="theme-toggle"`,
 		`content="width=device-width, initial-scale=1, viewport-fit=cover"`,
-		`src="/static/theme.js?v=2.4.0"`,
-		`href="/static/app.css?v=2.4.0"`,
-		`src="/static/app.js?v=2.4.0"`,
+		`src="/static/theme.js?v=2.5.0"`,
+		`href="/static/app.css?v=2.5.0"`,
+		`src="/static/app.js?v=2.5.0"`,
 		`<body id="page-top">`,
 		`class="brand" href="#page-top"`,
+		`id="fleet-server-picker"`,
+		`data-panel="fleet">Server Fleet</button>`,
+		`id="panel-fleet"`,
+		`id="fleet-settings-form"`,
+		`<option value="standalone">Standalone</option>`,
+		`<option value="controller">Fleet Controller</option>`,
+		`<option value="managed">Managed Server</option>`,
+		`id="fleet-controller-form"`,
+		`id="fleet-node-add-form"`,
+		`id="fleet-sync-list"`,
+		`Default OFF`,
 		`<p class="eyebrow">SERVER EVENTS</p>`,
 		`id="server-event-console"`,
 		`id="server-prompt-form"`,
@@ -2498,10 +2511,10 @@ func TestDashboardThemeAndServerPromptMarkup(t *testing.T) {
 		t.Fatal(err)
 	}
 	loginSource := string(loginData)
-	if !strings.Contains(loginSource, `src="/static/theme.js?v=2.4.0"`) {
+	if !strings.Contains(loginSource, `src="/static/theme.js?v=2.5.0"`) {
 		t.Fatal("login page does not initialize the persisted theme")
 	}
-	if !strings.Contains(loginSource, `href="/static/app.css?v=2.4.0"`) {
+	if !strings.Contains(loginSource, `href="/static/app.css?v=2.5.0"`) {
 		t.Fatal("login page does not use the release stylesheet version")
 	}
 	if !strings.Contains(loginSource, `viewport-fit=cover`) {
@@ -2551,6 +2564,19 @@ func TestDashboardThemeAndServerPromptMarkup(t *testing.T) {
 		`/api/custompaks/delete`,
 		`/api/maps`,
 		`/api/maps/change`,
+		`function nodeAPIPath(path)`,
+		`function renderFleetServerSelector()`,
+		`function renderFleetNodeList()`,
+		`function renderFleetSyncList()`,
+		`function renderFleet({ settings = false } = {})`,
+		`["all_chat", "All Chat"]`,
+		`["team_chat", "Team Chat"]`,
+		`["web_say", "Web SAY"]`,
+		`["rcon_say", "RCON SAY"]`,
+		`["player_lifecycle", "Login / Logout"]`,
+		`/api/fleet/nodes`,
+		`/api/fleet/sync`,
+		`new EventSource(nodeAPIPath("/api/events"))`,
 		`function gameModeDisplayName(className)`,
 		`function openMapChangeDialog()`,
 		`function observedPlayerLevel(value)`,
@@ -2624,7 +2650,9 @@ func TestMobileLayoutHasTouchAndNarrowViewportRules(t *testing.T) {
 		`@media (max-width: 720px)`,
 		`@media (max-width: 480px)`,
 		`@media (max-width: 360px)`,
-		`grid-template-areas: "server user theme logout"`,
+		`grid-template-areas:`,
+		`"fleet fleet fleet fleet"`,
+		`"server user theme logout"`,
 		`min-height: 44px`,
 		`font-size: 16px`,
 		`env(safe-area-inset-bottom)`,
@@ -2648,6 +2676,9 @@ func TestMobileLayoutHasTouchAndNarrowViewportRules(t *testing.T) {
 		`.mod-restart-policy-fields`,
 		`.monitoring-grid`,
 		`.maprotation-row`,
+		`.fleet-server-picker`,
+		`.fleet-settings-form`,
+		`.fleet-sync-options`,
 		`scroll-behavior: smooth`,
 	} {
 		if !strings.Contains(css, expected) {

@@ -4,6 +4,77 @@ All notable changes to this repository are documented in this file.
 
 ## [Unreleased]
 
+## [2.5.0] - 2026-07-30
+
+### Added
+
+- Add `Standalone`, `Fleet Controller`, and `Managed Server` roles with
+  persistent per-installation identities, aliases, pairings, and connectivity
+  state.
+- Add a top-bar, node-ID-scoped server selector on Fleet Controllers. Existing
+  Dashboard, Monitoring, Runtime, Players, Configuration, Mods, CustomPaks,
+  Accounts, Network access, service, and update APIs can be operated against
+  the explicitly selected local or Managed Server.
+- Add Controller-cached Managed Server heartbeats carrying game-process state,
+  connected PlayerController count, management version, and server-collected
+  CPU, memory, swap, and disk metrics.
+- Add independently configurable, default-off per-server routing for All Chat,
+  Team Chat, Web SAY, web RCON SAY, and player login/logout events. Every
+  relayed line uses the Controller-assigned source-server label and the
+  server-only Unicode Bridge.
+
+### Changed
+
+- Parse the MORDHAU chat channel and message as structured fields while
+  retaining the existing UTF-8 Server Events representation.
+- Route still-tracked player logout events when the game process stops or the
+  active log is replaced, and preserve event order per destination server.
+- Register authenticated manager APIs through one explicit route table used
+  by both direct requests and the restricted Fleet Controller gateway.
+- Preserve direct web access on Managed Servers and keep Server Fleet
+  configuration local to the Fleet Controller when another node is selected.
+- Reload the selected target on role changes or removal and retain each
+  browser tab's target in its own URL.
+
+### Security
+
+- Keep Server Fleet in `Standalone` mode with no fleet listener and every sync
+  category disabled on new and upgraded installations until explicitly
+  configured.
+- Require TLS 1.3 and mutually pinned Ed25519 subject-public-key identities for
+  fleet links. Managed Servers also require the direct TCP peer to match the
+  configured Controller source IP; Fleet Controllers validate the Managed
+  Server node ID and reject redirects.
+- Store fleet identities and settings with root-only permissions. Never return
+  private identity material or forward browser cookies, authorization headers,
+  forwarding headers, or public-proxy trust into the fleet channel.
+- Bind an IPv4 Fleet listener only through `tcp4` and an IPv6 listener only
+  through `tcp6`, preventing an IPv4 wildcard from becoming an unintended
+  dual-stack socket.
+- Require the original authenticated browser CSRF token at the Fleet
+  Controller before creating a separate internal state-changing request.
+  Restrict remote routing to the explicit manager API registry and retain the
+  Controller account, canonical browser IP, direct fleet peer, destination
+  node, and request ID in root-only audit records.
+- Recheck destination opt-in before delivering each event, deduplicate event
+  IDs, bound routing and delivery queues, validate UTF-8 fields, and truncate
+  relayed messages to the Unicode Bridge limits. Exclude web credentials,
+  administrator identities, player IPs, and PlayFab IDs from relay events.
+
+### Validation
+
+- Verify connection-key parsing and permissions, mutual identity pinning,
+  TLS-version restriction, IPv4 and IPv6 endpoint validation, expected source
+  IP enforcement, authenticated internal API proxying, forwarding-header
+  removal, and browser CSRF rejection.
+- Verify node-scoped gateway paths, structured chat fields, multilingual source
+  labels, all five rendered event types, forced live-session logout, web RCON
+  SAY parsing, per-destination ordering, and the requirement that both origin
+  and destination enable an event category.
+- Verify frontend syntax, unique element IDs, responsive Fleet controls, the
+  complete Go suite, shell syntax, installer version transitions, and the
+  existing integration-test suite.
+
 ## [2.4.0] - 2026-07-29
 
 ### Added

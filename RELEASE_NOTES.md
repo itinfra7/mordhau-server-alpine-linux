@@ -1,81 +1,75 @@
-This release contains the following changes relative to v2.3.2.
+This release contains the following changes relative to v2.4.0.
 
 ## Changelog
 
 ### Added
 
-- Add hourly server-side checks for stable project GitHub Releases and public
-  MORDHAU Dedicated Server Steam builds, with shared update banners and
-  authenticated manual checks.
-- Add a checksum-verified detached management updater with bounded safe archive
-  extraction, persistent progress, interrupted-state recovery, and service
-  restoration after installer failure.
-- Add server-wide, default-off automatic management and dedicated-server
-  updates with persistent English 10-, 5-, 4-, 3-, 2-, and 1-minute in-game
-  restart notices.
-- Add semantic management-version detection for fresh installs, upgrades,
-  same-version validation, and explicitly authorized `--allow-downgrade`
-  transitions.
+- Add `Standalone`, `Fleet Controller`, and `Managed Server` roles with
+  persistent Ed25519 identities, Controller-assigned aliases, pairings, and
+  connectivity state.
+- Add a node-ID-scoped top-bar server selector. A Fleet Controller can operate
+  the existing management panels against its local server or an explicitly
+  selected Managed Server while direct Managed Server web access remains
+  available.
+- Add ten-second Managed Server heartbeats carrying game-process state,
+  connected-player count, management version, and server-collected resource
+  metrics to the Fleet Controller cache.
+- Add independent, per-server controls for All Chat, Team Chat, Web SAY, web
+  RCON SAY, and player login/logout routing. Every category defaults to OFF,
+  requires both source and destination opt-in, and includes a mandatory
+  Controller-assigned source label.
 
-### Fixed
+### Changed
 
-- Prevent management updates, Steam checks, automatic schedules, and web
-  lifecycle actions from overlapping incompatible operations.
-- Reconcile interrupted update state and avoid repeated external checks or
-  duplicate availability audit records before the persisted hourly interval.
-- Accept newly written, structurally valid public-build metadata despite a
-  nonzero SteamCMD Wine process status, while rejecting incomplete or stale
-  console output.
-- Preserve a complete existing SteamCMD installation during manager upgrades
-  instead of replacing it with an older bootstrap before each self-update.
-- Synchronize the dashboard RCON port with `RconPort` in `Game.ini` when
-  dedicated-server ports are saved and when an existing installation starts
-  the updated web manager.
-- Stage the synchronized INI value while the game server is running and update
-  the active configuration while it is stopped.
-- Stop an OpenRC-managed game server through OpenRC during an in-place upgrade
-  so the previously running server is reliably started after validation.
+- Parse chat channel and message fields from `Mordhau.log` for All Chat and
+  Team Chat routing while retaining the existing UTF-8 Server Events output.
+- Route still-tracked player logout events when the game process stops or the
+  active log is replaced, and preserve event order per destination server.
+- Use one explicit authenticated API registry for direct and remotely selected
+  manager operations.
+- Retain each browser tab's selected node in its URL and reload safely when a
+  role changes or the active Managed Server is removed.
 
 ### Security
 
-- Restrict self-updates to canonical stable project releases, require the
-  expected archive and checksum assets, enforce download and extraction
-  limits, reject unsafe archive entries, and verify `SHA256SUMS` before
-  executing the bundled installer.
-- Require authentication and CSRF validation for update checks, automatic
-  settings, and update requests; serialize detached workers and reject
-  conflicting lifecycle changes while atomically replacing the web binary.
-- Reject implicit management-code downgrades and malformed installed-version
-  state, and atomically record a new version only after validation and
-  requested service starts succeed.
-- Preserve intentionally disabled `RconPort` entries and disabled game-session
-  sections while updating their stored value.
-- Serialize dashboard port changes with configuration and lifecycle operations,
-  and restore the prior server-port state if INI synchronization cannot be
-  persisted.
+- Keep new and upgraded installations in `Standalone` mode with no fleet
+  listener and no event routing until an administrator explicitly enables a
+  fleet role.
+- Require TLS 1.3 with mutually pinned Ed25519 public identities. Managed
+  Servers additionally require the direct TCP peer to equal the configured
+  Controller source IP; Controllers validate the Managed Server node ID and
+  reject redirects.
+- Store identity and fleet state in root-only files. Private keys never leave
+  an installation, and the Controller does not forward browser cookies,
+  authorization headers, forwarding headers, or public-proxy trust.
+- Bind IPv4 and IPv6 Fleet listener addresses to their explicit socket
+  families so an IPv4 wildcard cannot become an unintended dual-stack socket.
+- Require browser authentication and the original CSRF token before any
+  remote state change. Restrict the internal gateway to the explicit manager
+  API registry and audit the Controller account, canonical browser IP, fleet
+  peer, request ID, and destination node.
+- Recheck destination policy at delivery, deduplicate event IDs, bound queues
+  and fields, enforce Unicode Bridge message limits, and omit web credentials,
+  administrator identities, player IPs, and PlayFab IDs from relay events.
 
 ### Validation
 
-- Verify release metadata, response limits, checksums, archive safety,
-  installer-version matching, detached worker locking and result state,
-  interruption recovery, installer failure service restoration, Steam build
-  parsing including nonzero process status, server-wide settings, countdown
-  persistence, and CSRF enforcement.
-- Verify duplicate active values, disabled entries, disabled sections, missing
-  values, CRLF input, unrelated INI content, and invalid port rejection.
-- Verify OpenRC-managed and manually launched game servers use their respective
-  shutdown paths during an in-place upgrade.
-- Verify complete and incomplete SteamCMD bootstrap installations are
-  distinguished before an installer refresh.
-- Verify semantic version validation and ordering, transition classification,
-  downgrade refusal, malformed-state refusal, and atomic mode-`0600` version
-  recording.
-- Verify the complete Go test suite and both upgraded Alpine installations.
+- Verify identity permissions and connection-key parsing, mutual TLS pinning,
+  TLS 1.3 restriction, IPv4/IPv6 endpoint validation, expected Controller
+  source-IP enforcement, canonical browser-IP propagation, forwarding-header
+  removal, and remote browser CSRF rejection.
+- Verify node-scoped API routing, structured All/Team chat parsing,
+  multilingual source labels, all five rendered event types, forced
+  live-session logout, RCON SAY parsing, per-destination ordering, and
+  symmetric source and destination event opt-in.
+- Verify frontend syntax and responsive Fleet controls, the complete Go suite,
+  shell syntax, installer version transitions, and existing integration
+  tests.
 
 ## Documentation
 
-See `README.md` for installation, update, configuration, security, testing,
-and rollback instructions. See `CHANGELOG.md` for the complete version
+See `README.md` for installation, pairing, event routing, security, testing,
+update, and rollback instructions. See `CHANGELOG.md` for the complete version
 history.
 
 ## Integrity
@@ -88,6 +82,6 @@ sha256sum -c SHA256SUMS
 
 Repository-authored source is available under the MIT License.
 
-Previous release: [v2.3.2](https://github.com/itinfra7/mordhau-server-alpine-linux/releases/tag/v2.3.2)
+Previous release: [v2.4.0](https://github.com/itinfra7/mordhau-server-alpine-linux/releases/tag/v2.4.0)
 
-Full comparison: [v2.3.2...v2.4.0](https://github.com/itinfra7/mordhau-server-alpine-linux/compare/v2.3.2...v2.4.0)
+Full comparison: [v2.4.0...v2.5.0](https://github.com/itinfra7/mordhau-server-alpine-linux/compare/v2.4.0...v2.5.0)
