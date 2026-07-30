@@ -145,12 +145,12 @@ history remains in the versioned changelog asset instead of being repeated in
 every Release body.
 
 ```sh
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.6.1/mordhau-server-alpine-linux-v2.6.1.tar.gz
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.6.1/CHANGELOG-v2.6.1.md
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.6.1/SHA256SUMS
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.6.2/mordhau-server-alpine-linux-v2.6.2.tar.gz
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.6.2/CHANGELOG-v2.6.2.md
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.6.2/SHA256SUMS
 sha256sum -c SHA256SUMS
-tar -xzf mordhau-server-alpine-linux-v2.6.1.tar.gz
-cd mordhau-server-alpine-linux-v2.6.1
+tar -xzf mordhau-server-alpine-linux-v2.6.2.tar.gz
+cd mordhau-server-alpine-linux-v2.6.2
 chmod +x src/mordhau-server-alpine-linux.sh
 ./src/mordhau-server-alpine-linux.sh
 ```
@@ -497,6 +497,13 @@ example:
 (Dread Server) <Player> joined the server.
 ```
 
+In Fleet mode, Server Events also prefix every locally collected event with
+the selected server's display name. Relayed events retain their origin label,
+so login, logout, chat, match-state, command, and response lines remain
+attributable when local and cross-server records share one console. A source
+server never receives its own relayed in-game message; its local event record
+provides the corresponding web-visible entry without creating an echo.
+
 MORDHAU does not expose equivalent team membership across independent
 servers. A relayed Team Chat line is therefore labeled `TEAM` but displayed
 server-wide on each destination. External RCON clients' SAY commands are not
@@ -826,6 +833,10 @@ repeatedly transferring the entire on-disk history. The browser retains the
 same 400-event Server Events window. Administrative commands, requesting
 account names, returned response lines, no-output results, failures,
 output-truncation notices, and SAY messages use this same history.
+Fleet responses add source-server labels at read time without rewriting stored
+records. Legacy player-lifecycle text that contains a second server-local
+timestamp is compacted for Fleet display; the event timestamp beside each
+line remains formatted in the viewing browser's locale and time zone.
 
 ## Recovery and Monitoring
 
@@ -905,17 +916,19 @@ It emits authenticated player login and logout, chat, match-state, killfeed,
 scorefeed, and punishment records. Login-request identities are correlated by
 player ID with later authentication and disconnect records, preserving a
 UTF-8 player name even if a secondary identity line is lossy. Source
-timestamps are retained. The follower handles partial writes, truncation, and
+timestamps are retained as the event time and displayed in each browser's
+locale and time zone. New player-lifecycle text does not repeat that timestamp
+inside the message. The follower handles partial writes, truncation, and
 managed log replacement. When the web service starts while the game is
 running, it scans existing records only to reconstruct connected-player state
 and does not replay the historical file into the dashboard.
 
-While no player is connected, the collector retains at most one
-`MatchState: Waiting to start` followed by one `MatchState: Leaving map`.
-After the first `Leaving map`, both idle states are omitted until a player
-authenticates. All match-state events remain visible while at least one player
-is connected. When the final player disconnects, a new empty-server window
-allows one more initial idle reset sequence.
+While no player is connected, `MatchState: Waiting to start` is omitted and
+the collector retains only the first `MatchState: Leaving map`. Further idle
+map-state records are omitted until a player authenticates. All match-state
+events remain visible while at least one player is connected. When the final
+player disconnects, a new empty-server window allows one more visible
+`Leaving map`.
 
 `bLogChat`, `bLogKillfeed`, and `bLogScore` under
 `[/Script/Mordhau.MordhauGameMode]` are initialized to `True` when they are
@@ -1511,7 +1524,8 @@ source-IP enforcement, canonical browser-IP propagation with forwarding-header
 spoof removal, node-scoped API allowlisting, outer-browser CSRF enforcement,
 Unicode source labels, all five rendered event types, All/Team game-log
 mapping, forced live-session logout, RCON SAY parsing, per-destination order,
-and source/destination event opt-in.
+source/destination event opt-in, local Server Events attribution, legacy
+player-lifecycle timestamp compaction, and relayed-source preservation.
 The shell integration tests cover PAK installation, active and staged Game.ini
 registration, existing server-actor preservation, backup creation,
 idempotent reinstallation, verified lossless XZ game-log compression,

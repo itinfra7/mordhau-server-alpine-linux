@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 )
 
 const (
@@ -105,6 +106,56 @@ func retainRCONEvent(events []RCONEvent, event RCONEvent) []RCONEvent {
 	events = append(events, event)
 	if len(events) > rconMemoryMaximum {
 		events = append([]RCONEvent(nil), events[len(events)-rconMemoryRetain:]...)
+	}
+	return events
+}
+
+func compactRCONLoginTimestamp(text string) string {
+	const prefix = "Login: "
+	if !strings.HasPrefix(text, prefix) {
+		return text
+	}
+	body := strings.TrimPrefix(text, prefix)
+	separator := strings.Index(body, ": ")
+	if separator < 0 {
+		return text
+	}
+	if _, err := time.Parse("2006.01.02-15.04.05", body[:separator]); err != nil {
+		return text
+	}
+	return prefix + body[separator+2:]
+}
+
+func (m *Manager) fleetRCONServerLabel() (string, bool) {
+	settings := m.currentFleetSettings()
+	if settings.Role != FleetRoleController &&
+		settings.Role != FleetRoleManaged {
+		return "", false
+	}
+	if _, err := normalizeFleetAlias(settings.Alias); err != nil {
+		return "", false
+	}
+	return fleetServerLabel(settings.Alias), true
+}
+
+func rconEventForFleetView(event RCONEvent, localLabel string) RCONEvent {
+	if event.Kind == "login" {
+		event.Text = compactRCONLoginTimestamp(event.Text)
+	}
+	if localLabel == "" || event.Kind == "fleet" {
+		return event
+	}
+	event.Text = "(" + localLabel + ") " + event.Text
+	return event
+}
+
+func (m *Manager) rconEventsForView(events []RCONEvent) []RCONEvent {
+	localLabel, fleetEnabled := m.fleetRCONServerLabel()
+	if !fleetEnabled {
+		return events
+	}
+	for index := range events {
+		events[index] = rconEventForFleetView(events[index], localLabel)
 	}
 	return events
 }
@@ -216,5 +267,5 @@ func (m *Manager) rconHistory(limit int) []RCONEvent {
 	}
 	events := append([]RCONEvent(nil), m.rconEvents[start:]...)
 	m.rconMu.RUnlock()
-	return events
+	return m.rconEventsForView(events)
 }

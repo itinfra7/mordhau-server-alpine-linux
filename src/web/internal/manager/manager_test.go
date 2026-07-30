@@ -1456,7 +1456,7 @@ func TestGameLogProcessorPreservesUnicodePlayerLifecycle(t *testing.T) {
 		t.Fatalf("player lifecycle event count = %d: %#v", len(events), events)
 	}
 	if events[0].Kind != "login" ||
-		events[0].Text != "Login: 2026.07.25-13.13.11: 테스트유저 ("+playerID+") logged in" {
+		events[0].Text != "Login: 테스트유저 ("+playerID+") logged in" {
 		t.Fatalf("login event = %#v", events[0])
 	}
 	if events[1].Kind != "chat" ||
@@ -1466,7 +1466,7 @@ func TestGameLogProcessorPreservesUnicodePlayerLifecycle(t *testing.T) {
 		t.Fatalf("chat event = %#v", events[1])
 	}
 	if events[2].Kind != "login" ||
-		events[2].Text != "Login: 2026.07.25-13.13.14: 테스트유저 ("+playerID+") logged out" {
+		events[2].Text != "Login: 테스트유저 ("+playerID+") logged out" {
 		t.Fatalf("logout event = %#v", events[2])
 	}
 	for _, event := range events {
@@ -1609,6 +1609,77 @@ func TestRCONTransportStatusEventsAreHidden(t *testing.T) {
 	}
 }
 
+func TestFleetRCONHistoryLabelsEveryLocalEventAndPreservesRelayedSource(
+	t *testing.T,
+) {
+	now := time.Now()
+	manager := &Manager{
+		fleetSettings: fleetSettingsFile{
+			Version: fleetSettingsVersion,
+			Role:    FleetRoleController,
+			Alias:   "Dread",
+		},
+		rconEvents: []RCONEvent{
+			{
+				Sequence: 1,
+				Time:     now,
+				Kind:     "login",
+				Text: "Login: 2026.07.30-17.18.47: Player " +
+					"(1111222233334444) logged in",
+			},
+			{
+				Sequence: 2,
+				Time:     now,
+				Kind:     "matchstate",
+				Text:     "MatchState: In progress",
+			},
+			{
+				Sequence: 3,
+				Time:     now,
+				Kind:     "fleet",
+				Text:     "(Duel Server) <Player> joined the server.",
+			},
+		},
+	}
+
+	events := manager.rconHistory(rconBrowserHistoryLimit)
+	want := []string{
+		"(Dread Server) Login: Player (1111222233334444) logged in",
+		"(Dread Server) MatchState: In progress",
+		"(Duel Server) <Player> joined the server.",
+	}
+	if len(events) != len(want) {
+		t.Fatalf("fleet RCON event count = %d, want %d", len(events), len(want))
+	}
+	for index := range want {
+		if events[index].Text != want[index] {
+			t.Fatalf(
+				"fleet RCON event %d = %q, want %q",
+				index,
+				events[index].Text,
+				want[index],
+			)
+		}
+	}
+	if manager.rconEvents[0].Text == events[0].Text {
+		t.Fatal("fleet display decoration mutated persistent RCON history")
+	}
+
+	manager.fleetSettings.Role = FleetRoleManaged
+	manager.fleetSettings.Alias = "Duel"
+	events = manager.rconHistory(rconBrowserHistoryLimit)
+	if events[0].Text !=
+		"(Duel Server) Login: Player (1111222233334444) logged in" {
+		t.Fatalf("managed-server lifecycle label = %q", events[0].Text)
+	}
+
+	manager.fleetSettings.Role = FleetRoleStandalone
+	events = manager.rconHistory(rconBrowserHistoryLimit)
+	if events[0].Text != manager.rconEvents[0].Text {
+		t.Fatalf("standalone lifecycle text changed to %q", events[0].Text)
+	}
+}
+
 func TestStoredRCONTransportStatusEventsAreFiltered(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "mordhau-rcon.log")
 	now := time.Now()
@@ -1663,7 +1734,7 @@ func TestStoredRCONHistoryCompactsIdleMapCycles(t *testing.T) {
 		{
 			Sequence: 5,
 			Time:     now,
-			Text:     "Login: 2026.07.30-10.00.00: Player (" + playerID + ") logged in",
+			Text:     "Login: Player (" + playerID + ") logged in",
 			Kind:     "login",
 		},
 		{Sequence: 6, Time: now, Text: matchStateWaitingToStartText, Kind: "matchstate"},
@@ -2450,9 +2521,9 @@ func TestDashboardThemeAndServerPromptMarkup(t *testing.T) {
 	for _, expected := range []string{
 		`id="theme-toggle"`,
 		`content="width=device-width, initial-scale=1, viewport-fit=cover"`,
-		`src="/static/theme.js?v=2.6.1"`,
-		`href="/static/app.css?v=2.6.1"`,
-		`src="/static/app.js?v=2.6.1"`,
+		`src="/static/theme.js?v=2.6.2"`,
+		`href="/static/app.css?v=2.6.2"`,
+		`src="/static/app.js?v=2.6.2"`,
 		`<body id="page-top">`,
 		`class="brand" href="#page-top"`,
 		`id="fleet-server-picker"`,
@@ -2589,10 +2660,10 @@ func TestDashboardThemeAndServerPromptMarkup(t *testing.T) {
 		t.Fatal(err)
 	}
 	loginSource := string(loginData)
-	if !strings.Contains(loginSource, `src="/static/theme.js?v=2.6.1"`) {
+	if !strings.Contains(loginSource, `src="/static/theme.js?v=2.6.2"`) {
 		t.Fatal("login page does not initialize the persisted theme")
 	}
-	if !strings.Contains(loginSource, `href="/static/app.css?v=2.6.1"`) {
+	if !strings.Contains(loginSource, `href="/static/app.css?v=2.6.2"`) {
 		t.Fatal("login page does not use the release stylesheet version")
 	}
 	if !strings.Contains(loginSource, `viewport-fit=cover`) {

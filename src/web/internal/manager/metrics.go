@@ -236,6 +236,7 @@ func (m *Manager) snapshot() Snapshot {
 	currentMap := m.currentMap
 	currentGameMode := m.currentGameMode
 	m.rconMu.RUnlock()
+	events = m.rconEventsForView(events)
 
 	pid, running := serverProcess()
 	runtime := m.runtimeSummaryView()

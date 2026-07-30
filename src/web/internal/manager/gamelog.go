@@ -729,8 +729,7 @@ func (processor *gameLogProcessor) processLine(line string) []gameLogEvent {
 			Time: eventTime,
 			Kind: "login",
 			Text: fmt.Sprintf(
-				"Login: %s: %s (%s) logged in",
-				eventTime.Format("2006.01.02-15.04.05"),
+				"Login: %s (%s) logged in",
 				name,
 				playerID,
 			),
@@ -774,8 +773,7 @@ func (processor *gameLogProcessor) processLine(line string) []gameLogEvent {
 			Time: eventTime,
 			Kind: "login",
 			Text: fmt.Sprintf(
-				"Login: %s: %s (%s) logged out",
-				eventTime.Format("2006.01.02-15.04.05"),
+				"Login: %s (%s) logged out",
 				player.name,
 				playerID,
 			),

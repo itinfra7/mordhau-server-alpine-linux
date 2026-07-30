@@ -288,6 +288,13 @@ func TestFleetInternalAPIRequiresPinnedIdentityAndExpectedSourceIP(t *testing.T)
 		fleetNow:              time.Now,
 		fleetSubscribers:      make(map[uint64]chan FleetEvent),
 		auditPath:             filepath.Join(managedDirectory, "audit.jsonl"),
+		rconEvents: []RCONEvent{{
+			Sequence: 1,
+			Time:     time.Now(),
+			Kind:     "login",
+			Text: "Login: 2026.07.30-08.17.20: ExamplePlayer " +
+				"(1111222233334444) logged in",
+		}},
 	}
 	server := httptest.NewUnstartedServer(managed.fleetInternalHandler())
 	server.TLS = managed.managedFleetTLSConfig(settings, managedIdentity)
@@ -355,6 +362,41 @@ func TestFleetInternalAPIRequiresPinnedIdentityAndExpectedSourceIP(t *testing.T)
 			"unexpected proxied API response: status=%d view=%+v",
 			response.StatusCode,
 			accessView,
+		)
+	}
+
+	proxyRequest, err = http.NewRequest(
+		http.MethodGet,
+		fleetPeerURL(peer, "/fleet/v1/proxy"),
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxyRequest.Header.Set(fleetHeaderActor, "admin")
+	proxyRequest.Header.Set(fleetHeaderClientIP, "203.0.113.20")
+	proxyRequest.Header.Set(fleetHeaderRequestID, "event-history-request")
+	proxyRequest.Header.Set(fleetHeaderPath, "/api/server/events/history")
+	response, err = client.Do(proxyRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var history struct {
+		Events []RCONEvent `json:"events"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&history); err != nil {
+		_ = response.Body.Close()
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusOK ||
+		len(history.Events) != 1 ||
+		history.Events[0].Text !=
+			"(Managed Server) Login: ExamplePlayer (1111222233334444) logged in" {
+		t.Fatalf(
+			"unexpected proxied event history: status=%d events=%+v",
+			response.StatusCode,
+			history.Events,
 		)
 	}
 
