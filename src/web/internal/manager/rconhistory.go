@@ -26,12 +26,14 @@ func newRCONHistoryVisibility() *rconHistoryVisibility {
 	}
 }
 
-func storedRCONPlayerLifecycle(event RCONEvent) (string, string, bool) {
+func parseStoredRCONPlayerLifecycle(
+	event RCONEvent,
+) (string, string, string, bool) {
 	if event.Kind != "login" {
-		return "", "", false
+		return "", "", "", false
 	}
 	action := ""
-	body := event.Text
+	body := compactRCONLoginTimestamp(event.Text)
 	switch {
 	case strings.HasSuffix(body, " logged in"):
 		action = "login"
@@ -40,21 +42,35 @@ func storedRCONPlayerLifecycle(event RCONEvent) (string, string, bool) {
 		action = "logout"
 		body = strings.TrimSuffix(body, " logged out")
 	default:
-		return "", "", false
+		return "", "", "", false
 	}
 	if !strings.HasSuffix(body, ")") {
-		return "", "", false
+		return "", "", "", false
 	}
 	body = strings.TrimSuffix(body, ")")
 	open := strings.LastIndex(body, " (")
 	if open < 0 {
-		return "", "", false
+		return "", "", "", false
 	}
 	playerID := body[open+2:]
 	if !validMordhauPlayerID(playerID) {
-		return "", "", false
+		return "", "", "", false
 	}
-	return playerID, action, true
+	const prefix = "Login: "
+	playerName := strings.TrimSpace(body[:open])
+	if !strings.HasPrefix(playerName, prefix) {
+		return "", "", "", false
+	}
+	playerName = strings.TrimSpace(strings.TrimPrefix(playerName, prefix))
+	if playerName == "" {
+		return "", "", "", false
+	}
+	return playerID, playerName, action, true
+}
+
+func storedRCONPlayerLifecycle(event RCONEvent) (string, string, bool) {
+	playerID, _, action, ok := parseStoredRCONPlayerLifecycle(event)
+	return playerID, action, ok
 }
 
 func (visibility *rconHistoryVisibility) retain(event RCONEvent) bool {
@@ -141,6 +157,20 @@ func (m *Manager) fleetRCONServerLabel() (string, bool) {
 func rconEventForFleetView(event RCONEvent, localLabel string) RCONEvent {
 	if event.Kind == "login" {
 		event.Text = compactRCONLoginTimestamp(event.Text)
+		if _, playerName, action, ok := parseStoredRCONPlayerLifecycle(event); ok &&
+			localLabel != "" {
+			verb := "joined"
+			if action == "logout" {
+				verb = "left"
+			}
+			event.Text = fmt.Sprintf(
+				"(%s) <%s> %s the server.",
+				localLabel,
+				playerName,
+				verb,
+			)
+			return event
+		}
 	}
 	if localLabel == "" || event.Kind == "fleet" {
 		return event

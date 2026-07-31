@@ -392,7 +392,7 @@ func TestFleetInternalAPIRequiresPinnedIdentityAndExpectedSourceIP(t *testing.T)
 	if response.StatusCode != http.StatusOK ||
 		len(history.Events) != 1 ||
 		history.Events[0].Text !=
-			"(Managed Server) Login: ExamplePlayer (1111222233334444) logged in" {
+			"(Managed Server) <ExamplePlayer> joined the server." {
 		t.Fatalf(
 			"unexpected proxied event history: status=%d events=%+v",
 			response.StatusCode,

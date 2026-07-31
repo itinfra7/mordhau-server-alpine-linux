@@ -4,6 +4,22 @@ All notable changes to this repository are documented in this file.
 
 ## [Unreleased]
 
+## [2.6.4] - 2026-07-31
+
+### Fixed
+
+- Normalize local Fleet-mode player login and logout records to the same
+  `(Server) <Player> joined/left the server.` presentation used by relayed
+  lifecycle events.
+- Preserve source-server in-game echo suppression and append-only raw event
+  history while applying lifecycle normalization only to web responses.
+
+### Validation
+
+- Verify Controller and Managed Server lifecycle formatting, Unicode player
+  names, relayed-source preservation, standalone compatibility, legacy event
+  compatibility, and immutable stored history.
+
 ## [2.6.3] - 2026-07-30
 
 ### Fixed

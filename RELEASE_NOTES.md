@@ -1,20 +1,20 @@
-This release contains the following changes relative to v2.6.2.
+This release contains the following changes relative to v2.6.3.
 
 ## Changelog
 
 ### Fixed
 
-- Keep unconfigured manager instances isolated from the installed server's
-  active self-update state, allowing the verified installer test suite to run
-  inside the detached web-update worker.
-- Give automatic-update and trusted-proxy test fixtures explicit private
-  manager-update state files instead of permitting access to installed state.
+- Normalize local Fleet-mode player login and logout records to the same
+  `(Server) <Player> joined/left the server.` presentation used by relayed
+  lifecycle events.
+- Preserve source-server in-game echo suppression and append-only raw event
+  history while applying lifecycle normalization only to web responses.
 
 ### Validation
 
-- Verify fixture state paths are isolated from the installed manager state.
-- Verify the complete installer test suite while the detached update worker
-  owns the production update state.
+- Verify Controller and Managed Server lifecycle formatting, Unicode player
+  names, relayed-source preservation, standalone compatibility, legacy event
+  compatibility, and immutable stored history.
 
 ## Documentation
 
@@ -31,6 +31,6 @@ sha256sum -c SHA256SUMS
 
 Repository-authored source is available under the MIT License.
 
-Previous release: [v2.6.2](https://github.com/itinfra7/mordhau-server-alpine-linux/releases/tag/v2.6.2)
+Previous release: [v2.6.3](https://github.com/itinfra7/mordhau-server-alpine-linux/releases/tag/v2.6.3)
 
-Full comparison: [v2.6.2...v2.6.3](https://github.com/itinfra7/mordhau-server-alpine-linux/compare/v2.6.2...v2.6.3)
+Full comparison: [v2.6.3...v2.6.4](https://github.com/itinfra7/mordhau-server-alpine-linux/compare/v2.6.3...v2.6.4)

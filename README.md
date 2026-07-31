@@ -145,12 +145,12 @@ history remains in the versioned changelog asset instead of being repeated in
 every Release body.
 
 ```sh
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.6.3/mordhau-server-alpine-linux-v2.6.3.tar.gz
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.6.3/CHANGELOG-v2.6.3.md
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.6.3/SHA256SUMS
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.6.4/mordhau-server-alpine-linux-v2.6.4.tar.gz
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.6.4/CHANGELOG-v2.6.4.md
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.6.4/SHA256SUMS
 sha256sum -c SHA256SUMS
-tar -xzf mordhau-server-alpine-linux-v2.6.3.tar.gz
-cd mordhau-server-alpine-linux-v2.6.3
+tar -xzf mordhau-server-alpine-linux-v2.6.4.tar.gz
+cd mordhau-server-alpine-linux-v2.6.4
 chmod +x src/mordhau-server-alpine-linux.sh
 ./src/mordhau-server-alpine-linux.sh
 ```
@@ -497,12 +497,14 @@ example:
 (Dread Server) <Player> joined the server.
 ```
 
-In Fleet mode, Server Events also prefix every locally collected event with
-the selected server's display name. Relayed events retain their origin label,
-so login, logout, chat, match-state, command, and response lines remain
-attributable when local and cross-server records share one console. A source
-server never receives its own relayed in-game message; its local event record
-provides the corresponding web-visible entry without creating an echo.
+In Fleet mode, Server Events prefix every locally collected event with the
+selected server's display name. Local player login and logout records use the
+same `(Server) <Player> joined/left the server.` presentation as relayed
+lifecycle events. Relayed events retain their origin label, so chat,
+match-state, command, response, and lifecycle lines remain attributable when
+local and cross-server records share one console. A source server never
+receives its own relayed in-game message; its normalized local web record
+provides the corresponding entry without creating an echo.
 
 MORDHAU does not expose equivalent team membership across independent
 servers. A relayed Team Chat line is therefore labeled `TEAM` but displayed
@@ -833,10 +835,11 @@ repeatedly transferring the entire on-disk history. The browser retains the
 same 400-event Server Events window. Administrative commands, requesting
 account names, returned response lines, no-output results, failures,
 output-truncation notices, and SAY messages use this same history.
-Fleet responses add source-server labels at read time without rewriting stored
-records. Legacy player-lifecycle text that contains a second server-local
-timestamp is compacted for Fleet display; the event timestamp beside each
-line remains formatted in the viewing browser's locale and time zone.
+Fleet responses add source-server labels and normalize local lifecycle text at
+read time without rewriting stored records. Legacy player-lifecycle text that
+contains a second server-local timestamp is compacted for Fleet display; the
+event timestamp beside each line remains formatted in the viewing browser's
+locale and time zone.
 
 ## Recovery and Monitoring
 
@@ -1524,8 +1527,8 @@ source-IP enforcement, canonical browser-IP propagation with forwarding-header
 spoof removal, node-scoped API allowlisting, outer-browser CSRF enforcement,
 Unicode source labels, all five rendered event types, All/Team game-log
 mapping, forced live-session logout, RCON SAY parsing, per-destination order,
-source/destination event opt-in, local Server Events attribution, legacy
-player-lifecycle timestamp compaction, and relayed-source preservation.
+source/destination event opt-in, normalized local lifecycle presentation,
+legacy player-lifecycle timestamp compaction, and relayed-source preservation.
 The shell integration tests cover PAK installation, active and staged Game.ini
 registration, existing server-actor preservation, backup creation,
 idempotent reinstallation, verified lossless XZ game-log compression,

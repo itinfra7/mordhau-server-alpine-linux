@@ -1639,14 +1639,22 @@ func TestFleetRCONHistoryLabelsEveryLocalEventAndPreservesRelayedSource(
 				Kind:     "fleet",
 				Text:     "(Duel Server) <Player> joined the server.",
 			},
+			{
+				Sequence: 4,
+				Time:     now,
+				Kind:     "login",
+				Text: "Login: 플레이어 (1111222233334444) " +
+					"logged out",
+			},
 		},
 	}
 
 	events := manager.rconHistory(rconBrowserHistoryLimit)
 	want := []string{
-		"(Dread Server) Login: Player (1111222233334444) logged in",
+		"(Dread Server) <Player> joined the server.",
 		"(Dread Server) MatchState: In progress",
 		"(Duel Server) <Player> joined the server.",
+		"(Dread Server) <플레이어> left the server.",
 	}
 	if len(events) != len(want) {
 		t.Fatalf("fleet RCON event count = %d, want %d", len(events), len(want))
@@ -1669,7 +1677,7 @@ func TestFleetRCONHistoryLabelsEveryLocalEventAndPreservesRelayedSource(
 	manager.fleetSettings.Alias = "Duel"
 	events = manager.rconHistory(rconBrowserHistoryLimit)
 	if events[0].Text !=
-		"(Duel Server) Login: Player (1111222233334444) logged in" {
+		"(Duel Server) <Player> joined the server." {
 		t.Fatalf("managed-server lifecycle label = %q", events[0].Text)
 	}
 
@@ -2521,9 +2529,9 @@ func TestDashboardThemeAndServerPromptMarkup(t *testing.T) {
 	for _, expected := range []string{
 		`id="theme-toggle"`,
 		`content="width=device-width, initial-scale=1, viewport-fit=cover"`,
-		`src="/static/theme.js?v=2.6.3"`,
-		`href="/static/app.css?v=2.6.3"`,
-		`src="/static/app.js?v=2.6.3"`,
+		`src="/static/theme.js?v=2.6.4"`,
+		`href="/static/app.css?v=2.6.4"`,
+		`src="/static/app.js?v=2.6.4"`,
 		`<body id="page-top">`,
 		`class="brand" href="#page-top"`,
 		`id="fleet-server-picker"`,
@@ -2660,10 +2668,10 @@ func TestDashboardThemeAndServerPromptMarkup(t *testing.T) {
 		t.Fatal(err)
 	}
 	loginSource := string(loginData)
-	if !strings.Contains(loginSource, `src="/static/theme.js?v=2.6.3"`) {
+	if !strings.Contains(loginSource, `src="/static/theme.js?v=2.6.4"`) {
 		t.Fatal("login page does not initialize the persisted theme")
 	}
-	if !strings.Contains(loginSource, `href="/static/app.css?v=2.6.3"`) {
+	if !strings.Contains(loginSource, `href="/static/app.css?v=2.6.4"`) {
 		t.Fatal("login page does not use the release stylesheet version")
 	}
 	if !strings.Contains(loginSource, `viewport-fit=cover`) {
