@@ -802,7 +802,7 @@ input:focus, select:focus, textarea:focus { border-color: rgba(233, 79, 81, .65)
 .console-line.outbound .console-text { color: var(--console-outbound); }
 .console-line.command .console-text { color: var(--console-outbound); font-weight: 700; }
 .console-line.command-error .console-text { color: var(--red-bright); }
-.console-line.login .console-text { color: var(--connected-text); }
+.console-line.login .console-text { font-weight: 700; }
 .console-line.matchstate .console-text { color: var(--console-system); }
 .console-line.punishment .console-text { color: var(--red-bright); }
 

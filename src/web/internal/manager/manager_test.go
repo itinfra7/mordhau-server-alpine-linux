@@ -2529,9 +2529,9 @@ func TestDashboardThemeAndServerPromptMarkup(t *testing.T) {
 	for _, expected := range []string{
 		`id="theme-toggle"`,
 		`content="width=device-width, initial-scale=1, viewport-fit=cover"`,
-		`src="/static/theme.js?v=2.6.4"`,
-		`href="/static/app.css?v=2.6.4"`,
-		`src="/static/app.js?v=2.6.4"`,
+		`src="/static/theme.js?v=2.6.5"`,
+		`href="/static/app.css?v=2.6.5"`,
+		`src="/static/app.js?v=2.6.5"`,
 		`<body id="page-top">`,
 		`class="brand" href="#page-top"`,
 		`id="fleet-server-picker"`,
@@ -2668,10 +2668,10 @@ func TestDashboardThemeAndServerPromptMarkup(t *testing.T) {
 		t.Fatal(err)
 	}
 	loginSource := string(loginData)
-	if !strings.Contains(loginSource, `src="/static/theme.js?v=2.6.4"`) {
+	if !strings.Contains(loginSource, `src="/static/theme.js?v=2.6.5"`) {
 		t.Fatal("login page does not initialize the persisted theme")
 	}
-	if !strings.Contains(loginSource, `href="/static/app.css?v=2.6.4"`) {
+	if !strings.Contains(loginSource, `href="/static/app.css?v=2.6.5"`) {
 		t.Fatal("login page does not use the release stylesheet version")
 	}
 	if !strings.Contains(loginSource, `viewport-fit=cover`) {
@@ -2856,6 +2856,26 @@ func TestMobileLayoutHasTouchAndNarrowViewportRules(t *testing.T) {
 		if strings.Contains(css, unwanted) {
 			t.Fatalf("mobile stylesheet hides important status with %q", unwanted)
 		}
+	}
+}
+
+func TestServerLifecycleEventStylingUsesWeightWithoutStatusColor(t *testing.T) {
+	cssData, err := staticFiles.ReadFile("static/app.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	css := string(cssData)
+	if !strings.Contains(
+		css,
+		`.console-line.login .console-text { font-weight: 700; }`,
+	) {
+		t.Fatal("local lifecycle events are not emphasized with bold text")
+	}
+	if strings.Contains(css, `.console-line.login .console-text { color:`) {
+		t.Fatal("local lifecycle events still override the default text color")
+	}
+	if strings.Contains(css, `.console-line.fleet .console-text`) {
+		t.Fatal("relayed Fleet events unexpectedly override default text styling")
 	}
 }
 

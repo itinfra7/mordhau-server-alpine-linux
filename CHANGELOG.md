@@ -4,6 +4,20 @@ All notable changes to this repository are documented in this file.
 
 ## [Unreleased]
 
+## [2.6.5] - 2026-07-31
+
+### Fixed
+
+- Use the normal Server Events text color for both local and relayed player
+  login and logout records.
+- Emphasize lifecycle records collected by the currently selected server with
+  bold text while keeping relayed server lifecycle records at regular weight.
+
+### Validation
+
+- Verify the stylesheet retains local lifecycle emphasis without a lifecycle
+  color override or a relayed Fleet-event style override.
+
 ## [2.6.4] - 2026-07-31
 
 ### Fixed
