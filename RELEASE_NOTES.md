@@ -1,18 +1,21 @@
-This release contains the following changes relative to v2.6.4.
+This release contains the following changes relative to v2.6.5.
 
 ## Changelog
 
 ### Fixed
 
-- Use the normal Server Events text color for both local and relayed player
-  login and logout records.
-- Emphasize lifecycle records collected by the currently selected server with
-  bold text while keeping relayed server lifecycle records at regular weight.
+- Exclude IPv4 and IPv6 link-local tunnel endpoints from persistent player IP
+  history.
+- Remove previously stored link-local values from player address lists and
+  connection IP fields while retaining session timing and all non-address
+  profile data.
 
 ### Validation
 
-- Verify local lifecycle emphasis without a lifecycle color override or a
-  relayed Fleet-event style override.
+- Verify canonical public, private, native IPv6, and IPv4-mapped addresses are
+  preserved while link-local addresses are rejected.
+- Verify migration is idempotent and current-log imports cannot restore a
+  discarded link-local tunnel endpoint.
 
 ## Documentation
 
@@ -29,6 +32,6 @@ sha256sum -c SHA256SUMS
 
 Repository-authored source is available under the MIT License.
 
-Previous release: [v2.6.4](https://github.com/itinfra7/mordhau-server-alpine-linux/releases/tag/v2.6.4)
+Previous release: [v2.6.5](https://github.com/itinfra7/mordhau-server-alpine-linux/releases/tag/v2.6.5)
 
-Full comparison: [v2.6.4...v2.6.5](https://github.com/itinfra7/mordhau-server-alpine-linux/compare/v2.6.4...v2.6.5)
+Full comparison: [v2.6.5...v2.6.6](https://github.com/itinfra7/mordhau-server-alpine-linux/compare/v2.6.5...v2.6.6)

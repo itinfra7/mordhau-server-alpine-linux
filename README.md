@@ -145,12 +145,12 @@ history remains in the versioned changelog asset instead of being repeated in
 every Release body.
 
 ```sh
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.6.5/mordhau-server-alpine-linux-v2.6.5.tar.gz
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.6.5/CHANGELOG-v2.6.5.md
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.6.5/SHA256SUMS
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.6.6/mordhau-server-alpine-linux-v2.6.6.tar.gz
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.6.6/CHANGELOG-v2.6.6.md
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.6.6/SHA256SUMS
 sha256sum -c SHA256SUMS
-tar -xzf mordhau-server-alpine-linux-v2.6.5.tar.gz
-cd mordhau-server-alpine-linux-v2.6.5
+tar -xzf mordhau-server-alpine-linux-v2.6.6.tar.gz
+cd mordhau-server-alpine-linux-v2.6.6
 chmod +x src/mordhau-server-alpine-linux.sh
 ./src/mordhau-server-alpine-linux.sh
 ```
@@ -551,6 +551,11 @@ addresses. It also shows up to 200 recent connection sessions with join, leave,
 duration, address, and locally resolved location. The same level appears as a
 visually distinct badge between the country flag and nickname in the player
 list. Browser-local date and time formatting is used for displayed timestamps.
+IPv4 and IPv6 link-local addresses are excluded because they identify only the
+adjacent relay or tunnel endpoint rather than a routable player. Existing
+link-local address and session-IP fields are removed during history loading;
+session times, nicknames, moderation state, comments, and other profile data
+remain intact.
 
 When at least one PlayerController is present, the dashboard Players card
 opens a live directory containing each player's PlayFab ID, nickname, country
@@ -1480,7 +1485,8 @@ command validation, bounded response packet collection, actor attribution and
 audit argument exclusion, transport-status migration filtering, packet
 framing, Korean legacy decoding, UTF-8 chat parsing, player-ID-based Unicode
 login/logout identity correlation, canonical connection-address correlation,
-idempotent archived/current player-history import, session-duration
+link-local relay-address exclusion and migration, idempotent archived/current
+player-history import, session-duration
 accounting, attributed persistent comments, verified mute/ban command
 handling, GeoIP edition and ignored-prefix validation, local location-record
 normalization, fixed-origin download failure handling,

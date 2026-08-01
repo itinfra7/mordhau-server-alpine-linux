@@ -97,6 +97,171 @@ func TestGameLogProcessorCorrelatesPlayerIdentityAndCanonicalAddress(t *testing.
 	}
 }
 
+func TestPlayerAddressRejectsLinkLocalTunnelEndpoints(t *testing.T) {
+	for _, value := range []string{
+		"169.254.10.20",
+		"::ffff:169.254.20.30",
+		"fe80::1",
+	} {
+		if normalized, ok := normalizePlayerAddress(value); ok {
+			t.Fatalf("link-local address %q normalized to %q", value, normalized)
+		}
+	}
+
+	for value, expected := range map[string]string{
+		"203.0.113.45":          "203.0.113.45",
+		"10.20.30.40":           "10.20.30.40",
+		"::ffff:203.0.113.45":   "203.0.113.45",
+		"2001:db8:1234:5678::1": "2001:db8:1234:5678::1",
+	} {
+		normalized, ok := normalizePlayerAddress(value)
+		if !ok || normalized != expected {
+			t.Fatalf("address %q normalized to %q, %t; want %q", value, normalized, ok, expected)
+		}
+	}
+}
+
+func TestPlayerHistoryRemovesOnlyLinkLocalAddressData(t *testing.T) {
+	now := time.Date(2026, 8, 1, 12, 0, 0, 0, time.Local)
+	later := now.Add(time.Minute)
+	history := playerHistoryFile{
+		Version:  playerHistoryVersion,
+		Revision: 9,
+		Players: []playerRecord{{
+			PlayFabID:    testPlayerID,
+			LastNickname: "Preserved",
+			Addresses: []playerKnownValue{
+				{Value: "169.254.10.20", LastSeenAt: later},
+				{Value: "203.0.113.45", LastSeenAt: now},
+				{Value: "fe80::1", LastSeenAt: later},
+			},
+			Connections: []playerConnection{
+				{JoinedAt: now, LeftAt: &later, IP: "169.254.10.20"},
+				{JoinedAt: later, IP: "203.0.113.45"},
+			},
+		}},
+	}
+
+	if !removeLinkLocalPlayerAddresses(&history) {
+		t.Fatal("link-local player address migration reported no change")
+	}
+	if history.Revision != 10 ||
+		history.Players[0].LastNickname != "Preserved" ||
+		len(history.Players[0].Addresses) != 1 ||
+		history.Players[0].Addresses[0].Value != "203.0.113.45" ||
+		history.Players[0].Connections[0].IP != "" ||
+		history.Players[0].Connections[0].LeftAt == nil ||
+		history.Players[0].Connections[1].IP != "203.0.113.45" {
+		t.Fatalf("migrated player history = %+v", history)
+	}
+	if err := validatePlayerHistory(&history); err != nil {
+		t.Fatal(err)
+	}
+	if removeLinkLocalPlayerAddresses(&history) {
+		t.Fatal("idempotent migration changed clean player history")
+	}
+}
+
+func TestPlayerHistoryLoadMigratesLinkLocalAddressesBeforeValidation(t *testing.T) {
+	directory := t.TempDir()
+	archiveDir := filepath.Join(directory, "log")
+	if err := os.MkdirAll(archiveDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 8, 1, 12, 0, 0, 0, time.Local)
+	historyPath := filepath.Join(directory, "players.json")
+	history := playerHistoryFile{
+		Version:  playerHistoryVersion,
+		Revision: 4,
+		Players: []playerRecord{{
+			PlayFabID: testPlayerID,
+			Addresses: []playerKnownValue{{
+				Value:      "169.254.10.20",
+				LastSeenAt: now,
+			}},
+			Connections: []playerConnection{{
+				JoinedAt: now,
+				IP:       "169.254.10.20",
+			}},
+		}},
+	}
+	if err := writeJSONAtomic(historyPath, history, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	manager := &Manager{
+		playerHistoryFile:      historyPath,
+		playerArchiveDirectory: archiveDir,
+		playerCurrentLogFile:   filepath.Join(directory, "missing.log"),
+		playerServerProcess:    func() (int, bool) { return 0, false },
+	}
+	if err := manager.loadOrCreatePlayerHistory(); err != nil {
+		t.Fatal(err)
+	}
+	if manager.playerHistory.Revision != 5 ||
+		len(manager.playerHistory.Players[0].Addresses) != 0 ||
+		manager.playerHistory.Players[0].Connections[0].IP != "" {
+		t.Fatalf("loaded player history = %+v", manager.playerHistory)
+	}
+
+	var persisted playerHistoryFile
+	if err := readJSON(historyPath, &persisted); err != nil {
+		t.Fatal(err)
+	}
+	if persisted.Revision != 5 ||
+		len(persisted.Players[0].Addresses) != 0 ||
+		persisted.Players[0].Connections[0].IP != "" {
+		t.Fatalf("persisted player history = %+v", persisted)
+	}
+}
+
+func TestPlayerHistoryImportIgnoresLinkLocalTunnelEndpoint(t *testing.T) {
+	directory := t.TempDir()
+	archiveDir := filepath.Join(directory, "log")
+	currentDir := filepath.Join(directory, "Saved", "Logs")
+	if err := os.MkdirAll(archiveDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(currentDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Date(2026, 8, 1, 12, 0, 0, 0, time.Local)
+	current := strings.Join(
+		testPlayerLogLines(
+			testPlayerID,
+			"TunnelPlayer",
+			"169.254.10.20",
+			start,
+			30*time.Second,
+		),
+		"\n",
+	) + "\n"
+	currentPath := filepath.Join(currentDir, "Mordhau.log")
+	if err := os.WriteFile(currentPath, []byte(current), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	manager := &Manager{
+		playerHistoryFile:      filepath.Join(directory, "players.json"),
+		playerArchiveDirectory: archiveDir,
+		playerCurrentLogFile:   currentPath,
+		playerServerProcess:    func() (int, bool) { return 0, false },
+	}
+	if err := manager.loadOrCreatePlayerHistory(); err != nil {
+		t.Fatal(err)
+	}
+	if len(manager.playerHistory.Players) != 1 {
+		t.Fatalf("players = %+v", manager.playerHistory.Players)
+	}
+	player := manager.playerHistory.Players[0]
+	if len(player.Addresses) != 0 ||
+		len(player.Connections) != 1 ||
+		player.Connections[0].IP != "" ||
+		player.LastNickname != "TunnelPlayer" {
+		t.Fatalf("imported player = %+v", player)
+	}
+}
+
 func TestPlayerDetailUsesEmptyJSONArrays(t *testing.T) {
 	detail := playerDetail(playerRecord{
 		PlayFabID: testPlayerID,

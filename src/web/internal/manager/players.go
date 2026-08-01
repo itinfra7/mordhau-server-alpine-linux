@@ -251,7 +251,8 @@ func normalizePlayerAddress(value string) (string, bool) {
 		return "", false
 	}
 	address = address.Unmap()
-	if !address.IsValid() || address.IsUnspecified() || address.IsMulticast() {
+	if !address.IsValid() || address.IsUnspecified() || address.IsMulticast() ||
+		address.IsLinkLocalUnicast() {
 		return "", false
 	}
 	return address.String(), true
@@ -470,6 +471,36 @@ func normalizeLegacyPlayerProgress(history *playerHistoryFile) bool {
 	return changed
 }
 
+func removeLinkLocalPlayerAddresses(history *playerHistoryFile) bool {
+	changed := false
+	for playerIndex := range history.Players {
+		player := &history.Players[playerIndex]
+		addresses := player.Addresses[:0]
+		for _, known := range player.Addresses {
+			address, err := netip.ParseAddr(strings.TrimSpace(known.Value))
+			if err == nil && address.Unmap().IsLinkLocalUnicast() {
+				changed = true
+				continue
+			}
+			addresses = append(addresses, known)
+		}
+		player.Addresses = addresses
+
+		for connectionIndex := range player.Connections {
+			connection := &player.Connections[connectionIndex]
+			address, err := netip.ParseAddr(strings.TrimSpace(connection.IP))
+			if err == nil && address.Unmap().IsLinkLocalUnicast() {
+				connection.IP = ""
+				changed = true
+			}
+		}
+	}
+	if changed {
+		history.Revision++
+	}
+	return changed
+}
+
 func (m *Manager) loadOrCreatePlayerHistory() error {
 	path := m.playerHistoryPath()
 	created := false
@@ -485,6 +516,9 @@ func (m *Manager) loadOrCreatePlayerHistory() error {
 		created = true
 	} else {
 		migrated = normalizeLegacyPlayerProgress(&history)
+		if removeLinkLocalPlayerAddresses(&history) {
+			migrated = true
+		}
 		if err := validatePlayerHistory(&history); err != nil {
 			return err
 		}

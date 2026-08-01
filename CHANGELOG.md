@@ -4,6 +4,24 @@ All notable changes to this repository are documented in this file.
 
 ## [Unreleased]
 
+## [2.6.6] - 2026-08-01
+
+### Fixed
+
+- Exclude IPv4 and IPv6 link-local tunnel endpoints from persistent player IP
+  history so a source-NAT relay address cannot be presented as a player
+  address.
+- Remove previously stored link-local values from player address lists and
+  connection IP fields while preserving session timing, nicknames, platform
+  identity, moderation state, and comments.
+
+### Validation
+
+- Verify public, private, native IPv6, and IPv4-mapped addresses retain their
+  canonical forms while IPv4 and IPv6 link-local addresses are rejected.
+- Verify migration is idempotent, preserves non-address player data, and
+  prevents current-log imports from restoring a discarded tunnel endpoint.
+
 ## [2.6.5] - 2026-07-31
 
 ### Fixed
