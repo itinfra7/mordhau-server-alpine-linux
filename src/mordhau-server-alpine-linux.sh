@@ -2,7 +2,7 @@
 
 set -eu
 
-PROJECT_VERSION="2.6.6"
+PROJECT_VERSION="2.6.7"
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 MORDHAU_ROOT="/root/mordhau"
 STEAMCMD_ROOT="/root/steamcmd"

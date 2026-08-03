@@ -181,13 +181,66 @@ func rconEventForFleetView(event RCONEvent, localLabel string) RCONEvent {
 
 func (m *Manager) rconEventsForView(events []RCONEvent) []RCONEvent {
 	localLabel, fleetEnabled := m.fleetRCONServerLabel()
-	if !fleetEnabled {
-		return events
-	}
 	for index := range events {
-		events[index] = rconEventForFleetView(events[index], localLabel)
+		events[index].Text = normalizeLegacyAutomaticUpdateNotice(
+			events[index].Text,
+		)
+		if fleetEnabled {
+			events[index] = rconEventForFleetView(events[index], localLabel)
+		}
 	}
 	return events
+}
+
+func legacyAutomaticUpdateTarget(text string) (string, bool) {
+	managerUpdate := strings.Contains(text, "MORDHAU Control v")
+	gameServerUpdate := strings.Contains(
+		text,
+		"MORDHAU Dedicated Server build ",
+	)
+	switch {
+	case managerUpdate && gameServerUpdate:
+		return "the server management tool and game server", true
+	case managerUpdate:
+		return "the server management tool", true
+	case gameServerUpdate:
+		return "the game server", true
+	default:
+		return "", false
+	}
+}
+
+func normalizeLegacyAutomaticUpdateNotice(text string) string {
+	const marker = "[SYSTEM UPDATE]"
+	markerIndex := strings.Index(text, marker)
+	if markerIndex < 0 {
+		return text
+	}
+	message := text[markerIndex:]
+	target, legacy := legacyAutomaticUpdateTarget(message)
+	if !legacy {
+		return text
+	}
+	prefix := text[:markerIndex]
+	const countdown = "[SYSTEM UPDATE] The server will restart in "
+	const install = " to install "
+	if strings.HasPrefix(message, countdown) {
+		if installIndex := strings.Index(message, install); installIndex >= 0 {
+			return prefix + message[:installIndex] + " to update " + target + "."
+		}
+	}
+	const final = "[SYSTEM UPDATE] The server is restarting now to install "
+	if strings.HasPrefix(message, final) {
+		return prefix + "[SYSTEM UPDATE] The server is restarting now to update " +
+			target + "."
+	}
+	const emptySuffix = " is ready. The server will restart as soon as no players remain."
+	if strings.HasPrefix(message, marker+" ") &&
+		strings.HasSuffix(message, emptySuffix) {
+		return prefix + "[SYSTEM UPDATE] An update for " + target +
+			" is ready. The server will restart as soon as no players remain."
+	}
+	return text
 }
 
 func (m *Manager) loadRCONEventLog() error {
@@ -297,5 +350,54 @@ func (m *Manager) rconHistory(limit int) []RCONEvent {
 	}
 	events := append([]RCONEvent(nil), m.rconEvents[start:]...)
 	m.rconMu.RUnlock()
+	summary := m.runtimeSummaryView()
+	if freshRuntimeBridgeSummary(summary, time.Now()) &&
+		summary.PlayerControllerCount == 0 {
+		events = compactRuntimeEmptyMatchStateTail(events)
+	}
 	return m.rconEventsForView(events)
+}
+
+func runtimeEmptyTailBoundary(event RCONEvent) bool {
+	switch event.Kind {
+	case "chat", "killfeed", "scorefeed":
+		return true
+	case "matchstate":
+		return event.Text != matchStateWaitingToStartText &&
+			event.Text != matchStateLeavingMapText
+	case "login":
+		_, action, ok := storedRCONPlayerLifecycle(event)
+		return ok && (action == "login" || !event.Inferred)
+	default:
+		return false
+	}
+}
+
+func compactRuntimeEmptyMatchStateTail(events []RCONEvent) []RCONEvent {
+	boundary := -1
+	for index, event := range events {
+		if runtimeEmptyTailBoundary(event) {
+			boundary = index
+		}
+	}
+	compacted := make([]RCONEvent, 0, len(events))
+	if boundary >= 0 {
+		compacted = append(compacted, events[:boundary+1]...)
+	}
+	leavingShown := false
+	for _, event := range events[boundary+1:] {
+		if event.Kind == "matchstate" {
+			switch event.Text {
+			case matchStateWaitingToStartText:
+				continue
+			case matchStateLeavingMapText:
+				if leavingShown {
+					continue
+				}
+				leavingShown = true
+			}
+		}
+		compacted = append(compacted, event)
+	}
+	return compacted
 }

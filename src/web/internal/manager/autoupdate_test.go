@@ -257,8 +257,13 @@ func TestAutomaticSteamUpdateCountsDownAndRequestsRestart(t *testing.T) {
 	}
 	if len(messages) != 1 ||
 		!strings.Contains(messages[0], "restart in 10 minutes") ||
-		!strings.Contains(messages[0], "build 17123456") {
+		!strings.Contains(messages[0], "to update the game server") {
 		t.Fatalf("unexpected first notice: %q", messages)
+	}
+	for _, privateDetail := range []string{"17123456", "install"} {
+		if strings.Contains(messages[0], privateDetail) {
+			t.Fatalf("in-game notice exposed %q: %q", privateDetail, messages[0])
+		}
 	}
 	var scheduled automaticUpdateStateFile
 	if err := readJSON(statePath, &scheduled); err != nil {
@@ -307,6 +312,100 @@ func TestAutomaticSteamUpdateCountsDownAndRequestsRestart(t *testing.T) {
 	}
 	if targets := manager.automaticUpdateTargets(); targets.SteamBuildID != "" {
 		t.Fatalf("same failed-or-pending build was rescheduled: %+v", targets)
+	}
+}
+
+func TestAutomaticUpdatePlayerMessagesHideInternalTargets(t *testing.T) {
+	tests := []struct {
+		schedule automaticUpdateSchedule
+		target   string
+	}{
+		{
+			schedule: automaticUpdateSchedule{ManagerVersion: "9.8.7"},
+			target:   "the server management tool",
+		},
+		{
+			schedule: automaticUpdateSchedule{SteamBuildID: "17123456"},
+			target:   "the game server",
+		},
+		{
+			schedule: automaticUpdateSchedule{
+				ManagerVersion: "9.8.7",
+				SteamBuildID:   "17123456",
+			},
+			target: "the server management tool and game server",
+		},
+	}
+	for _, test := range tests {
+		messages := []string{
+			automaticUpdateNoticeMessage(&test.schedule, 10),
+			automaticUpdateFinalMessage(&test.schedule),
+			automaticUpdateEmptyMessage(&test.schedule),
+		}
+		for _, message := range messages {
+			for _, privateDetail := range []string{
+				"MORDHAU Control",
+				"MORDHAU Dedicated Server",
+				"9.8.7",
+				"17123456",
+				"to install",
+			} {
+				if strings.Contains(message, privateDetail) {
+					t.Fatalf(
+						"player notice exposed %q: %q",
+						privateDetail,
+						message,
+					)
+				}
+			}
+			if !strings.Contains(message, test.target) {
+				t.Fatalf("player notice target = %q, want %q", message, test.target)
+			}
+		}
+	}
+}
+
+func TestLegacyAutomaticUpdatePlayerMessagesAreSanitizedForView(t *testing.T) {
+	tests := map[string]string{
+		"system: [SYSTEM UPDATE] The server will restart in 10 minutes to install MORDHAU Control v2.6.6.":                                                   "system: [SYSTEM UPDATE] The server will restart in 10 minutes to update the server management tool.",
+		"[SYSTEM UPDATE] The server is restarting now to install MORDHAU Dedicated Server build 17123456.":                                                   "[SYSTEM UPDATE] The server is restarting now to update the game server.",
+		"[SYSTEM UPDATE] MORDHAU Control v2.6.6 and MORDHAU Dedicated Server build 17123456 is ready. The server will restart as soon as no players remain.": "[SYSTEM UPDATE] An update for the server management tool and game server is ready. The server will restart as soon as no players remain.",
+	}
+	for input, want := range tests {
+		if got := normalizeLegacyAutomaticUpdateNotice(input); got != want {
+			t.Fatalf("normalized notice = %q, want %q", got, want)
+		}
+		if strings.Contains(want, "2.6.6") ||
+			strings.Contains(want, "17123456") ||
+			strings.Contains(want, "MORDHAU Control") {
+			t.Fatalf("expected notice retained internal target: %q", want)
+		}
+	}
+
+	unchanged := "system: [MOD UPDATE] The server will restart in 10 minutes."
+	if got := normalizeLegacyAutomaticUpdateNotice(unchanged); got != unchanged {
+		t.Fatalf("unrelated notice changed to %q", got)
+	}
+}
+
+func TestRCONHistorySanitizesLegacyUpdateNoticeWithoutRewritingRawEvent(t *testing.T) {
+	now := time.Now()
+	raw := "system: [SYSTEM UPDATE] The server will restart in 10 minutes " +
+		"to install MORDHAU Control v2.6.6."
+	manager := &Manager{rconEvents: []RCONEvent{{
+		Sequence: 1,
+		Time:     now,
+		Kind:     "outbound",
+		Text:     raw,
+	}}}
+	events := manager.rconHistory(rconBrowserHistoryLimit)
+	if len(events) != 1 ||
+		events[0].Text != "system: [SYSTEM UPDATE] The server will restart in "+
+			"10 minutes to update the server management tool." {
+		t.Fatalf("sanitized history = %#v", events)
+	}
+	if manager.rconEvents[0].Text != raw {
+		t.Fatal("view normalization rewrote append-only event history")
 	}
 }
 

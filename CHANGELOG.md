@@ -4,6 +4,47 @@ All notable changes to this repository are documented in this file.
 
 ## [Unreleased]
 
+## [2.6.7] - 2026-08-04
+
+### Changed
+
+- Identify automatic-update player notices as a server management-tool update,
+  game-server update, or combined update without exposing product names,
+  management versions, Dedicated Server build IDs, or installation details.
+- Normalize previously retained automatic-update notices at read time so the
+  browser view follows the same disclosure policy without rewriting the
+  append-only source event log.
+
+### Fixed
+
+- Reconcile authenticated game-log sessions against fresh Runtime bridge
+  PlayerController identities and emit a persistent logout after five seconds
+  of continuous confirmed absence when MORDHAU omits its native connection
+  close record.
+- Give newly authenticated players an initial Runtime discovery grace and
+  avoid individual logout inference while Runtime identity data is stale or
+  incomplete.
+- Close the corresponding persistent player-history session and publish the
+  same lifecycle event to Server Events and enabled Fleet destinations.
+- Prevent a later native close record or a web-manager restart from creating a
+  duplicate inferred logout.
+- Prevent chat records without a correlated successful authentication from
+  creating ghost active sessions.
+- Use a fresh zero PlayerController count to suppress new empty-server
+  `Waiting to start` cycles and compact already retained idle tail cycles to a
+  single `Leaving map` record without rewriting the append-only event log.
+
+### Validation
+
+- Verify observed-player disappearance, initial discovery grace, stale and
+  incomplete Runtime data, per-player identity reconciliation, late native
+  close records, persistent session closure, restart deduplication, and
+  chat-only activity.
+- Verify Runtime-aware Server Events compaction changes only the browser view
+  and preserves unrelated local and Fleet events plus the raw event history.
+- Verify every automatic-update player notice omits product names, management
+  versions, Dedicated Server build IDs, and installation details.
+
 ## [2.6.6] - 2026-08-01
 
 ### Fixed

@@ -22,6 +22,8 @@ const (
 	gameLogReadLimit             = 4 << 20
 	matchStateWaitingToStartText = "MatchState: Waiting to start"
 	matchStateLeavingMapText     = "MatchState: Leaving map"
+	runtimePlayerMissingGrace    = 5 * time.Second
+	runtimePlayerInitialGrace    = 30 * time.Second
 	mordhauLoadMapMarker         = "LogLoad: LoadMap: "
 	mordhauGameClassMarker       = "LogLoad: Game class is '"
 )
@@ -47,6 +49,7 @@ type gameLogEvent struct {
 	PlayerJoinedAt          time.Time
 	ChatChannel             string
 	ChatMessage             string
+	Inferred                bool
 }
 
 type gameLogPlayer struct {
@@ -67,12 +70,18 @@ type gameLogProcessor struct {
 	emptyLeavingMapShown bool
 	currentMap           string
 	currentGameMode      string
+	runtimeReady         bool
+	runtimePlayerCount   int
+	runtimeMissingSince  map[string]time.Time
+	runtimeSeenPlayers   map[string]struct{}
 }
 
 func newGameLogProcessor() *gameLogProcessor {
 	return &gameLogProcessor{
-		players: make(map[string]gameLogPlayer),
-		pending: make(map[string]gameLogPlayer),
+		players:             make(map[string]gameLogPlayer),
+		pending:             make(map[string]gameLogPlayer),
+		runtimeMissingSince: make(map[string]time.Time),
+		runtimeSeenPlayers:  make(map[string]struct{}),
 	}
 }
 
@@ -82,6 +91,10 @@ func (processor *gameLogProcessor) reset() {
 	processor.connections = nil
 	processor.currentMap = ""
 	processor.currentGameMode = ""
+	processor.runtimeReady = false
+	processor.runtimePlayerCount = 0
+	clear(processor.runtimeMissingSince)
+	clear(processor.runtimeSeenPlayers)
 	// Empty-state suppression spans log rotation and server restarts. Only a
 	// player joining opens a new visible window for idle map-state events.
 }
@@ -95,7 +108,11 @@ func (processor *gameLogProcessor) resetEmptyMatchStateWindow() {
 }
 
 func (processor *gameLogProcessor) allowMatchStateEvent(text string) bool {
-	if len(processor.players) > 0 {
+	activePlayers := len(processor.players) > 0
+	if processor.runtimeReady {
+		activePlayers = processor.runtimePlayerCount > 0
+	}
+	if activePlayers {
 		return true
 	}
 	switch text {
@@ -660,13 +677,107 @@ func (processor *gameLogProcessor) closePlayerSessions(at time.Time) []gameLogEv
 			continue
 		}
 		events = append(events, gameLogEvent{
-			Time:           at,
+			Time: at,
+			Kind: "login",
+			Text: fmt.Sprintf(
+				"Login: %s (%s) logged out",
+				player.name,
+				playerID,
+			),
 			PlayerAction:   "logout",
 			PlayerID:       playerID,
 			PlayerName:     player.name,
 			PlayerIP:       player.ip,
 			PlayerJoinedAt: player.joinedAt,
+			Inferred:       true,
 		})
+	}
+	sort.Slice(events, func(left, right int) bool {
+		return events[left].PlayerID < events[right].PlayerID
+	})
+	return events
+}
+
+func (processor *gameLogProcessor) runtimeUnavailable() {
+	processor.runtimeReady = false
+	processor.runtimePlayerCount = 0
+	clear(processor.runtimeMissingSince)
+}
+
+func (processor *gameLogProcessor) reconcileRuntimePlayers(
+	ready bool,
+	playerCount int,
+	playerIDs map[string]struct{},
+	exactIdentities bool,
+	now time.Time,
+) []gameLogEvent {
+	if !ready || playerCount < 0 || now.IsZero() {
+		processor.runtimeUnavailable()
+		return nil
+	}
+	processor.runtimeReady = true
+	processor.runtimePlayerCount = playerCount
+	if len(processor.players) == 0 {
+		clear(processor.runtimeMissingSince)
+		return nil
+	}
+	if playerCount > 0 && !exactIdentities {
+		clear(processor.runtimeMissingSince)
+		return nil
+	}
+
+	events := make([]gameLogEvent, 0)
+	for playerID, player := range processor.players {
+		canonicalPlayerID := strings.ToUpper(playerID)
+		_, present := playerIDs[canonicalPlayerID]
+		missing := playerCount == 0 || (exactIdentities && !present)
+		if !missing {
+			processor.runtimeSeenPlayers[playerID] = struct{}{}
+			delete(processor.runtimeMissingSince, playerID)
+			continue
+		}
+		missingSince, tracked := processor.runtimeMissingSince[playerID]
+		if !tracked || now.Before(missingSince) {
+			processor.runtimeMissingSince[playerID] = now
+			continue
+		}
+		if now.Sub(missingSince) < runtimePlayerMissingGrace {
+			continue
+		}
+		if _, seen := processor.runtimeSeenPlayers[playerID]; !seen &&
+			!player.joinedAt.IsZero() &&
+			now.Sub(player.joinedAt) < runtimePlayerInitialGrace {
+			continue
+		}
+		if !player.joinedAt.IsZero() {
+			events = append(events, gameLogEvent{
+				Time: now,
+				Kind: "login",
+				Text: fmt.Sprintf(
+					"Login: %s (%s) logged out",
+					player.name,
+					playerID,
+				),
+				PlayerAction:   "logout",
+				PlayerID:       playerID,
+				PlayerName:     player.name,
+				PlayerIP:       player.ip,
+				PlayerJoinedAt: player.joinedAt,
+				Inferred:       true,
+			})
+		}
+		delete(processor.players, playerID)
+		delete(processor.pending, playerID)
+		delete(processor.runtimeMissingSince, playerID)
+		delete(processor.runtimeSeenPlayers, playerID)
+	}
+	for playerID := range processor.runtimeMissingSince {
+		if _, exists := processor.players[playerID]; !exists {
+			delete(processor.runtimeMissingSince, playerID)
+		}
+	}
+	if len(events) > 0 && len(processor.players) == 0 {
+		processor.resetEmptyMatchStateWindow()
 	}
 	sort.Slice(events, func(left, right int) bool {
 		return events[left].PlayerID < events[right].PlayerID
@@ -694,6 +805,7 @@ func (processor *gameLogProcessor) processLine(line string) []gameLogEvent {
 		return nil
 	}
 	if name, playerID, ok := parseMordhauLoginRequest(body); ok {
+		playerID = strings.ToUpper(playerID)
 		processor.pending[playerID] = gameLogPlayer{
 			name: name,
 			ip:   processor.nextConnection(eventTime),
@@ -701,6 +813,7 @@ func (processor *gameLogProcessor) processLine(line string) []gameLogEvent {
 		return nil
 	}
 	if name, playerID, ok := parseMordhauAuthentication(body); ok {
+		playerID = strings.ToUpper(playerID)
 		pending := processor.pending[playerID]
 		if pending.name != "" {
 			name = pending.name
@@ -724,6 +837,7 @@ func (processor *gameLogProcessor) processLine(line string) []gameLogEvent {
 			joinedAt: eventTime,
 		}
 		processor.players[playerID] = player
+		delete(processor.runtimeMissingSince, playerID)
 		delete(processor.pending, playerID)
 		return []gameLogEvent{{
 			Time: eventTime,
@@ -742,9 +856,12 @@ func (processor *gameLogProcessor) processLine(line string) []gameLogEvent {
 		}}
 	}
 	if chat, ok := parseMordhauChatDetails(body); ok {
-		player := processor.players[chat.PlayerID]
-		player.name = chat.Name
-		processor.players[chat.PlayerID] = player
+		chat.PlayerID = strings.ToUpper(chat.PlayerID)
+		player, active := processor.players[chat.PlayerID]
+		if active {
+			player.name = chat.Name
+			processor.players[chat.PlayerID] = player
+		}
 		delete(processor.pending, chat.PlayerID)
 		return []gameLogEvent{{
 			Time:           eventTime,
@@ -760,9 +877,12 @@ func (processor *gameLogProcessor) processLine(line string) []gameLogEvent {
 		}}
 	}
 	if playerID, address, ok := parseMordhauGameConnectionClose(body); ok {
+		playerID = strings.ToUpper(playerID)
 		player, active := processor.players[playerID]
 		delete(processor.players, playerID)
 		delete(processor.pending, playerID)
+		delete(processor.runtimeMissingSince, playerID)
+		delete(processor.runtimeSeenPlayers, playerID)
 		if !active {
 			return nil
 		}
@@ -818,10 +938,97 @@ func (manager *Manager) closeLivePlayerSessions(
 	at time.Time,
 ) {
 	events := processor.closePlayerSessions(at)
-	for _, event := range events {
-		manager.publishFleetGameLogEvent(event)
+	manager.recordLiveGameLogEvents(events)
+}
+
+func (manager *Manager) discardPersistentlyClosedGameLogSessions(
+	processor *gameLogProcessor,
+) {
+	manager.playersMu.RLock()
+	defer manager.playersMu.RUnlock()
+	for playerID, live := range processor.players {
+		index := playerRecordIndex(&manager.playerHistory, playerID)
+		if index < 0 {
+			continue
+		}
+		closed := false
+		for _, connection := range manager.playerHistory.Players[index].Connections {
+			if connection.JoinedAt.Equal(live.joinedAt) && connection.LeftAt != nil {
+				closed = true
+				break
+			}
+		}
+		if !closed {
+			continue
+		}
+		delete(processor.players, playerID)
+		delete(processor.pending, playerID)
+		delete(processor.runtimeMissingSince, playerID)
+		delete(processor.runtimeSeenPlayers, playerID)
 	}
-	manager.recordPlayerGameEvents(events)
+}
+
+func freshRuntimeBridgeSummary(summary RuntimeBridgeSummary, now time.Time) bool {
+	if !summary.Ready || summary.Status != "ready" || summary.SampledAt.IsZero() {
+		return false
+	}
+	age := now.Sub(summary.SampledAt)
+	return age >= -runtimeBridgeStaleAfter && age <= runtimeBridgeStaleAfter
+}
+
+func (manager *Manager) runtimeGameLogPlayers(
+	now time.Time,
+) (bool, int, map[string]struct{}, bool) {
+	manager.runtimeMu.RLock()
+	defer manager.runtimeMu.RUnlock()
+	if !freshRuntimeBridgeSummary(manager.runtimeSummary, now) {
+		return false, 0, nil, false
+	}
+	playerIDs := make(map[string]struct{}, manager.runtimeSummary.PlayerControllerCount)
+	for _, target := range manager.runtimeTargets {
+		if target.Kind != "player_controller" ||
+			!validMordhauPlayerID(target.PlayFabID) {
+			continue
+		}
+		playerIDs[strings.ToUpper(target.PlayFabID)] = struct{}{}
+	}
+	exact := manager.runtimeSummary.PlayerControllerCount == 0 ||
+		len(playerIDs) == manager.runtimeSummary.PlayerControllerCount
+	return true, manager.runtimeSummary.PlayerControllerCount, playerIDs, exact
+}
+
+func (manager *Manager) recordLiveGameLogEvents(events []gameLogEvent) {
+	if len(events) == 0 {
+		return
+	}
+	playerEvents := make([]gameLogEvent, 0, len(events))
+	for _, event := range events {
+		manager.addRCONEventAtMetadata(
+			event.Time,
+			event.Kind,
+			event.Text,
+			event.Inferred,
+		)
+		manager.publishFleetGameLogEvent(event)
+		if event.PlayerAction != "" {
+			playerEvents = append(playerEvents, event)
+		}
+	}
+	manager.recordPlayerGameEvents(playerEvents)
+}
+
+func (manager *Manager) reconcileRuntimeGameLogPlayers(
+	processor *gameLogProcessor,
+	now time.Time,
+) {
+	ready, playerCount, playerIDs, exact := manager.runtimeGameLogPlayers(now)
+	manager.recordLiveGameLogEvents(processor.reconcileRuntimePlayers(
+		ready,
+		playerCount,
+		playerIDs,
+		exact,
+		now,
+	))
 }
 
 func (manager *Manager) gameLogLoop(ctx context.Context) {
@@ -842,6 +1049,7 @@ func (manager *Manager) gameLogLoop(ctx context.Context) {
 		log.Printf("initialize MORDHAU game-log follower: %v", err)
 	}
 	if wasRunning {
+		manager.discardPersistentlyClosedGameLogSessions(processor)
 		mapName, gameMode := processor.gameContext()
 		manager.setGameContext(mapName, gameMode)
 	}
@@ -865,6 +1073,9 @@ func (manager *Manager) gameLogLoop(ctx context.Context) {
 				_, err := follower.initialize(func(line string) {
 					_ = processor.processLine(line)
 				})
+				if err == nil {
+					manager.discardPersistentlyClosedGameLogSessions(processor)
+				}
 				if err != nil {
 					if err.Error() != lastReadError {
 						log.Printf("initialize MORDHAU game-log follower: %v", err)
@@ -893,21 +1104,16 @@ func (manager *Manager) gameLogLoop(ctx context.Context) {
 					} else {
 						manager.setEventSourceState(false, "Waiting for Mordhau.log")
 					}
-					var playerEvents []gameLogEvent
+					var events []gameLogEvent
 					for _, line := range lines {
-						for _, event := range processor.processLine(line) {
-							manager.addRCONEventAt(event.Time, event.Kind, event.Text)
-							manager.publishFleetGameLogEvent(event)
-							if event.PlayerAction != "" {
-								playerEvents = append(playerEvents, event)
-							}
-						}
+						events = append(events, processor.processLine(line)...)
 					}
+					manager.recordLiveGameLogEvents(events)
 					mapName, gameMode := processor.gameContext()
 					manager.setGameContext(mapName, gameMode)
-					manager.recordPlayerGameEvents(playerEvents)
 				}
 			}
+			manager.reconcileRuntimeGameLogPlayers(processor, time.Now())
 		}
 
 		select {

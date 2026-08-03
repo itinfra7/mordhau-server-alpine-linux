@@ -29,7 +29,7 @@ mkdir -p "$TEST_ROOT/state"
 # shellcheck disable=SC1090
 . "$LIBRARY"
 
-PROJECT_VERSION=2.6.6
+PROJECT_VERSION=2.6.7
 STATE_DIR="$TEST_ROOT/state"
 ALLOW_DOWNGRADE=0
 INSTALLED_VERSION=""
@@ -41,7 +41,7 @@ die() {
     exit 1
 }
 
-for version in 0.0.0 2.6.6 10.20.300; do
+for version in 0.0.0 2.6.7 10.20.300; do
     version_valid "$version" || {
         printf 'Valid version rejected: %s\n' "$version" >&2
         exit 1
@@ -54,26 +54,26 @@ for version in "" 1 1.2 1.2.3.4 v1.2.3 1..3 1.2.-3 01.2.3 1.02.3 1.2.03 12345678
     fi
 done
 
-[ "$(compare_versions 2.6.5 2.6.6)" -eq -1 ]
-[ "$(compare_versions 2.6.6 2.6.6)" -eq 0 ]
-[ "$(compare_versions 2.7.0 2.6.6)" -eq 1 ]
+[ "$(compare_versions 2.6.6 2.6.7)" -eq -1 ]
+[ "$(compare_versions 2.6.7 2.6.7)" -eq 0 ]
+[ "$(compare_versions 2.7.0 2.6.7)" -eq 1 ]
 [ "$(compare_versions 3.0.0 2.99.99)" -eq 1 ]
 
 prepare_version_transition > "$TEST_ROOT/fresh.log"
-grep -Fq 'Installing mordhau-server-alpine-linux 2.6.6.' "$TEST_ROOT/fresh.log"
+grep -Fq 'Installing mordhau-server-alpine-linux 2.6.7.' "$TEST_ROOT/fresh.log"
 [ -z "$INSTALLED_VERSION" ]
 
-printf '%s\n' 2.6.5 > "$STATE_DIR/manager-version"
+printf '%s\n' 2.6.6 > "$STATE_DIR/manager-version"
 prepare_version_transition > "$TEST_ROOT/upgrade.log"
 grep -Fq \
-    'Upgrading mordhau-server-alpine-linux 2.6.5 -> 2.6.6.' \
+    'Upgrading mordhau-server-alpine-linux 2.6.6 -> 2.6.7.' \
     "$TEST_ROOT/upgrade.log"
-[ "$INSTALLED_VERSION" = 2.6.5 ]
+[ "$INSTALLED_VERSION" = 2.6.6 ]
 
-printf '%s\n' 2.6.6 > "$STATE_DIR/manager-version"
+printf '%s\n' 2.6.7 > "$STATE_DIR/manager-version"
 prepare_version_transition > "$TEST_ROOT/reinstall.log"
 grep -Fq \
-    'Reinstalling mordhau-server-alpine-linux 2.6.6 for validation.' \
+    'Reinstalling mordhau-server-alpine-linux 2.6.7 for validation.' \
     "$TEST_ROOT/reinstall.log"
 
 printf '%s\n' 2.7.0 > "$STATE_DIR/manager-version"
@@ -89,7 +89,7 @@ grep -Fq 'without --allow-downgrade' "$TEST_ROOT/downgrade-denied.log"
 ALLOW_DOWNGRADE=1
 prepare_version_transition > "$TEST_ROOT/downgrade-allowed.log"
 grep -Fq \
-    'Downgrading mordhau-server-alpine-linux 2.7.0 -> 2.6.6.' \
+    'Downgrading mordhau-server-alpine-linux 2.7.0 -> 2.6.7.' \
     "$TEST_ROOT/downgrade-allowed.log"
 
 printf '%s\n%s\n' 2.3.2 unexpected > "$STATE_DIR/manager-version"
@@ -103,7 +103,7 @@ grep -Fq 'installed manager version state is invalid' "$TEST_ROOT/invalid-state.
 
 printf '%s\n' 2.6.0 > "$STATE_DIR/manager-version"
 record_installed_version
-[ "$(cat "$STATE_DIR/manager-version")" = 2.6.6 ]
+[ "$(cat "$STATE_DIR/manager-version")" = 2.6.7 ]
 [ "$(stat -c '%a' "$STATE_DIR/manager-version")" = 600 ]
 [ -z "$(find "$STATE_DIR" -maxdepth 1 -name '.manager-version.*' -print)" ]
 

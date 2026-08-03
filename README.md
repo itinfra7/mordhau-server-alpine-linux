@@ -145,12 +145,12 @@ history remains in the versioned changelog asset instead of being repeated in
 every Release body.
 
 ```sh
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.6.6/mordhau-server-alpine-linux-v2.6.6.tar.gz
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.6.6/CHANGELOG-v2.6.6.md
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.6.6/SHA256SUMS
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.6.7/mordhau-server-alpine-linux-v2.6.7.tar.gz
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.6.7/CHANGELOG-v2.6.7.md
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.6.7/SHA256SUMS
 sha256sum -c SHA256SUMS
-tar -xzf mordhau-server-alpine-linux-v2.6.6.tar.gz
-cd mordhau-server-alpine-linux-v2.6.6
+tar -xzf mordhau-server-alpine-linux-v2.6.7.tar.gz
+cd mordhau-server-alpine-linux-v2.6.7
 chmod +x src/mordhau-server-alpine-linux.sh
 ./src/mordhau-server-alpine-linux.sh
 ```
@@ -531,9 +531,15 @@ disk. Login requests are correlated with successful authentication by PlayFab
 ID and are the only source allowed to introduce or reprioritize a persistent
 nickname. UTF-8 chat identity and the authoritative game-connection close
 record remain available for server-event and session correlation without
-changing nickname history. Archived logs are fingerprinted after a successful
-import, and a `.log` to `.log.xz` conversion retains the same archive identity
-so it cannot duplicate sessions.
+changing nickname history. If a native close record is absent, a fresh Runtime
+bridge identity snapshot closes an authenticated session after the player has
+remained absent for five seconds. A newly authenticated identity receives a
+30-second initial discovery grace, and an unavailable or incomplete Runtime
+snapshot never infers an individual logout. The inferred lifecycle event and
+session duration are persisted, while a later native close record or manager
+restart cannot duplicate the logout. Archived logs are fingerprinted after a
+successful import, and a `.log` to `.log.xz` conversion retains the same
+archive identity so it cannot duplicate sessions.
 
 Persistent history is stored with mode `0600` at:
 
@@ -847,7 +853,10 @@ Fleet responses add source-server labels and normalize local lifecycle text at
 read time without rewriting stored records. Legacy player-lifecycle text that
 contains a second server-local timestamp is compacted for Fleet display; the
 event timestamp beside each line remains formatted in the viewing browser's
-locale and time zone.
+locale and time zone. Legacy automatic-update notices are also normalized at
+read time so product names, versions, and build identifiers are not exposed to
+players or retained in the browser view; the append-only source record remains
+unchanged for administrative auditing.
 
 ## Recovery and Monitoring
 
@@ -1278,8 +1287,11 @@ Both automatic options are disabled by default and are stored server-wide in:
 
 Each automatic update option has its own restart policy:
 
-- **10-minute countdown** starts immediately and announces the target in
-  English at 10, 5, 4, 3, 2, and 1 minute through the Unicode Bridge.
+- **10-minute countdown** starts immediately and identifies the target as the
+  server management tool, game server, or both in English at 10, 5, 4, 3, 2,
+  and 1 minute through the Unicode Bridge. Product names, versions, and build
+  identifiers remain visible only to authenticated administrators and are not
+  included in player notices.
 - **When the server is empty** announces that an update is ready, waits for
   the Runtime bridge to report zero PlayerControllers continuously for
   30 seconds, and then performs the update.
@@ -1486,8 +1498,10 @@ audit argument exclusion, transport-status migration filtering, packet
 framing, Korean legacy decoding, UTF-8 chat parsing, player-ID-based Unicode
 login/logout identity correlation, canonical connection-address correlation,
 link-local relay-address exclusion and migration, idempotent archived/current
-player-history import, session-duration
-accounting, attributed persistent comments, verified mute/ban command
+player-history import, Runtime-backed missing-logout reconciliation,
+restart-safe inferred lifecycle deduplication, chat-only ghost-session
+prevention, session-duration accounting, attributed persistent comments,
+verified mute/ban command
 handling, GeoIP edition and ignored-prefix validation, local location-record
 normalization, fixed-origin download failure handling,
 match/kill/score/punishment parsing, current map and game-mode parsing, idle

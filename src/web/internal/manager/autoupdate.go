@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"strconv"
-	"strings"
 	"time"
 )
 
@@ -606,20 +605,6 @@ func automaticUpdateAuditDetails(
 	return details
 }
 
-func automaticUpdateDescription(schedule *automaticUpdateSchedule) string {
-	var items []string
-	if schedule.ManagerVersion != "" {
-		items = append(items, "MORDHAU Control v"+schedule.ManagerVersion)
-	}
-	if schedule.SteamBuildID != "" {
-		items = append(
-			items,
-			"MORDHAU Dedicated Server build "+schedule.SteamBuildID,
-		)
-	}
-	return strings.Join(items, " and ")
-}
-
 func automaticUpdateNoticeMessage(
 	schedule *automaticUpdateSchedule,
 	minutes int,
@@ -629,25 +614,40 @@ func automaticUpdateNoticeMessage(
 		unit = "minute"
 	}
 	return fmt.Sprintf(
-		"[SYSTEM UPDATE] The server will restart in %d %s to install %s.",
+		"[SYSTEM UPDATE] The server will restart in %d %s to update %s.",
 		minutes,
 		unit,
-		automaticUpdateDescription(schedule),
+		automaticUpdatePlayerTarget(schedule),
 	)
 }
 
 func automaticUpdateFinalMessage(
 	schedule *automaticUpdateSchedule,
 ) string {
-	return "[SYSTEM UPDATE] The server is restarting now to install " +
-		automaticUpdateDescription(schedule) + "."
+	return "[SYSTEM UPDATE] The server is restarting now to update " +
+		automaticUpdatePlayerTarget(schedule) + "."
 }
 
 func automaticUpdateEmptyMessage(
 	schedule *automaticUpdateSchedule,
 ) string {
-	return "[SYSTEM UPDATE] " + automaticUpdateDescription(schedule) +
-		" is ready. The server will restart as soon as no players remain."
+	return "[SYSTEM UPDATE] An update for " +
+		automaticUpdatePlayerTarget(schedule) + " is ready. " +
+		"The server will restart as soon as no players remain."
+}
+
+func automaticUpdatePlayerTarget(schedule *automaticUpdateSchedule) string {
+	if schedule != nil {
+		switch {
+		case schedule.ManagerVersion != "" && schedule.SteamBuildID != "":
+			return "the server management tool and game server"
+		case schedule.ManagerVersion != "":
+			return "the server management tool"
+		case schedule.SteamBuildID != "":
+			return "the game server"
+		}
+	}
+	return "the server software"
 }
 
 func (m *Manager) sendAutomaticUpdateMessage(message string) error {

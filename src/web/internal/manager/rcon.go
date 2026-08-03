@@ -107,6 +107,15 @@ func (m *Manager) addRCONEventAt(
 	kind string,
 	text string,
 ) (RCONEvent, bool) {
+	return m.addRCONEventAtMetadata(eventTime, kind, text, false)
+}
+
+func (m *Manager) addRCONEventAtMetadata(
+	eventTime time.Time,
+	kind string,
+	text string,
+	inferred bool,
+) (RCONEvent, bool) {
 	text = strings.TrimSpace(strings.ReplaceAll(text, "\x00", ""))
 	if text == "" || isRCONTransportStatusEvent(kind, text) {
 		return RCONEvent{}, false
@@ -121,6 +130,7 @@ func (m *Manager) addRCONEventAt(
 		Time:     eventTime,
 		Text:     text,
 		Kind:     kind,
+		Inferred: inferred,
 	}
 	m.rconEvents = retainRCONEvent(m.rconEvents, event)
 	persistErr := m.appendRCONEventLog(event)

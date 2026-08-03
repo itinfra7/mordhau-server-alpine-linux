@@ -1,21 +1,36 @@
-This release contains the following changes relative to v2.6.5.
+This release contains the following changes relative to v2.6.6.
 
 ## Changelog
 
+### Changed
+
+- Identify automatic-update player notices as a server management-tool update,
+  game-server update, or combined update without exposing product names,
+  versions, build identifiers, or installation details.
+- Normalize previously retained notices in the browser view while preserving
+  the append-only administrative event record.
+
 ### Fixed
 
-- Exclude IPv4 and IPv6 link-local tunnel endpoints from persistent player IP
-  history.
-- Remove previously stored link-local values from player address lists and
-  connection IP fields while retaining session timing and all non-address
-  profile data.
+- Recover a missing player logout from fresh Runtime bridge PlayerController
+  identities after a bounded continuous-absence grace period.
+- Persist the recovered Server Events lifecycle record and close the matching
+  player-history session while preventing late-log and manager-restart
+  duplicates.
+- Prevent unauthenticated chat observations from creating ghost active
+  sessions.
+- Suppress and compact repeated empty-server map-state tail cycles when a fresh
+  Runtime snapshot confirms that no PlayerControllers are connected.
 
 ### Validation
 
-- Verify canonical public, private, native IPv6, and IPv4-mapped addresses are
-  preserved while link-local addresses are rejected.
-- Verify migration is idempotent and current-log imports cannot restore a
-  discarded link-local tunnel endpoint.
+- Verify per-player identity reconciliation, missing and incomplete Runtime
+  data, initial discovery grace, late native close records, persistent session
+  closure, restart deduplication, and chat-only activity.
+- Verify browser-view compaction preserves the append-only event history and
+  unrelated local and Fleet events.
+- Verify automatic-update player notices never expose internal update targets.
+- Verify legacy-notice normalization does not rewrite raw event history.
 
 ## Documentation
 
@@ -32,6 +47,6 @@ sha256sum -c SHA256SUMS
 
 Repository-authored source is available under the MIT License.
 
-Previous release: [v2.6.5](https://github.com/itinfra7/mordhau-server-alpine-linux/releases/tag/v2.6.5)
+Previous release: [v2.6.6](https://github.com/itinfra7/mordhau-server-alpine-linux/releases/tag/v2.6.6)
 
-Full comparison: [v2.6.5...v2.6.6](https://github.com/itinfra7/mordhau-server-alpine-linux/compare/v2.6.5...v2.6.6)
+Full comparison: [v2.6.6...v2.6.7](https://github.com/itinfra7/mordhau-server-alpine-linux/compare/v2.6.6...v2.6.7)

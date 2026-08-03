@@ -147,6 +147,7 @@ type RCONEvent struct {
 	Time     time.Time `json:"time"`
 	Text     string    `json:"text"`
 	Kind     string    `json:"kind"`
+	Inferred bool      `json:"inferred,omitempty"`
 }
 
 type Snapshot struct {
