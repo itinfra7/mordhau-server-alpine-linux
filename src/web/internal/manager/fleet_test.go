@@ -623,8 +623,8 @@ func TestFleetSAYParsingAndSourceLabels(t *testing.T) {
 		category string
 		expected string
 	}{
-		{FleetEventAllChat, "(Dread Server) <플레이어> : команда"},
-		{FleetEventTeamChat, "(Dread Server · TEAM) <플레이어> : команда"},
+		{FleetEventAllChat, "(Dread Server) Chat: 1111222233334444, 플레이어, (ALL) команда"},
+		{FleetEventTeamChat, "(Dread Server) Chat: 1111222233334444, 플레이어, (TEAM) команда"},
 		{FleetEventWebSAY, "(Dread Server · WEB SAY) команда"},
 		{FleetEventRCONSAY, "(Dread Server · RCON SAY) команда"},
 		{FleetEventPlayerLogin, "(Dread Server) <플레이어> joined the server."},
@@ -634,6 +634,10 @@ func TestFleetSAYParsingAndSourceLabels(t *testing.T) {
 			Category:   test.category,
 			PlayerName: "플레이어",
 			Message:    "команда",
+		}
+		if test.category == FleetEventAllChat ||
+			test.category == FleetEventTeamChat {
+			event.PlayerID = "1111222233334444"
 		}
 		message, err := formatFleetEventMessage("Dread", event)
 		if err != nil {
@@ -763,7 +767,8 @@ func TestFleetGameLogMappingIncludesForcedSessionClose(t *testing.T) {
 		select {
 		case published := <-events:
 			if published.Category != test.category ||
-				published.OriginNodeID != identity.NodeID {
+				published.OriginNodeID != identity.NodeID ||
+				published.PlayerID != test.event.PlayerID {
 				t.Fatalf("unexpected published event: %+v", published)
 			}
 		default:
@@ -785,6 +790,39 @@ func TestFleetGameLogMappingIncludesForcedSessionClose(t *testing.T) {
 		}
 	default:
 		t.Fatal("forced session close did not publish a logout event")
+	}
+}
+
+func TestFleetEventPlayerIDIsCanonicalAndLegacyEventsRemainCompatible(t *testing.T) {
+	origin := "abcdefghijklmnopqrstuvwxyz234567"
+	event := FleetEvent{
+		ID:           origin + ":test:1",
+		OriginNodeID: origin,
+		Sequence:     1,
+		Time:         time.Now(),
+		Category:     FleetEventAllChat,
+		PlayerID:     "a1b2c3d4e5f60718",
+		PlayerName:   "Player",
+		Message:      "hello",
+	}
+	normalized, err := normalizeFleetEvent(event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if normalized.PlayerID != "A1B2C3D4E5F60718" {
+		t.Fatalf("canonical player ID = %q", normalized.PlayerID)
+	}
+
+	legacy := event
+	legacy.PlayerID = ""
+	if _, err := normalizeFleetEvent(legacy); err != nil {
+		t.Fatalf("legacy event without player ID was rejected: %v", err)
+	}
+
+	invalid := event
+	invalid.PlayerID = "not-a-player-id"
+	if _, err := normalizeFleetEvent(invalid); err == nil {
+		t.Fatal("invalid player ID was accepted")
 	}
 }
 

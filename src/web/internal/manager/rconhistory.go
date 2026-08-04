@@ -186,6 +186,7 @@ func (m *Manager) rconEventsForView(events []RCONEvent) []RCONEvent {
 			events[index].Text,
 		)
 		if fleetEnabled {
+			events[index].CurrentServer = events[index].Kind != "fleet"
 			events[index] = rconEventForFleetView(events[index], localLabel)
 		}
 	}

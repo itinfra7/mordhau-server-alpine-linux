@@ -143,11 +143,12 @@ type MetricHistoryPoint struct {
 }
 
 type RCONEvent struct {
-	Sequence uint64    `json:"sequence"`
-	Time     time.Time `json:"time"`
-	Text     string    `json:"text"`
-	Kind     string    `json:"kind"`
-	Inferred bool      `json:"inferred,omitempty"`
+	Sequence      uint64    `json:"sequence"`
+	Time          time.Time `json:"time"`
+	Text          string    `json:"text"`
+	Kind          string    `json:"kind"`
+	Inferred      bool      `json:"inferred,omitempty"`
+	CurrentServer bool      `json:"current_server,omitempty"`
 }
 
 type Snapshot struct {

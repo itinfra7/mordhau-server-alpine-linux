@@ -1,36 +1,32 @@
-This release contains the following changes relative to v2.6.6.
+This release contains the following changes relative to v2.6.7.
 
 ## Changelog
 
 ### Changed
 
-- Identify automatic-update player notices as a server management-tool update,
-  game-server update, or combined update without exposing product names,
-  versions, build identifiers, or installation details.
-- Normalize previously retained notices in the browser view while preserving
-  the append-only administrative event record.
+- Include each player's validated canonical PlayFabID in relayed All and Team
+  Chat and use the same structured chat presentation for local and remote
+  servers.
+- Mark every event collected by the currently selected Fleet server and render
+  it in bold while retaining regular weight for relayed events.
+- Keep identifier-free events compatible during rolling upgrades while
+  validating every supplied player identifier.
 
 ### Fixed
 
-- Recover a missing player logout from fresh Runtime bridge PlayerController
-  identities after a bounded continuous-absence grace period.
-- Persist the recovered Server Events lifecycle record and close the matching
-  player-history session while preventing late-log and manager-restart
-  duplicates.
-- Prevent unauthenticated chat observations from creating ghost active
-  sessions.
-- Suppress and compact repeated empty-server map-state tail cycles when a fresh
-  Runtime snapshot confirms that no PlayerControllers are connected.
+- Apply selected-server emphasis to chat, match-state, command, response, and
+  system events instead of only local login and logout records.
+- Apply the selected-server label and emphasis metadata to immediate web RCON
+  command results as well as snapshot and history responses.
 
 ### Validation
 
-- Verify per-player identity reconciliation, missing and incomplete Runtime
-  data, initial discovery grace, late native close records, persistent session
-  closure, restart deduplication, and chat-only activity.
-- Verify browser-view compaction preserves the append-only event history and
-  unrelated local and Fleet events.
-- Verify automatic-update player notices never expose internal update targets.
-- Verify legacy-notice normalization does not rewrite raw event history.
+- Verify canonical PlayFabID publication and display for both All and Team
+  Chat, invalid-ID rejection, and compatibility with legacy events.
+- Verify Controller and Managed local records are marked current, relayed
+  records remain unmarked, and persistent event history is not mutated.
+- Verify frontend source emphasis depends on explicit API metadata and does not
+  introduce a server-specific text color.
 
 ## Documentation
 
@@ -47,6 +43,6 @@ sha256sum -c SHA256SUMS
 
 Repository-authored source is available under the MIT License.
 
-Previous release: [v2.6.6](https://github.com/itinfra7/mordhau-server-alpine-linux/releases/tag/v2.6.6)
+Previous release: [v2.6.7](https://github.com/itinfra7/mordhau-server-alpine-linux/releases/tag/v2.6.7)
 
-Full comparison: [v2.6.6...v2.6.7](https://github.com/itinfra7/mordhau-server-alpine-linux/compare/v2.6.6...v2.6.7)
+Full comparison: [v2.6.7...v2.6.8](https://github.com/itinfra7/mordhau-server-alpine-linux/compare/v2.6.7...v2.6.8)

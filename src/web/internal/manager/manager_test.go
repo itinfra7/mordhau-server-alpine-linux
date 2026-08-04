@@ -1041,6 +1041,11 @@ func TestRCONCommandHandlerPersistsOutputAndAuditsActor(t *testing.T) {
 	manager := &Manager{
 		rconLogPath: filepath.Join(directory, "rcon.log"),
 		auditPath:   filepath.Join(directory, "audit.log"),
+		fleetSettings: fleetSettingsFile{
+			Version: fleetSettingsVersion,
+			Role:    FleetRoleController,
+			Alias:   "Dread",
+		},
 	}
 	manager.rconCommandExecute = func(command string) (rconCommandResult, error) {
 		if command != "adminlogin SuperSecret" {
@@ -1076,14 +1081,20 @@ func TestRCONCommandHandlerPersistsOutputAndAuditsActor(t *testing.T) {
 		t.Fatalf("unexpected handler result: %+v", result)
 	}
 	if result.ResponseEvents[0].Kind != "command" ||
-		result.ResponseEvents[0].Text != "operator > adminlogin SuperSecret" ||
+		result.ResponseEvents[0].Text !=
+			"(Dread Server) operator > adminlogin SuperSecret" ||
 		result.ResponseEvents[1].Kind != "response" ||
-		result.ResponseEvents[2].Text != "한국어 응답" {
+		result.ResponseEvents[2].Text != "(Dread Server) 한국어 응답" {
 		t.Fatalf("unexpected command events: %#v", result.ResponseEvents)
+	}
+	for _, event := range result.ResponseEvents {
+		if !event.CurrentServer {
+			t.Fatalf("immediate command event was not marked current: %#v", event)
+		}
 	}
 
 	history := manager.rconHistory(rconBrowserHistoryLimit)
-	if len(history) != 3 || history[2].Text != "한국어 응답" {
+	if len(history) != 3 || history[2].Text != "(Dread Server) 한국어 응답" {
 		t.Fatalf("command output was not retained: %#v", history)
 	}
 	auditData, err := os.ReadFile(manager.auditPath)
@@ -1636,11 +1647,17 @@ func TestFleetRCONHistoryLabelsEveryLocalEventAndPreservesRelayedSource(
 			{
 				Sequence: 3,
 				Time:     now,
+				Kind:     "chat",
+				Text:     "Chat: 1111222233334444, Player, (ALL) hello",
+			},
+			{
+				Sequence: 4,
+				Time:     now,
 				Kind:     "fleet",
 				Text:     "(Duel Server) <Player> joined the server.",
 			},
 			{
-				Sequence: 4,
+				Sequence: 5,
 				Time:     now,
 				Kind:     "login",
 				Text: "Login: 플레이어 (1111222233334444) " +
@@ -1653,6 +1670,7 @@ func TestFleetRCONHistoryLabelsEveryLocalEventAndPreservesRelayedSource(
 	want := []string{
 		"(Dread Server) <Player> joined the server.",
 		"(Dread Server) MatchState: In progress",
+		"(Dread Server) Chat: 1111222233334444, Player, (ALL) hello",
 		"(Duel Server) <Player> joined the server.",
 		"(Dread Server) <플레이어> left the server.",
 	}
@@ -1668,6 +1686,15 @@ func TestFleetRCONHistoryLabelsEveryLocalEventAndPreservesRelayedSource(
 				want[index],
 			)
 		}
+		wantCurrent := index != 3
+		if events[index].CurrentServer != wantCurrent {
+			t.Fatalf(
+				"fleet RCON event %d current_server = %v, want %v",
+				index,
+				events[index].CurrentServer,
+				wantCurrent,
+			)
+		}
 	}
 	if manager.rconEvents[0].Text == events[0].Text {
 		t.Fatal("fleet display decoration mutated persistent RCON history")
@@ -1680,11 +1707,17 @@ func TestFleetRCONHistoryLabelsEveryLocalEventAndPreservesRelayedSource(
 		"(Duel Server) <Player> joined the server." {
 		t.Fatalf("managed-server lifecycle label = %q", events[0].Text)
 	}
+	if !events[0].CurrentServer {
+		t.Fatal("managed-server local event was not marked current")
+	}
 
 	manager.fleetSettings.Role = FleetRoleStandalone
 	events = manager.rconHistory(rconBrowserHistoryLimit)
 	if events[0].Text != manager.rconEvents[0].Text {
 		t.Fatalf("standalone lifecycle text changed to %q", events[0].Text)
+	}
+	if events[0].CurrentServer {
+		t.Fatal("standalone event unexpectedly received Fleet current-server metadata")
 	}
 }
 
@@ -2529,9 +2562,9 @@ func TestDashboardThemeAndServerPromptMarkup(t *testing.T) {
 	for _, expected := range []string{
 		`id="theme-toggle"`,
 		`content="width=device-width, initial-scale=1, viewport-fit=cover"`,
-		`src="/static/theme.js?v=2.6.7"`,
-		`href="/static/app.css?v=2.6.7"`,
-		`src="/static/app.js?v=2.6.7"`,
+		`src="/static/theme.js?v=2.6.8"`,
+		`href="/static/app.css?v=2.6.8"`,
+		`src="/static/app.js?v=2.6.8"`,
 		`<body id="page-top">`,
 		`class="brand" href="#page-top"`,
 		`id="fleet-server-picker"`,
@@ -2668,10 +2701,10 @@ func TestDashboardThemeAndServerPromptMarkup(t *testing.T) {
 		t.Fatal(err)
 	}
 	loginSource := string(loginData)
-	if !strings.Contains(loginSource, `src="/static/theme.js?v=2.6.7"`) {
+	if !strings.Contains(loginSource, `src="/static/theme.js?v=2.6.8"`) {
 		t.Fatal("login page does not initialize the persisted theme")
 	}
-	if !strings.Contains(loginSource, `href="/static/app.css?v=2.6.7"`) {
+	if !strings.Contains(loginSource, `href="/static/app.css?v=2.6.8"`) {
 		t.Fatal("login page does not use the release stylesheet version")
 	}
 	if !strings.Contains(loginSource, `viewport-fit=cover`) {
@@ -2788,6 +2821,7 @@ func TestDashboardThemeAndServerPromptMarkup(t *testing.T) {
 		`action: "set_section_enabled"`,
 		`section_id: section.id || ""`,
 		`entry_id: entry.id || ""`,
+		`event.current_server === true`,
 	} {
 		if !strings.Contains(appSource, expected) {
 			t.Fatalf("frontend is missing %q", expected)
@@ -2859,7 +2893,7 @@ func TestMobileLayoutHasTouchAndNarrowViewportRules(t *testing.T) {
 	}
 }
 
-func TestServerLifecycleEventStylingUsesWeightWithoutStatusColor(t *testing.T) {
+func TestCurrentServerEventStylingUsesWeightWithoutStatusColor(t *testing.T) {
 	cssData, err := staticFiles.ReadFile("static/app.css")
 	if err != nil {
 		t.Fatal(err)
@@ -2867,12 +2901,12 @@ func TestServerLifecycleEventStylingUsesWeightWithoutStatusColor(t *testing.T) {
 	css := string(cssData)
 	if !strings.Contains(
 		css,
-		`.console-line.login .console-text { font-weight: 700; }`,
+		`.console-line.current-server .console-text { font-weight: 700; }`,
 	) {
-		t.Fatal("local lifecycle events are not emphasized with bold text")
+		t.Fatal("current-server events are not emphasized with bold text")
 	}
-	if strings.Contains(css, `.console-line.login .console-text { color:`) {
-		t.Fatal("local lifecycle events still override the default text color")
+	if strings.Contains(css, `.console-line.current-server .console-text { color:`) {
+		t.Fatal("current-server events override the default text color")
 	}
 	if strings.Contains(css, `.console-line.fleet .console-text`) {
 		t.Fatal("relayed Fleet events unexpectedly override default text styling")

@@ -29,6 +29,7 @@ type FleetEvent struct {
 	Sequence     uint64    `json:"sequence"`
 	Time         time.Time `json:"time"`
 	Category     string    `json:"category"`
+	PlayerID     string    `json:"player_id,omitempty"`
 	PlayerName   string    `json:"player_name,omitempty"`
 	Message      string    `json:"message,omitempty"`
 }
@@ -79,6 +80,10 @@ func normalizeFleetEvent(event FleetEvent) (FleetEvent, error) {
 	}
 	if !validFleetEventCategory(event.Category) {
 		return FleetEvent{}, errors.New("invalid fleet event category")
+	}
+	event.PlayerID = strings.ToUpper(strings.TrimSpace(event.PlayerID))
+	if event.PlayerID != "" && !validMordhauPlayerID(event.PlayerID) {
+		return FleetEvent{}, errors.New("invalid fleet event player ID")
 	}
 	event.PlayerName = sanitizeFleetText(event.PlayerName, 128)
 	event.Message = sanitizeFleetText(event.Message, unicodeMessageMaxRunes)
@@ -146,6 +151,22 @@ func (m *Manager) publishFleetEventAt(
 	playerName string,
 	message string,
 ) {
+	m.publishFleetPlayerEventAt(
+		eventTime,
+		category,
+		"",
+		playerName,
+		message,
+	)
+}
+
+func (m *Manager) publishFleetPlayerEventAt(
+	eventTime time.Time,
+	category string,
+	playerID string,
+	playerName string,
+	message string,
+) {
 	settings := m.currentFleetSettings()
 	if settings.Role == FleetRoleStandalone || !settings.LocalSync.enabled(category) {
 		return
@@ -169,6 +190,7 @@ func (m *Manager) publishFleetEventAt(
 		Sequence:     sequence,
 		Time:         eventTime,
 		Category:     category,
+		PlayerID:     playerID,
 		PlayerName:   playerName,
 		Message:      message,
 	}
@@ -478,9 +500,29 @@ func formatFleetEventMessage(alias string, event FleetEvent) (string, error) {
 	var message string
 	switch event.Category {
 	case FleetEventAllChat:
-		message = fmt.Sprintf("(%s) <%s> : %s", label, event.PlayerName, event.Message)
+		if event.PlayerID != "" {
+			message = fmt.Sprintf(
+				"(%s) Chat: %s, %s, (ALL) %s",
+				label,
+				event.PlayerID,
+				event.PlayerName,
+				event.Message,
+			)
+		} else {
+			message = fmt.Sprintf("(%s) <%s> : %s", label, event.PlayerName, event.Message)
+		}
 	case FleetEventTeamChat:
-		message = fmt.Sprintf("(%s · TEAM) <%s> : %s", label, event.PlayerName, event.Message)
+		if event.PlayerID != "" {
+			message = fmt.Sprintf(
+				"(%s) Chat: %s, %s, (TEAM) %s",
+				label,
+				event.PlayerID,
+				event.PlayerName,
+				event.Message,
+			)
+		} else {
+			message = fmt.Sprintf("(%s · TEAM) <%s> : %s", label, event.PlayerName, event.Message)
+		}
 	case FleetEventWebSAY:
 		message = fmt.Sprintf("(%s · WEB SAY) %s", label, event.Message)
 	case FleetEventRCONSAY:
@@ -551,30 +593,34 @@ func rconSAYMessage(command string) (string, bool) {
 func (m *Manager) publishFleetGameLogEvent(event gameLogEvent) {
 	switch {
 	case event.Kind == "chat" && event.ChatChannel == "ALL":
-		m.publishFleetEventAt(
+		m.publishFleetPlayerEventAt(
 			event.Time,
 			FleetEventAllChat,
+			event.PlayerID,
 			event.PlayerName,
 			event.ChatMessage,
 		)
 	case event.Kind == "chat" && event.ChatChannel == "TEAM":
-		m.publishFleetEventAt(
+		m.publishFleetPlayerEventAt(
 			event.Time,
 			FleetEventTeamChat,
+			event.PlayerID,
 			event.PlayerName,
 			event.ChatMessage,
 		)
 	case event.PlayerAction == "login":
-		m.publishFleetEventAt(
+		m.publishFleetPlayerEventAt(
 			event.Time,
 			FleetEventPlayerLogin,
+			event.PlayerID,
 			event.PlayerName,
 			"",
 		)
 	case event.PlayerAction == "logout":
-		m.publishFleetEventAt(
+		m.publishFleetPlayerEventAt(
 			event.Time,
 			FleetEventPlayerLogout,
+			event.PlayerID,
 			event.PlayerName,
 			"",
 		)

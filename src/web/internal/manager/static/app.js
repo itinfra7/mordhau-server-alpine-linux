@@ -750,6 +750,7 @@ function appendServerEvents(events) {
     }
     const line = document.createElement("div");
     line.className = `console-line ${event.kind}`;
+    if (event.current_server === true) line.classList.add("current-server");
     const timestamp = document.createElement("span");
     timestamp.className = "console-time";
     timestamp.textContent = new Date(event.time).toLocaleTimeString();

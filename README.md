@@ -145,12 +145,12 @@ history remains in the versioned changelog asset instead of being repeated in
 every Release body.
 
 ```sh
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.6.7/mordhau-server-alpine-linux-v2.6.7.tar.gz
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.6.7/CHANGELOG-v2.6.7.md
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.6.7/SHA256SUMS
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.6.8/mordhau-server-alpine-linux-v2.6.8.tar.gz
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.6.8/CHANGELOG-v2.6.8.md
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.6.8/SHA256SUMS
 sha256sum -c SHA256SUMS
-tar -xzf mordhau-server-alpine-linux-v2.6.7.tar.gz
-cd mordhau-server-alpine-linux-v2.6.7
+tar -xzf mordhau-server-alpine-linux-v2.6.8.tar.gz
+cd mordhau-server-alpine-linux-v2.6.8
 chmod +x src/mordhau-server-alpine-linux.sh
 ./src/mordhau-server-alpine-linux.sh
 ```
@@ -490,8 +490,8 @@ Relayed lines always include the Controller-assigned source display name, for
 example:
 
 ```text
-(Dread Server) <Player> : hello
-(Dread Server · TEAM) <Player> : defend
+(Dread Server) Chat: 1111222233334444, Player, (ALL) hello
+(Dread Server) Chat: 1111222233334444, Player, (TEAM) defend
 (Dread Server · WEB SAY) maintenance soon
 (Dread Server · RCON SAY) match restarting
 (Dread Server) <Player> joined the server.
@@ -500,14 +500,14 @@ example:
 In Fleet mode, Server Events prefix every locally collected event with the
 selected server's display name. Local player login and logout records use the
 same `(Server) <Player> joined/left the server.` presentation as relayed
-lifecycle events. All lifecycle lines use the normal console text color;
-records collected by the currently selected server use bold text while
-relayed lifecycle records use regular weight. Relayed events retain their
-origin label, so chat,
-match-state, command, response, and lifecycle lines remain attributable when
-local and cross-server records share one console. A source server never
-receives its own relayed in-game message; its normalized local web record
-provides the corresponding entry without creating an echo.
+lifecycle events. All and Team Chat records include the canonical PlayFabID,
+player name, channel, and message regardless of which server is selected.
+Records collected by the currently selected server use bold text while
+relayed records use regular weight. Relayed events retain their origin label,
+so chat, match-state, command, response, and lifecycle lines remain
+attributable when local and cross-server records share one console. A source
+server never receives its own relayed in-game message; its normalized local
+web record provides the corresponding entry without creating an echo.
 
 MORDHAU does not expose equivalent team membership across independent
 servers. A relayed Team Chat line is therefore labeled `TEAM` but displayed

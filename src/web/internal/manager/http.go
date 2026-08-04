@@ -1572,6 +1572,7 @@ func (m *Manager) rconCommandHandler(
 		)
 	}
 	m.auditRequestEvent(request, session.Username, "rcon_command_executed", details)
+	events = m.rconEventsForView(events)
 	writeJSON(response, http.StatusOK, map[string]any{
 		"status":             "executed",
 		"response_lines":     len(result.Lines),

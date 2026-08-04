@@ -798,6 +798,7 @@ input:focus, select:focus, textarea:focus { border-color: rgba(233, 79, 81, .65)
 .console-line { display: grid; grid-template-columns: 5.5rem 1fr; gap: .65rem; padding: .12rem 0; }
 .console-time { color: var(--console-time); }
 .console-text { min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.console-line.current-server .console-text { font-weight: 700; }
 .console-line.system .console-text { color: var(--console-system); }
 .console-line.outbound .console-text { color: var(--console-outbound); }
 .console-line.command .console-text { color: var(--console-outbound); font-weight: 700; }

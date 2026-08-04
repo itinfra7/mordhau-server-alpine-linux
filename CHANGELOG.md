@@ -4,6 +4,38 @@ All notable changes to this repository are documented in this file.
 
 ## [Unreleased]
 
+## [2.6.8] - 2026-08-04
+
+### Changed
+
+- Carry the canonical PlayFabID as a validated Fleet event field and display
+  relayed All and Team Chat in the same `Chat: PlayFabID, name, (channel)`
+  structure as locally collected MORDHAU chat.
+- Mark every event collected by the currently selected Fleet server in the
+  API view and render its text in bold while keeping relayed events at regular
+  weight.
+- Accept legacy Fleet events without a PlayFabID during rolling upgrades while
+  requiring any supplied identifier to be a valid canonical MORDHAU player ID.
+
+### Fixed
+
+- Apply current-server emphasis to chat, match-state, command, response, and
+  system records instead of limiting the visual distinction to local player
+  lifecycle records.
+- Decorate immediate web RCON command output with the same selected-server
+  label and current-server metadata as snapshot and history results.
+
+### Validation
+
+- Verify All and Team Chat preserve their PlayFabID through publication,
+  normalization, Fleet routing, and display formatting.
+- Verify invalid player identifiers are rejected and legacy identifier-free
+  Fleet events remain accepted.
+- Verify local events from Controller and Managed roles are marked current,
+  relayed events are not, and persistent event records remain unchanged.
+- Verify the frontend applies bold weight only from explicit current-server
+  metadata without adding a source-specific text color.
+
 ## [2.6.7] - 2026-08-04
 
 ### Changed
