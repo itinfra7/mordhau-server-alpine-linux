@@ -145,12 +145,12 @@ history remains in the versioned changelog asset instead of being repeated in
 every Release body.
 
 ```sh
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.6.8/mordhau-server-alpine-linux-v2.6.8.tar.gz
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.6.8/CHANGELOG-v2.6.8.md
-wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.6.8/SHA256SUMS
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.6.9/mordhau-server-alpine-linux-v2.6.9.tar.gz
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.6.9/CHANGELOG-v2.6.9.md
+wget https://github.com/itinfra7/mordhau-server-alpine-linux/releases/download/v2.6.9/SHA256SUMS
 sha256sum -c SHA256SUMS
-tar -xzf mordhau-server-alpine-linux-v2.6.8.tar.gz
-cd mordhau-server-alpine-linux-v2.6.8
+tar -xzf mordhau-server-alpine-linux-v2.6.9.tar.gz
+cd mordhau-server-alpine-linux-v2.6.9
 chmod +x src/mordhau-server-alpine-linux.sh
 ./src/mordhau-server-alpine-linux.sh
 ```
@@ -486,15 +486,23 @@ new installations start with all five categories disabled:
 - RCON SAY issued successfully through the web RCON prompt
 - Player login and logout
 
-Relayed lines always include the Controller-assigned source display name, for
-example:
+Relayed in-game lines always include the Controller-assigned source display
+name, for example:
+
+```text
+(Dread Server) <Player> : hello
+(Dread Server · TEAM) <Player> : defend
+(Dread Server · WEB SAY) maintenance soon
+(Dread Server · RCON SAY) match restarting
+(Dread Server) <Player> joined the server.
+```
+
+The web Server Events history adds the canonical PlayFabID to relayed All and
+Team Chat without exposing it in the in-game relay text:
 
 ```text
 (Dread Server) Chat: 1111222233334444, Player, (ALL) hello
 (Dread Server) Chat: 1111222233334444, Player, (TEAM) defend
-(Dread Server · WEB SAY) maintenance soon
-(Dread Server · RCON SAY) match restarting
-(Dread Server) <Player> joined the server.
 ```
 
 In Fleet mode, Server Events prefix every locally collected event with the

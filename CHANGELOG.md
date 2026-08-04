@@ -4,6 +4,20 @@ All notable changes to this repository are documented in this file.
 
 ## [Unreleased]
 
+## [2.6.9] - 2026-08-04
+
+### Fixed
+
+- Separate Fleet in-game relay rendering from web Server Events rendering so
+  the canonical PlayFabID is visible to administrators in the web history but
+  is not added to messages sent to game clients.
+
+### Validation
+
+- Verify the same Fleet chat event retains the established nickname-only
+  in-game format while its persisted web event includes PlayFabID, nickname,
+  channel, and message.
+
 ## [2.6.8] - 2026-08-04
 
 ### Changed

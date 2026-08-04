@@ -620,15 +620,24 @@ func TestFleetSAYParsingAndSourceLabels(t *testing.T) {
 		t.Fatal("non-SAY RCON command was classified as RCON SAY")
 	}
 	for _, test := range []struct {
-		category string
-		expected string
+		category      string
+		relayExpected string
+		webExpected   string
 	}{
-		{FleetEventAllChat, "(Dread Server) Chat: 1111222233334444, 플레이어, (ALL) команда"},
-		{FleetEventTeamChat, "(Dread Server) Chat: 1111222233334444, 플레이어, (TEAM) команда"},
-		{FleetEventWebSAY, "(Dread Server · WEB SAY) команда"},
-		{FleetEventRCONSAY, "(Dread Server · RCON SAY) команда"},
-		{FleetEventPlayerLogin, "(Dread Server) <플레이어> joined the server."},
-		{FleetEventPlayerLogout, "(Dread Server) <플레이어> left the server."},
+		{
+			FleetEventAllChat,
+			"(Dread Server) <플레이어> : команда",
+			"(Dread Server) Chat: 1111222233334444, 플레이어, (ALL) команда",
+		},
+		{
+			FleetEventTeamChat,
+			"(Dread Server · TEAM) <플레이어> : команда",
+			"(Dread Server) Chat: 1111222233334444, 플레이어, (TEAM) команда",
+		},
+		{FleetEventWebSAY, "(Dread Server · WEB SAY) команда", "(Dread Server · WEB SAY) команда"},
+		{FleetEventRCONSAY, "(Dread Server · RCON SAY) команда", "(Dread Server · RCON SAY) команда"},
+		{FleetEventPlayerLogin, "(Dread Server) <플레이어> joined the server.", "(Dread Server) <플레이어> joined the server."},
+		{FleetEventPlayerLogout, "(Dread Server) <플레이어> left the server.", "(Dread Server) <플레이어> left the server."},
 	} {
 		event := FleetEvent{
 			Category:   test.category,
@@ -639,18 +648,59 @@ func TestFleetSAYParsingAndSourceLabels(t *testing.T) {
 			test.category == FleetEventTeamChat {
 			event.PlayerID = "1111222233334444"
 		}
-		message, err := formatFleetEventMessage("Dread", event)
+		relayMessage, err := formatFleetEventMessage("Dread", event)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if message != test.expected {
+		if relayMessage != test.relayExpected {
 			t.Fatalf(
-				"category %q message = %q, want %q",
+				"category %q relay message = %q, want %q",
 				test.category,
-				message,
-				test.expected,
+				relayMessage,
+				test.relayExpected,
 			)
 		}
+		webMessage, err := formatFleetEventWebMessage("Dread", event)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if webMessage != test.webExpected {
+			t.Fatalf(
+				"category %q web message = %q, want %q",
+				test.category,
+				webMessage,
+				test.webExpected,
+			)
+		}
+	}
+}
+
+func TestFleetChatPlayerIDIsWebOnly(t *testing.T) {
+	directory := t.TempDir()
+	var sent []string
+	manager := &Manager{
+		rconLogPath: filepath.Join(directory, "rcon.jsonl"),
+		fleetMessageSend: func(message string) error {
+			sent = append(sent, message)
+			return nil
+		},
+	}
+	event := FleetEvent{
+		Category:   FleetEventAllChat,
+		PlayerID:   "1111222233334444",
+		PlayerName: "Player",
+		Message:    "hello",
+	}
+	if err := manager.deliverFleetEventLocal("Dread", event); err != nil {
+		t.Fatal(err)
+	}
+	if len(sent) != 1 || sent[0] != "(Dread Server) <Player> : hello" {
+		t.Fatalf("in-game relay messages = %#v", sent)
+	}
+	events := manager.rconHistory(rconBrowserHistoryLimit)
+	if len(events) != 1 || events[0].Text !=
+		"(Dread Server) Chat: 1111222233334444, Player, (ALL) hello" {
+		t.Fatalf("web Fleet event history = %#v", events)
 	}
 }
 

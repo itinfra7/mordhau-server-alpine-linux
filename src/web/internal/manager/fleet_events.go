@@ -500,29 +500,9 @@ func formatFleetEventMessage(alias string, event FleetEvent) (string, error) {
 	var message string
 	switch event.Category {
 	case FleetEventAllChat:
-		if event.PlayerID != "" {
-			message = fmt.Sprintf(
-				"(%s) Chat: %s, %s, (ALL) %s",
-				label,
-				event.PlayerID,
-				event.PlayerName,
-				event.Message,
-			)
-		} else {
-			message = fmt.Sprintf("(%s) <%s> : %s", label, event.PlayerName, event.Message)
-		}
+		message = fmt.Sprintf("(%s) <%s> : %s", label, event.PlayerName, event.Message)
 	case FleetEventTeamChat:
-		if event.PlayerID != "" {
-			message = fmt.Sprintf(
-				"(%s) Chat: %s, %s, (TEAM) %s",
-				label,
-				event.PlayerID,
-				event.PlayerName,
-				event.Message,
-			)
-		} else {
-			message = fmt.Sprintf("(%s · TEAM) <%s> : %s", label, event.PlayerName, event.Message)
-		}
+		message = fmt.Sprintf("(%s · TEAM) <%s> : %s", label, event.PlayerName, event.Message)
 	case FleetEventWebSAY:
 		message = fmt.Sprintf("(%s · WEB SAY) %s", label, event.Message)
 	case FleetEventRCONSAY:
@@ -534,6 +514,30 @@ func formatFleetEventMessage(alias string, event FleetEvent) (string, error) {
 	default:
 		return "", errors.New("unsupported fleet event category")
 	}
+	return normalizeFleetFormattedMessage(message)
+}
+
+func formatFleetEventWebMessage(alias string, event FleetEvent) (string, error) {
+	if event.PlayerID == "" ||
+		(event.Category != FleetEventAllChat && event.Category != FleetEventTeamChat) {
+		return formatFleetEventMessage(alias, event)
+	}
+	channel := "ALL"
+	if event.Category == FleetEventTeamChat {
+		channel = "TEAM"
+	}
+	message := fmt.Sprintf(
+		"(%s) Chat: %s, %s, (%s) %s",
+		fleetServerLabel(alias),
+		event.PlayerID,
+		event.PlayerName,
+		channel,
+		event.Message,
+	)
+	return normalizeFleetFormattedMessage(message)
+}
+
+func normalizeFleetFormattedMessage(message string) (string, error) {
 	runes := []rune(message)
 	if len(runes) > unicodeMessageMaxRunes {
 		runes = append(runes[:unicodeMessageMaxRunes-1], '…')
@@ -558,6 +562,10 @@ func (m *Manager) deliverFleetEventLocal(alias string, event FleetEvent) error {
 	if err != nil {
 		return err
 	}
+	webMessage, err := formatFleetEventWebMessage(alias, event)
+	if err != nil {
+		return err
+	}
 	send := m.sendUnicodeRCONMessage
 	if m.fleetMessageSend != nil {
 		send = m.fleetMessageSend
@@ -565,7 +573,7 @@ func (m *Manager) deliverFleetEventLocal(alias string, event FleetEvent) error {
 	if err := send(message); err != nil {
 		return err
 	}
-	m.addRCONEvent("fleet", message)
+	m.addRCONEvent("fleet", webMessage)
 	return nil
 }
 
